@@ -108,8 +108,11 @@ function buildSpawnQueue(room: Room): SpawnRequest[] {
     // then harvesters as emergency bootstrap if both die, then upgraders/builders.
     const miners = minersNeeded(room);
     if (miners > 0) {
-      // 5 WORK + 1 MOVE. maxRepeats capped so we don't overshoot 5 WORK.
-      queue.push({ role: 'miner', pattern: [WORK, WORK, WORK, WORK, WORK, MOVE], maxRepeats: 1, minCount: miners + countCreepsByRole('miner') });
+      // [WORK, WORK, MOVE] repeated up to 3× = max 6 WORK, 3 MOVE (750 energy).
+      // At low capacity (300): 2W 1M (250 energy) — still useful.
+      // At 550+: 4W 2M — nearly saturates a source.
+      // At 750+: 6W 3M — fully saturates with margin.
+      queue.push({ role: 'miner', pattern: [WORK, WORK, MOVE], maxRepeats: 3, minCount: miners + countCreepsByRole('miner') });
     }
     queue.push({ role: 'hauler', pattern: [CARRY, CARRY, MOVE, MOVE], minCount: haulersNeeded(room) });
     // Keep 1 harvester as emergency bootstrap in case all miners die
