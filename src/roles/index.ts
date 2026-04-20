@@ -4,6 +4,8 @@ import { upgrader } from './upgrader';
 import { builder } from './builder';
 import { repairer } from './repairer';
 import { defender } from './defender';
+import { miner } from './miner';
+import { hauler } from './hauler';
 
 export type { Role };
 
@@ -13,4 +15,6 @@ export const roles: Record<CreepRoleName, Role> = {
   builder,
   repairer,
   defender,
+  miner,
+  hauler,
 };

@@ -22,10 +22,10 @@ The AI is a single `loop` function exported from `src/main.ts`, called once per 
 1. `initMemory()` — one-shot Memory shape init (per global reset).
 2. `resetTickCache()` — clears the transient per-tick memoisation map.
 3. `runDefense` — scans hostiles, updates `RoomMemory.threatLastSeen` / `lastThreatScore`, activates safe mode on perimeter breach. Runs first so the spawner and towers see the same threat view.
-4. `runSpawner` — queue is **rebuilt each tick** by `buildSpawnQueue()`, which prepends a dynamic `defender` request when `defendersNeeded(room) > 0`.
+4. `runSpawner` — calls `ensureRoomPlan(room)` to refresh source/container/miner cache, then **rebuilds the spawn queue per room** via `buildSpawnQueue(room)`. Uses bootstrap economy (harvester-based) until the first source container is detected, then switches to miner economy (miner + hauler + heavy-WORK upgrader). Defenders are prepended dynamically when threats are active.
 5. `runRooms` — purges dead-creep memory, then dispatches each creep to its role via the `roles` registry (`src/roles/index.ts`). Per-creep calls are profiled as `role.<roleName>`.
 6. `runTowers` — every tower in a room focus-fires `pickPriorityTarget(room)` (threat-scored, not closest). Falls back to heal → repair with a 50% combat energy reserve.
-7. `runConstruction` — one placement per tick (extensions, towers, roads), gated by `MAX_*` RCL tables at the top of `managers/construction.ts`.
+7. `runConstruction` — one placement per tick (extensions, towers, source containers, controller container, storage, roads), gated by RCL checks in each `place*` function.
 8. `runVisuals` — opt-in `RoomVisual` overlay, gated by `Memory.visuals`.
 9. `flushSegments` — writes dirty `RawMemory.segments` entries and registers requested segments for next tick.
 
@@ -44,7 +44,7 @@ Reordering these has subtle effects: e.g. moving `runSpawner` ahead of `runDefen
 1. Create `src/roles/<name>.ts` exporting a `Role` (`run(creep): void`).
 2. Register it in `src/roles/index.ts`.
 3. Extend the `CreepRoleName` union in `src/types.d.ts`.
-4. Add a `SpawnRequest` entry — either to `baseSpawnQueue` (always-on minimum) or inside `buildSpawnQueue()` (dynamic / demand-driven, like `defender`).
+4. Add a `SpawnRequest` entry in `buildSpawnQueue()`. Prefer a dynamic `*Needed(room)` function (see `buildersNeeded`, `repairersNeeded`, `upgradersNeeded` as examples) over a hardcoded `minCount`. Every role's count should reflect current room state so the economy self-balances.
 
 The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forgetting any of these steps is a compile error.
 

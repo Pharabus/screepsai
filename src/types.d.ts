@@ -1,7 +1,11 @@
-type CreepRoleName = 'harvester' | 'upgrader' | 'builder' | 'repairer' | 'defender';
+type CreepRoleName = 'harvester' | 'upgrader' | 'builder' | 'repairer' | 'defender' | 'miner' | 'hauler';
 
 interface CreepMemory {
   role: CreepRoleName;
+  /** ID of the assigned target (source, container, controller, etc.) */
+  targetId?: Id<Source | StructureContainer | StructureStorage | StructureController>;
+  /** Toggle: true = working (upgrading/building/delivering), false = gathering */
+  working?: boolean;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
@@ -10,6 +14,16 @@ interface RoomMemory {
   // Defense (src/managers/defense.ts)
   threatLastSeen?: number;
   lastThreatScore?: number;
+  // Room planning (src/managers/spawner.ts, construction.ts)
+  sources?: {
+    id: Id<Source>;
+    containerId?: Id<StructureContainer>;
+    /** Name of the miner creep assigned to this source */
+    minerName?: string;
+  }[];
+  controllerContainerId?: Id<StructureContainer>;
+  /** Set to true once containers are built and the room transitions to miner+hauler economy */
+  minerEconomy?: boolean;
 }
 
 interface ProfilerSample {

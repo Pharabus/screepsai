@@ -1,6 +1,7 @@
 import { buildBody } from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
+import { ensureRoomPlan } from '../utils/roomPlanner';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -9,35 +10,7 @@ interface SpawnRequest {
   minCount: number;
 }
 
-// Priority-ordered: earlier entries spawn first. Defender is injected at the
-// top by buildSpawnQueue() only when defense reports a live threat — there's
-// no need to keep one standing by in peacetime.
-const baseSpawnQueue: SpawnRequest[] = [
-  { role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 },
-  { role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 2 },
-  { role: 'builder', pattern: [WORK, CARRY, MOVE], minCount: 1 },
-  { role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: 1 },
-];
-
-function buildSpawnQueue(): SpawnRequest[] {
-  // Sum desired defenders across all owned rooms. defendersNeeded() returns 0
-  // unless a threat was seen within the defense memory window.
-  let defenders = 0;
-  for (const room of Object.values(Game.rooms)) {
-    if (room.controller?.my) defenders += defendersNeeded(room);
-  }
-  if (defenders === 0) return baseSpawnQueue;
-
-  return [
-    // ATTACK + MOVE keeps the defender at 1:1 fatigue on plain terrain.
-    { role: 'defender', pattern: [ATTACK, MOVE], minCount: defenders },
-    ...baseSpawnQueue,
-  ];
-}
-
 function countCreepsByRole(role: CreepRoleName): number {
-  // One tally shared across the whole tick — avoids re-walking Game.creeps
-  // once per role in the spawn queue.
   const counts = cached('spawner:countsByRole', () => {
     const totals: Partial<Record<CreepRoleName, number>> = {};
     for (const c of Object.values(Game.creeps)) {
@@ -48,29 +21,148 @@ function countCreepsByRole(role: CreepRoleName): number {
   return counts[role] ?? 0;
 }
 
+/**
+ * Count how many sources in a room have containers and still need a miner.
+ */
+function minersNeeded(room: Room): number {
+  const mem = Memory.rooms[room.name];
+  if (!mem?.sources) return 0;
+  let needed = 0;
+  for (const entry of mem.sources) {
+    if (!entry.containerId) continue; // no container yet, can't mine statically
+    if (!entry.minerName || !Game.creeps[entry.minerName]) needed++;
+  }
+  return needed;
+}
+
+/**
+ * Hauler count based on source count and room capacity.
+ * At low energy capacity haulers are small so we need more of them.
+ */
+function haulersNeeded(room: Room): number {
+  const mem = Memory.rooms[room.name];
+  if (!mem?.sources) return 0;
+  const containerCount = mem.sources.filter((s) => !!s.containerId).length;
+  if (containerCount === 0) return 0;
+  // Bigger hauler bodies at higher capacity means fewer needed
+  const perSource = room.energyCapacityAvailable >= 800 ? 2 : 3;
+  return containerCount * perSource;
+}
+
+/**
+ * Upgrader count. In miner economy, scale to available energy surplus.
+ * In bootstrap, keep 2 minimum.
+ */
+function upgradersNeeded(room: Room): number {
+  const mem = Memory.rooms[room.name];
+  if (!mem?.minerEconomy) return 2;
+  const capacity = room.energyCapacityAvailable;
+  if (capacity >= 1500) return 3;
+  if (capacity >= 800) return 2;
+  return 1;
+}
+
+/**
+ * Builder count scales with active construction sites. At least 1 (they fall
+ * back to upgrading when idle), up to 3 when there's heavy construction.
+ */
+function buildersNeeded(room: Room): number {
+  const sites = cached('spawner:sites:' + room.name, () =>
+    room.find(FIND_MY_CONSTRUCTION_SITES).length,
+  );
+  if (sites === 0) return 1; // idle-upgrades
+  return Math.min(Math.ceil(sites / 3), 3);
+}
+
+/**
+ * Repairer count scales with damaged structures. At least 1 (falls back to
+ * upgrading), up to 2 when there's significant damage.
+ */
+function repairersNeeded(room: Room): number {
+  const REPAIR_THRESHOLD = 0.75;
+  const damaged = cached('spawner:damaged:' + room.name, () =>
+    room.find(FIND_STRUCTURES, {
+      filter: (s) =>
+        s.hits < s.hitsMax * REPAIR_THRESHOLD &&
+        s.structureType !== STRUCTURE_WALL &&
+        s.structureType !== STRUCTURE_RAMPART,
+    }).length,
+  );
+  if (damaged > 5) return 2;
+  return 1;
+}
+
+function buildSpawnQueue(room: Room): SpawnRequest[] {
+  const queue: SpawnRequest[] = [];
+  const mem = Memory.rooms[room.name];
+  const isMinerEconomy = mem?.minerEconomy ?? false;
+
+  // Priority 0: Defenders (dynamic, only when threat active)
+  const defenders = defendersNeeded(room);
+  if (defenders > 0) {
+    queue.push({ role: 'defender', pattern: [ATTACK, MOVE], minCount: defenders });
+  }
+
+  if (isMinerEconomy) {
+    // Miner economy: miners first (energy production), then haulers (distribution),
+    // then harvesters as emergency bootstrap if both die, then upgraders/builders.
+    const miners = minersNeeded(room);
+    if (miners > 0) {
+      // 5 WORK + 1 MOVE. maxRepeats capped so we don't overshoot 5 WORK.
+      queue.push({ role: 'miner', pattern: [WORK, WORK, WORK, WORK, WORK, MOVE], maxRepeats: 1, minCount: miners + countCreepsByRole('miner') });
+    }
+    queue.push({ role: 'hauler', pattern: [CARRY, CARRY, MOVE, MOVE], minCount: haulersNeeded(room) });
+    // Keep 1 harvester as emergency bootstrap in case all miners die
+    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 1 });
+    // Heavy-WORK upgrader for miner economy
+    queue.push({ role: 'upgrader', pattern: [WORK, WORK, WORK, CARRY, MOVE, MOVE], minCount: upgradersNeeded(room) });
+    queue.push({ role: 'builder', pattern: [WORK, WORK, CARRY, MOVE, MOVE], minCount: buildersNeeded(room) });
+    queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
+  } else {
+    // Bootstrap economy: original patterns
+    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });
+    queue.push({ role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 2 });
+    queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE], minCount: buildersNeeded(room) });
+    queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
+  }
+
+  return queue;
+}
+
 export function runSpawner(): void {
-  for (const request of buildSpawnQueue()) {
-    if (countCreepsByRole(request.role) >= request.minCount) continue;
+  // Ensure room plans are up to date before making spawn decisions
+  for (const room of Object.values(Game.rooms)) {
+    if (room.controller?.my) ensureRoomPlan(room);
+  }
 
-    const spawn = Object.values(Game.spawns).find((s) => !s.spawning);
-    if (!spawn) return;
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
 
-    const energy = spawn.room.energyCapacityAvailable;
-    const body = buildBody(request.pattern, energy, request.maxRepeats);
-    if (body.length === 0) return;
+    const queue = buildSpawnQueue(room);
 
-    const name = `${request.role}_${Game.time}`;
-    const result = spawn.spawnCreep(body, name, {
-      memory: { role: request.role },
-    });
+    for (const request of queue) {
+      if (countCreepsByRole(request.role) >= request.minCount) continue;
 
-    if (result === OK) {
-      console.log(`Spawning ${request.role} (${body.length} parts): ${name}`);
-      return;
-    } else if (result === ERR_NOT_ENOUGH_ENERGY) {
-      return;
-    } else {
-      console.log(`Spawn error for ${request.role}: ${result}`);
+      const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
+      if (!spawn) break;
+
+      const energy = room.energyCapacityAvailable;
+      const body = buildBody(request.pattern, energy, request.maxRepeats);
+      if (body.length === 0) break;
+
+      const name = `${request.role}_${Game.time}`;
+      const result = spawn.spawnCreep(body, name, {
+        memory: { role: request.role },
+      });
+
+      if (result === OK) {
+        console.log(`Spawning ${request.role} (${body.length} parts): ${name}`);
+        break; // one spawn per room per tick
+      } else if (result === ERR_NOT_ENOUGH_ENERGY) {
+        break;
+      } else {
+        console.log(`Spawn error for ${request.role}: ${result}`);
+      }
     }
   }
 }

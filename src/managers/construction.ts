@@ -94,6 +94,88 @@ function placeTowers(room: Room): void {
   }
 }
 
+function placeSourceContainers(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 2) return;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  const sources = room.find(FIND_SOURCES);
+  for (const source of sources) {
+    // Check if a container (or site) already exists within 1 tile
+    const nearbyContainers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+      filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+    });
+    const nearbySites = source.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 1, {
+      filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+    });
+    if (nearbyContainers.length > 0 || nearbySites.length > 0) continue;
+
+    // Place container on the first path step from source toward spawn
+    // (so it's on the road and adjacent to the source)
+    const path = room.findPath(source.pos, anchor.pos, { ignoreCreeps: true });
+    const step = path[0];
+    if (step) {
+      room.createConstructionSite(step.x, step.y, STRUCTURE_CONTAINER);
+      return; // one per tick
+    }
+  }
+}
+
+function placeControllerContainer(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 2) return;
+  if (!room.controller) return;
+
+  // Check if a container (or site) already exists within 3 tiles of controller
+  const nearbyContainers = room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  const nearbySites = room.controller.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 3, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  if (nearbyContainers.length > 0 || nearbySites.length > 0) return;
+
+  // Place container on the path from controller toward spawn, within range 2
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  const path = room.findPath(room.controller.pos, anchor.pos, { ignoreCreeps: true });
+  // Pick a tile that is within range 2 of the controller (so upgraders can
+  // stand on it and still upgradeController which has range 3).
+  for (const step of path) {
+    const pos = new RoomPosition(step.x, step.y, room.name);
+    if (pos.inRangeTo(room.controller, 2)) {
+      room.createConstructionSite(step.x, step.y, STRUCTURE_CONTAINER);
+      return;
+    }
+  }
+}
+
+function placeStorage(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 4) return;
+
+  // Only one storage per room allowed by the game
+  if (room.storage) return;
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_STORAGE,
+  });
+  if (sites.length > 0) return;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  const pos = findOpenPosition(room, anchor.pos, 2, 4);
+  if (pos) {
+    room.createConstructionSite(pos, STRUCTURE_STORAGE);
+  }
+}
+
 function placeRoads(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 2) return;
@@ -136,6 +218,9 @@ export function runConstruction(): void {
 
     placeExtensions(room);
     placeTowers(room);
+    placeSourceContainers(room);
+    placeControllerContainer(room);
+    placeStorage(room);
     placeRoads(room);
   }
 }
