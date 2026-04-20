@@ -1,5 +1,6 @@
 import { Role } from './Role';
 import { assignMiner, findUnminedSource } from '../utils/roomPlanner';
+import { moveTo } from '../utils/movement';
 
 /**
  * Static miner. Sits on (or adjacent to) a container next to its assigned
@@ -33,11 +34,11 @@ export const miner: Role = {
 
     // Move to the container tile (or adjacent to source if no container yet)
     if (container && !creep.pos.isEqualTo(container.pos)) {
-      creep.moveTo(container, { visualizePathStyle: { stroke: '#ffaa00' } });
+      moveTo(creep, container, { visualizePathStyle: { stroke: '#ffaa00' } });
       return;
     }
     if (!container && !creep.pos.isNearTo(source)) {
-      creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
+      moveTo(creep, source, { visualizePathStyle: { stroke: '#ffaa00' } });
       return;
     }
 

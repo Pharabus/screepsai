@@ -1,5 +1,6 @@
 import { Role } from './Role';
 import { harvestFromBestSource } from '../utils/sources';
+import { moveTo } from '../utils/movement';
 
 export const harvester: Role = {
   run(creep: Creep): void {
@@ -16,7 +17,7 @@ export const harvester: Role = {
       const target = targets[0];
       if (target) {
         if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+          moveTo(creep, target, { visualizePathStyle: { stroke: '#ffffff' } });
         }
       }
     }

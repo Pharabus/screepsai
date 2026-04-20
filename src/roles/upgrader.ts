@@ -1,5 +1,6 @@
 import { Role } from './Role';
 import { harvestFromBestSource } from '../utils/sources';
+import { moveTo } from '../utils/movement';
 
 /**
  * Upgrader. Camps near the controller and upgrades it.
@@ -29,7 +30,7 @@ function runBootstrap(creep: Creep): void {
     const controller = creep.room.controller;
     if (controller) {
       if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controller, { range: 3, visualizePathStyle: { stroke: '#3333ff' } });
+        moveTo(creep, controller, { range: 3, visualizePathStyle: { stroke: '#3333ff' } });
       }
     }
   }
@@ -48,7 +49,7 @@ function runWithLogistics(creep: Creep, mem: RoomMemory | undefined): void {
     const controller = creep.room.controller;
     if (controller) {
       if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controller, { range: 3, visualizePathStyle: { stroke: '#3333ff' } });
+        moveTo(creep, controller, { range: 3, visualizePathStyle: { stroke: '#3333ff' } });
       }
     }
   } else {
@@ -57,7 +58,7 @@ function runWithLogistics(creep: Creep, mem: RoomMemory | undefined): void {
       const container = Game.getObjectById(mem.controllerContainerId);
       if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
         if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(container, { visualizePathStyle: { stroke: '#ffaa00' } });
+          moveTo(creep, container, { visualizePathStyle: { stroke: '#ffaa00' } });
         }
         return;
       }
@@ -66,7 +67,7 @@ function runWithLogistics(creep: Creep, mem: RoomMemory | undefined): void {
     const storage = creep.room.storage;
     if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
       if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+        moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
       }
       return;
     }

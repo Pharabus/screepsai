@@ -1,3 +1,5 @@
+import { moveTo } from './movement';
+
 /**
  * Find the best energy source for a creep by balancing harvester load.
  * Picks the source with the fewest creeps assigned to it (by proximity).
@@ -33,7 +35,7 @@ export function harvestFromBestSource(creep: Creep): void {
   const source = findBestSource(creep);
   if (source) {
     if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(source, { visualizePathStyle: { stroke: '#ffaa00' } });
+      moveTo(creep, source, { visualizePathStyle: { stroke: '#ffaa00' } });
     }
   }
 }

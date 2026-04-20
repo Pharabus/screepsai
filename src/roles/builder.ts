@@ -1,5 +1,6 @@
 import { Role } from './Role';
 import { harvestFromBestSource } from '../utils/sources';
+import { moveTo } from '../utils/movement';
 
 export const builder: Role = {
   run(creep: Creep): void {
@@ -9,13 +10,13 @@ export const builder: Role = {
       const site = creep.room.find(FIND_CONSTRUCTION_SITES)[0];
       if (site) {
         if (creep.build(site) === ERR_NOT_IN_RANGE) {
-          creep.moveTo(site, { visualizePathStyle: { stroke: '#33ff33' } });
+          moveTo(creep, site, { range: 3, visualizePathStyle: { stroke: '#33ff33' } });
         }
       } else {
         const controller = creep.room.controller;
         if (controller) {
           if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(controller, { visualizePathStyle: { stroke: '#3333ff' } });
+            moveTo(creep, controller, { range: 3, visualizePathStyle: { stroke: '#3333ff' } });
           }
         }
       }
