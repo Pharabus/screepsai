@@ -56,10 +56,20 @@ function haulersNeeded(room: Room): number {
 function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
+
   const capacity = room.energyCapacityAvailable;
-  if (capacity >= 1500) return 3;
-  if (capacity >= 800) return 2;
-  return 1;
+  let base: number;
+  if (capacity >= 1500) base = 3;
+  else if (capacity >= 800) base = 2;
+  else base = 1;
+
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  let bonus = 0;
+  if (stored > 500_000) bonus = 3;
+  else if (stored > 200_000) bonus = 2;
+  else if (stored > 50_000) bonus = 1;
+
+  return base + bonus;
 }
 
 /**

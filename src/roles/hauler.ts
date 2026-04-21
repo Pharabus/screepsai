@@ -61,11 +61,24 @@ function pickup(creep: Creep): void {
     return;
   }
 
-  // Fallback: withdraw from storage if available
+  // Fallback: withdraw from storage only if a critical target needs energy
   const storage = creep.room.storage;
   if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+    const hasSpawnNeed = creep.room.find(FIND_MY_STRUCTURES, {
+      filter: (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    }).length > 0;
+    const hasTowerNeed = creep.room.find(FIND_MY_STRUCTURES, {
+      filter: (s): s is StructureTower =>
+        s.structureType === STRUCTURE_TOWER &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
+    }).length > 0;
+
+    if (hasSpawnNeed || hasTowerNeed) {
+      if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+      }
     }
   }
 }

@@ -1,6 +1,43 @@
 import { moveTo } from './movement';
 
 /**
+ * Try to withdraw energy from logistics infrastructure (containers/storage).
+ * Returns true if a withdrawal target was found, false if caller should self-harvest.
+ */
+export function withdrawFromLogistics(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  const controllerContainerId = mem?.controllerContainerId;
+
+  // Source containers with meaningful energy (closest first)
+  const containers = creep.room
+    .find(FIND_STRUCTURES, {
+      filter: (s): s is StructureContainer =>
+        s.structureType === STRUCTURE_CONTAINER &&
+        s.id !== controllerContainerId &&
+        s.store.getUsedCapacity(RESOURCE_ENERGY) > 100,
+    })
+    .sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
+
+  const container = containers[0];
+  if (container) {
+    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, container, { visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return true;
+  }
+
+  const storage = creep.room.storage;
+  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Find the best energy source for a creep by balancing harvester load.
  * Picks the source with the fewest creeps assigned to it (by proximity).
  */
