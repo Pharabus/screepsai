@@ -56,10 +56,20 @@ function haulersNeeded(room: Room): number {
 function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
+
   const capacity = room.energyCapacityAvailable;
-  if (capacity >= 1500) return 3;
-  if (capacity >= 800) return 2;
-  return 1;
+  let base: number;
+  if (capacity >= 1500) base = 3;
+  else if (capacity >= 800) base = 2;
+  else base = 1;
+
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  let bonus = 0;
+  if (stored > 500_000) bonus = 3;
+  else if (stored > 200_000) bonus = 2;
+  else if (stored > 50_000) bonus = 1;
+
+  return base + bonus;
 }
 
 /**
@@ -108,15 +118,21 @@ function buildSpawnQueue(room: Room): SpawnRequest[] {
     // then harvesters as emergency bootstrap if both die, then upgraders/builders.
     const miners = minersNeeded(room);
     if (miners > 0) {
-      // 5 WORK + 1 MOVE. maxRepeats capped so we don't overshoot 5 WORK.
-      queue.push({ role: 'miner', pattern: [WORK, WORK, WORK, WORK, WORK, MOVE], maxRepeats: 1, minCount: miners + countCreepsByRole('miner') });
+      // [WORK, WORK, MOVE] repeated up to 3× = max 6 WORK, 3 MOVE (750 energy).
+      // At low capacity (300): 2W 1M (250 energy) — still useful.
+      // At 550+: 4W 2M — nearly saturates a source.
+      // At 750+: 6W 3M — fully saturates with margin.
+      queue.push({ role: 'miner', pattern: [WORK, WORK, MOVE], maxRepeats: 3, minCount: miners + countCreepsByRole('miner') });
     }
     queue.push({ role: 'hauler', pattern: [CARRY, CARRY, MOVE, MOVE], minCount: haulersNeeded(room) });
     // Keep 1 harvester as emergency bootstrap in case all miners die
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 1 });
-    // Heavy-WORK upgrader for miner economy
-    queue.push({ role: 'upgrader', pattern: [WORK, WORK, WORK, CARRY, MOVE, MOVE], minCount: upgradersNeeded(room) });
-    queue.push({ role: 'builder', pattern: [WORK, WORK, CARRY, MOVE, MOVE], minCount: buildersNeeded(room) });
+    // Upgrader: [WORK, WORK, CARRY, MOVE] × up to 4 = max 8W 4C 4M (1200 energy)
+    // At 300: 2W 1C 1M — always affordable. Scales with extensions.
+    queue.push({ role: 'upgrader', pattern: [WORK, WORK, CARRY, MOVE], maxRepeats: 4, minCount: upgradersNeeded(room) });
+    // Builder: [WORK, CARRY, MOVE, MOVE] × up to 4 = max 4W 4C 8M (800 energy)
+    // Needs more MOVE for travel between source and construction sites.
+    queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE, MOVE], maxRepeats: 4, minCount: buildersNeeded(room) });
     queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
   } else {
     // Bootstrap economy: original patterns
@@ -148,7 +164,7 @@ export function runSpawner(): void {
 
       const energy = room.energyCapacityAvailable;
       const body = buildBody(request.pattern, energy, request.maxRepeats);
-      if (body.length === 0) break;
+      if (body.length === 0) continue; // can't afford this role, try cheaper ones below
 
       const name = `${request.role}_${Game.time}`;
       const result = spawn.spawnCreep(body, name, {

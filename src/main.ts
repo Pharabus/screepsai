@@ -20,6 +20,19 @@ export const resetStats = () => {
   resetStatsNow();
   return 'stats cleared';
 };
+export const status = () => {
+  const lines: string[] = [];
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
+    const mem = Memory.rooms[room.name];
+    const economy = mem?.minerEconomy ? 'miner' : 'bootstrap';
+    const rcl = room.controller.level;
+    const sources = mem?.sources?.length ?? '?';
+    const containers = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
+    lines.push(`${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}`);
+  }
+  return lines.join('\n') || 'no owned rooms';
+};
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

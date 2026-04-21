@@ -62,6 +62,31 @@ function findOpenPosition(
   return undefined;
 }
 
+// Compact extension stamp: [dx, dy] offsets from spawn, ordered by distance.
+// Leaves a cross-shaped road corridor (dx=0 and dy=0 rows) through the center.
+// Layout fills four quadrants in a checkerboard, closest positions first.
+const EXTENSION_STAMP: [number, number][] = [
+  // Quadrant fills, ring 1 (distance ~2): RCL 2 (5 extensions)
+  [-1, -2], [1, -2], [-2, -1], [2, -1], [-2, 1],
+  // Ring 2 (distance ~2-3): RCL 3 (10 total)
+  [2, 1], [-1, 2], [1, 2], [-2, -2], [2, -2],
+  // Ring 3 (distance ~3): RCL 4 (20 total)
+  [-2, 2], [2, 2], [-1, -3], [1, -3], [-3, -1],
+  [3, -1], [-3, 1], [3, 1], [-1, 3], [1, 3],
+  // Ring 4 (distance ~3-4): RCL 5 (30 total)
+  [-3, -2], [3, -2], [-3, 2], [3, 2], [-2, -3],
+  [2, -3], [-2, 3], [2, 3], [-3, -3], [3, -3],
+  // Ring 5 (distance ~4): RCL 6 (40 total)
+  [-3, 3], [3, 3], [-1, -4], [1, -4], [-4, -1],
+  [4, -1], [-4, 1], [4, 1], [-1, 4], [1, 4],
+  // Ring 6 (distance ~4-5): RCL 7 (50 total)
+  [-4, -2], [4, -2], [-4, 2], [4, 2], [-2, -4],
+  [2, -4], [-2, 4], [2, 4], [-4, -3], [4, -3],
+  // Ring 7 (distance ~5): RCL 8 (60 total)
+  [-4, 3], [4, 3], [-3, -4], [3, -4], [-3, 4],
+  [3, 4], [-4, -4], [4, -4], [-4, 4], [4, 4],
+];
+
 function placeExtensions(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_EXTENSIONS[rcl] ?? 0;
@@ -72,6 +97,24 @@ function placeExtensions(room: Room): void {
   const anchor = spawns[0];
   if (!anchor) return;
 
+  const terrain = room.getTerrain();
+  for (const [dx, dy] of EXTENSION_STAMP) {
+    const x = anchor.pos.x + dx;
+    const y = anchor.pos.y + dy;
+    if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+    const pos = new RoomPosition(x, y, room.name);
+    const blocked =
+      pos.lookFor(LOOK_STRUCTURES).length > 0 ||
+      pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    if (blocked) continue;
+
+    room.createConstructionSite(pos, STRUCTURE_EXTENSION);
+    return;
+  }
+
+  // Fallback if all stamp positions are terrain-blocked
   const pos = findOpenPosition(room, anchor.pos);
   if (pos) {
     room.createConstructionSite(pos, STRUCTURE_EXTENSION);
@@ -195,6 +238,9 @@ function placeRoads(room: Room): void {
   if (room.controller) {
     targets.push(room.controller.pos);
   }
+  if (room.storage) {
+    targets.push(room.storage.pos);
+  }
 
   for (const target of targets) {
     const path = room.findPath(anchor.pos, target, { ignoreCreeps: true });
@@ -212,6 +258,32 @@ function placeRoads(room: Room): void {
   }
 }
 
+function placeRamparts(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 3) return;
+
+  const critical: Structure[] = [
+    ...room.find(FIND_MY_SPAWNS),
+    ...room.find(FIND_MY_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_TOWER,
+    }),
+  ];
+  if (room.storage) critical.push(room.storage);
+
+  for (const structure of critical) {
+    const hasRampart = structure.pos
+      .lookFor(LOOK_STRUCTURES)
+      .some((s) => s.structureType === STRUCTURE_RAMPART);
+    const hasSite = structure.pos
+      .lookFor(LOOK_CONSTRUCTION_SITES)
+      .some((s) => s.structureType === STRUCTURE_RAMPART);
+    if (hasRampart || hasSite) continue;
+
+    room.createConstructionSite(structure.pos, STRUCTURE_RAMPART);
+    return;
+  }
+}
+
 export function runConstruction(): void {
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
@@ -222,5 +294,6 @@ export function runConstruction(): void {
     placeControllerContainer(room);
     placeStorage(room);
     placeRoads(room);
+    placeRamparts(room);
   }
 }

@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm run build` — Rollup bundles `src/main.ts` into `dist/main.js` + source map. The Screeps runtime loads `dist/main.js` as the AI entry point.
 - `npm run watch` — Rollup in watch mode.
-- `npm run deploy` — Builds then uploads via `screeps-api upload --branch default dist/main.js`.
+- `npm run deploy` — Bumps patch version, builds, then uploads `dist/main.js` to Screeps world servers via `scripts/deploy.mjs` (reads `SCREEPS_TOKEN` and `SCREEPS_BRANCH` from `.env`).
+- `npm run localdeploy` — Bumps patch version and builds only (no upload). Use when copying `dist/main.js` to a local Screeps server manually.
 - `npm run lint` — ESLint over `src/`.
 - `npm run format` / `npm run format:check` — Prettier.
 - `npx tsc --noEmit` — Type-check only. Use this as the fast correctness check; there is no test runner configured.
@@ -68,6 +69,18 @@ Both gated by Memory flags so production ticks pay ~nothing when off:
 
 When adding a new manager or hot path, wrap it in `profile('label', fn)` so it surfaces in `stats()`.
 
+Console-callable exports from `main.ts`: `stats()`, `resetStats()`, `status()`. The Screeps console evaluates against `module.exports` of the main module — to expose a new console command, add an `export const` in `main.ts` (not `global`).
+
+### Movement
+
+`src/utils/movement.ts` provides a hybrid `moveTo` wrapper used by all roles. At distance > 3: `ignoreCreeps: true, reusePath: 10` (fast long-range pathing). At distance ≤ 3: `ignoreCreeps: false, reusePath: 3` (avoids queueing near targets). Always use this wrapper instead of direct `creep.moveTo()`.
+
+### Deployment
+
+`scripts/deploy.mjs` POSTs `dist/main.js` to `https://screeps.com/api/user/code` using `X-Token` auth. Config lives in `.env` (gitignored); copy `.env.example` to get started. After a successful deploy, the script lists all branches and warns if the target branch isn't the active world branch.
+
+The rollup build stamps a version banner (`// screepsAI v{version} - built {timestamp}`) on line 1 of `dist/main.js`, read from `package.json`. `npm run deploy` auto-bumps the patch version before building.
+
 ### Error mapping
 
 `src/utils/ErrorMapper.ts` wraps the main loop with `wrapLoop`. It uses a custom synchronous VLQ decoder (not the `source-map` package, which is async and too slow for Screeps) to map runtime errors back to TypeScript source lines. The bundled `main.js.map` is loaded via Screeps' `require('main.js.map')`; the parsed map is cached across ticks and rebuilt on global reset.
@@ -78,6 +91,8 @@ When adding a new manager or hot path, wrap it in `profile('label', fn)` so it s
 - `lib` is `ES2021` (no DOM). A minimal `console` and `require` are declared in `src/types.d.ts` for the Screeps sandbox globals. Do not add `@types/node`.
 - The rollup bundle marks `lodash` as external because Screeps provides it globally. Do not import lodash in new code — use native `Object.values` / array methods (this was a deliberate cleanup).
 - `"type": "commonjs"` in `package.json`; rollup outputs CJS because the Screeps VM is CJS.
+- Screeps IVM uses `global` (not `globalThis`). `global` is declared in `src/types.d.ts`. `module` is also declared there for the console export pattern.
+- Do not add `@types/node` — the Screeps VM is not Node. Minimal globals (`console`, `require`, `global`, `module`) are declared in `src/types.d.ts`.
 
 ## Source of truth
 

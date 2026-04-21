@@ -37,7 +37,10 @@ function drawHeader(room: Room): void {
       .map(([role, n]) => `${role}:${n}`)
       .join(' ') || '—';
 
-  v.text(`RCL ${rcl}  energy ${energy}`, HEADER_X, HEADER_Y, {
+  const mem = Memory.rooms[room.name];
+  const economy = mem?.minerEconomy ? 'miner' : 'bootstrap';
+
+  v.text(`RCL ${rcl}  energy ${energy}  [${economy}]`, HEADER_X, HEADER_Y, {
     align: 'left',
     color: '#ffffff',
     font: 0.6,
