@@ -57,11 +57,32 @@ const res = await fetch('https://screeps.com/api/user/code', {
   body,
 });
 
-if (res.ok) {
-  const data = await res.json();
-  console.log('Deploy successful:', data);
+const data = await res.json();
+
+if (res.ok && data.ok) {
+  console.log('Deploy successful.');
+
+  // Fetch branch list to confirm and show active branch
+  const branchRes = await fetch('https://screeps.com/api/user/branches', {
+    headers: { 'X-Token': token },
+  });
+  if (branchRes.ok) {
+    const branchData = await branchRes.json();
+    const branches = branchData.list || [];
+    console.log('\nBranches on server:');
+    for (const b of branches) {
+      const active = b.activeWorld ? ' [ACTIVE on world]' : '';
+      const sim = b.activeSim ? ' [ACTIVE on sim]' : '';
+      const marker = b.branch === branch ? ' <-- deployed here' : '';
+      console.log(`  ${b.branch}${active}${sim}${marker}`);
+    }
+    const target = branches.find((b) => b.branch === branch);
+    if (target && !target.activeWorld) {
+      console.log(`\n⚠ Branch "${branch}" is NOT the active world branch.`);
+      console.log('Activate it in the game code editor, or set SCREEPS_BRANCH in .env to your active branch.');
+    }
+  }
 } else {
-  const text = await res.text();
-  console.error(`Deploy failed (${res.status}): ${text}`);
+  console.error(`Deploy failed (${res.status}):`, data);
   process.exit(1);
 }
