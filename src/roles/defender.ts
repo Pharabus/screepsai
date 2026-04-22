@@ -1,22 +1,36 @@
 import { Role } from './Role';
 import { pickPriorityTarget } from '../utils/threat';
 import { moveTo } from '../utils/movement';
+import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
-export const defender: Role = {
-  run(creep: Creep): void {
-    const target = pickPriorityTarget(creep.room);
-    if (target) {
+const states: StateMachineDefinition = {
+  ATTACK: {
+    run(creep) {
+      const target = pickPriorityTarget(creep.room);
+      if (!target) return 'RALLY';
+
       if (creep.attack(target) === ERR_NOT_IN_RANGE) {
         moveTo(creep, target, { visualizePathStyle: { stroke: '#ff0000' } });
       }
-      return;
-    }
+      return undefined;
+    },
+  },
+  RALLY: {
+    run(creep) {
+      const target = pickPriorityTarget(creep.room);
+      if (target) return 'ATTACK';
 
-    // No hostiles — rally near the first spawn so we react quickly to the
-    // next sighting without burning ticks wandering the room.
-    const rally = creep.room.find(FIND_MY_SPAWNS)[0];
-    if (rally && !creep.pos.inRangeTo(rally, 3)) {
-      moveTo(creep, rally, { range: 3, visualizePathStyle: { stroke: '#888888' } });
-    }
+      const rally = creep.room.find(FIND_MY_SPAWNS)[0];
+      if (rally && !creep.pos.inRangeTo(rally, 3)) {
+        moveTo(creep, rally, { range: 3, visualizePathStyle: { stroke: '#888888' } });
+      }
+      return undefined;
+    },
+  },
+};
+
+export const defender: Role = {
+  run(creep: Creep): void {
+    runStateMachine(creep, states, 'RALLY');
   },
 };

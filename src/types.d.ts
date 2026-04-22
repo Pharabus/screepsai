@@ -12,8 +12,8 @@ interface CreepMemory {
   role: CreepRoleName;
   /** ID of the assigned target (source, container, controller, mineral, etc.) */
   targetId?: Id<Source | Mineral | StructureContainer | StructureStorage | StructureController>;
-  /** Toggle: true = working (upgrading/building/delivering), false = gathering */
-  working?: boolean;
+  /** FSM state name */
+  state?: string;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
