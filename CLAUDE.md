@@ -22,10 +22,12 @@ The AI is a single `loop` function exported from `src/main.ts`, called once per 
 
 1. `initMemory()` — one-shot Memory shape init (per global reset).
 2. `resetTickCache()` — clears the transient per-tick memoisation map.
+2b. `resetTraffic()` — clears intent-based traffic manager state.
 3. `runDefense` — scans hostiles, updates `RoomMemory.threatLastSeen` / `lastThreatScore`, activates safe mode on perimeter breach. Runs first so the spawner and towers see the same threat view.
 4. `runSpawner` — calls `ensureRoomPlan(room)` to refresh source/container/miner cache, then **rebuilds the spawn queue per room** via `buildSpawnQueue(room)`. Uses bootstrap economy (harvester-based) until the first source container is detected, then switches to miner economy (miner + hauler + heavy-WORK upgrader). Defenders are prepended dynamically when threats are active.
 5. `runLinks` — transfers energy from source links to storage link (primary) or controller link (secondary). Runs before rooms so creeps see fresh link state.
-6. `runRooms` — purges dead-creep memory, then dispatches each creep to its role via the `roles` registry (`src/roles/index.ts`). Per-creep calls are profiled as `role.<roleName>`.
+6. `runRooms` — purges dead-creep memory, then dispatches each creep to its role via the `roles` registry (`src/roles/index.ts`). Roles register movement intents via `moveTo()` during this phase. Per-creep calls are profiled as `role.<roleName>`.
+6b. `resolveTraffic` — processes all movement intents registered during `runRooms`, resolves tile conflicts by priority, and issues `creep.move()` calls.
 7. `runTowers` — every tower in a room focus-fires `pickPriorityTarget(room)` (threat-scored, not closest). Falls back to heal → repair with a 50% combat energy reserve. Wall/rampart repair target scales with storage energy via `wallRepairMax(room)`.
 8. `runConstruction` — runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, roads, ramparts — gated by RCL checks in each `place*` function.
 9. `runVisuals` — opt-in `RoomVisual` overlay, gated by `Memory.visuals`.
@@ -44,9 +46,11 @@ Reordering these has subtle effects: e.g. moving `runSpawner` ahead of `runDefen
 ### Adding a role
 
 1. Create `src/roles/<name>.ts` exporting a `Role` (`run(creep): void`).
-2. Register it in `src/roles/index.ts`.
-3. Extend the `CreepRoleName` union in `src/types.d.ts`.
-4. Add a `SpawnRequest` entry in `buildSpawnQueue()`. Prefer a dynamic `*Needed(room)` function (see `buildersNeeded`, `repairersNeeded`, `upgradersNeeded` as examples) over a hardcoded `minCount`. Every role's count should reflect current room state so the economy self-balances.
+2. Define states as a `StateMachineDefinition` (see `src/utils/stateMachine.ts`) and call `runStateMachine(creep, states, defaultState)` from `run()`.
+3. Register it in `src/roles/index.ts`.
+4. Extend the `CreepRoleName` union in `src/types.d.ts`.
+5. Add a `SpawnRequest` entry in `buildSpawnQueue()`. Prefer a dynamic `*Needed(room)` function (see `buildersNeeded`, `repairersNeeded`, `upgradersNeeded` as examples) over a hardcoded `minCount`. Every role's count should reflect current room state so the economy self-balances.
+6. Set appropriate movement priority via `moveTo(creep, target, { priority: PRIORITY_* })`. Stationary roles (miners) should call `registerStationary(creep, PRIORITY_STATIC)` in their harvest state.
 
 The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forgetting any of these steps is a compile error.
 
@@ -65,16 +69,20 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 
 Both gated by Memory flags so production ticks pay ~nothing when off:
 
-- `Memory.profiling = true` → `profile(name, fn)` records CPU deltas as exponential moving averages in `Memory.stats`. `installProfilerGlobals()` (called once per global reset from `main.ts`) exposes `stats()` and `resetStats()` as console globals.
+- `Memory.profiling = true` → `profile(name, fn)` records CPU deltas as exponential moving averages in `Memory.stats`.
 - `Memory.visuals = true` → `runVisuals()` draws per-room RCL/energy/creep-count/CPU headers and source-load markers.
 
 When adding a new manager or hot path, wrap it in `profile('label', fn)` so it surfaces in `stats()`.
 
-Console-callable exports from `main.ts`: `stats()`, `resetStats()`, `status()`. The Screeps console evaluates against `module.exports` of the main module — to expose a new console command, add an `export const` in `main.ts` (not `global`).
+Console-callable exports from `main.ts`: `stats()`, `resetStats()`, `status()`. The Screeps console evaluates against `global` in IVM — to expose a new console command, add an `export const` in `main.ts` and register it on `global`.
 
-### Movement
+### Creep state machine
 
-`src/utils/movement.ts` provides a hybrid `moveTo` wrapper used by all roles. At distance > 3: `ignoreCreeps: true, reusePath: 10` (fast long-range pathing). At distance ≤ 3: `ignoreCreeps: false, reusePath: 3` (avoids queueing near targets). Always use this wrapper instead of direct `creep.moveTo()`.
+All roles use `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` — a `Record<string, StateHandler>` where each handler's `run(creep)` returns a state name to transition or `undefined` to stay. State is persisted in `creep.memory.state`. The engine validates the state exists (falls back to default on code deploy with renamed states) and calls optional `onEnter()` on transitions. Inspect `creep.memory.state` in-game to see what any creep is doing.
+
+### Movement & traffic
+
+`src/utils/movement.ts` provides a `moveTo` wrapper used by all roles. Instead of calling `creep.moveTo()` directly, it registers a movement intent with the traffic manager (`src/utils/trafficManager.ts`). After all roles run, `resolveTraffic()` processes intents: computes next steps via `PathFinder.search` (CostMatrix cached per room per tick), resolves tile conflicts by priority (STATIC=100 > HAULER=50 > WORKER=30 > DEFAULT=10), handles swap detection, and shoves idle creeps out of the way. Stationary creeps (miners on containers) call `registerStationary(creep, PRIORITY_STATIC)` to claim their tile. Always use `moveTo()` instead of direct `creep.moveTo()` or `creep.move()`.
 
 ### Deployment
 

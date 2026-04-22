@@ -1,32 +1,57 @@
 import { Role } from './Role';
 import { assignMineralMiner } from '../utils/roomPlanner';
 import { moveTo } from '../utils/movement';
+import { registerStationary, PRIORITY_STATIC, PRIORITY_WORKER } from '../utils/trafficManager';
+import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+
+const states: StateMachineDefinition = {
+  POSITION: {
+    run(creep) {
+      const mem = Memory.rooms[creep.room.name];
+      if (!mem?.mineralId) return undefined;
+
+      if (mem.mineralMinerName !== creep.name) {
+        assignMineralMiner(creep.room.name, creep.name);
+      }
+
+      const mineral = Game.getObjectById(mem.mineralId);
+      if (!mineral || mineral.mineralAmount === 0) return undefined;
+
+      if (mem.mineralContainerId) {
+        const container = Game.getObjectById(mem.mineralContainerId);
+        if (container) {
+          if (creep.pos.isEqualTo(container.pos)) return 'HARVEST';
+          moveTo(creep, container, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#cc66ff' } });
+          return undefined;
+        }
+      }
+      if (creep.pos.isNearTo(mineral)) return 'HARVEST';
+      moveTo(creep, mineral, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#cc66ff' } });
+      return undefined;
+    },
+  },
+  HARVEST: {
+    run(creep) {
+      registerStationary(creep, PRIORITY_STATIC);
+
+      const mem = Memory.rooms[creep.room.name];
+      if (!mem?.mineralId) return 'POSITION';
+
+      if (mem.mineralMinerName !== creep.name) {
+        assignMineralMiner(creep.room.name, creep.name);
+      }
+
+      const mineral = Game.getObjectById(mem.mineralId);
+      if (!mineral || mineral.mineralAmount === 0) return undefined;
+
+      creep.harvest(mineral);
+      return undefined;
+    },
+  },
+};
 
 export const mineralMiner: Role = {
   run(creep: Creep): void {
-    const mem = Memory.rooms[creep.room.name];
-    if (!mem?.mineralId) return;
-
-    // Register assignment
-    if (mem.mineralMinerName !== creep.name) {
-      assignMineralMiner(creep.room.name, creep.name);
-    }
-
-    const mineral = Game.getObjectById(mem.mineralId);
-    if (!mineral || mineral.mineralAmount === 0) return;
-
-    // Move to mineral container (or adjacent to mineral)
-    if (mem.mineralContainerId) {
-      const container = Game.getObjectById(mem.mineralContainerId);
-      if (container && !creep.pos.isEqualTo(container.pos)) {
-        moveTo(creep, container, { visualizePathStyle: { stroke: '#cc66ff' } });
-        return;
-      }
-    } else if (!creep.pos.isNearTo(mineral)) {
-      moveTo(creep, mineral, { visualizePathStyle: { stroke: '#cc66ff' } });
-      return;
-    }
-
-    creep.harvest(mineral);
+    runStateMachine(creep, states, 'POSITION');
   },
 };

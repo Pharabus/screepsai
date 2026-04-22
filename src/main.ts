@@ -8,6 +8,7 @@ import { runVisuals } from './managers/visuals';
 import { runLinks } from './managers/links';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
+import { resetTraffic, resolveTraffic } from './utils/trafficManager';
 import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
 
@@ -42,6 +43,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {
     initMemory();
     resetTickCache();
+    resetTraffic();
 
     // Defense first: refreshes threat state before spawner decides whether to
     // build defenders and before towers pick their focus-fire target.
@@ -49,6 +51,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     profile('spawner', runSpawner);
     profile('links', runLinks);
     profile('rooms', runRooms);
+    profile('traffic', resolveTraffic);
     profile('towers', runTowers);
     profile('construction', runConstruction);
     profile('visuals', runVisuals);
