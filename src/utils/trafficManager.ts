@@ -9,6 +9,8 @@ interface MoveIntent {
   creep: Creep;
   nextPos: RoomPosition;
   priority: number;
+  path?: RoomPosition[];
+  stroke?: string;
 }
 
 let intents: MoveIntent[] = [];
@@ -18,12 +20,14 @@ export function registerMove(
   targetPos: RoomPosition,
   priority: number,
   range: number,
+  stroke?: string,
 ): void {
   if (creep.pos.inRangeTo(targetPos, range)) return;
 
-  const nextPos = getNextStep(creep, targetPos, range);
+  const path = getPath(creep, targetPos, range);
+  const nextPos = path[0];
   if (nextPos) {
-    intents.push({ creep, nextPos, priority });
+    intents.push({ creep, nextPos, priority, path, stroke });
   }
 }
 
@@ -133,6 +137,21 @@ export function resolveTraffic(): void {
       creep.move(direction);
     }
   }
+
+  // Draw path visualizations
+  if (Memory.visuals) {
+    for (const intent of intents) {
+      if (!intent.stroke || !intent.path || intent.path.length === 0) continue;
+      if (!moves.has(intent.creep.name)) continue;
+      const points = [intent.creep.pos, ...intent.path];
+      new RoomVisual(intent.creep.room.name).poly(points, {
+        stroke: intent.stroke,
+        lineStyle: 'dashed',
+        strokeWidth: 0.15,
+        opacity: 0.4,
+      });
+    }
+  }
 }
 
 function posKey(pos: RoomPosition): string {
@@ -198,13 +217,13 @@ function getWalkableAdjacent(pos: RoomPosition): RoomPosition[] {
   return result;
 }
 
-function getNextStep(
+function getPath(
   creep: Creep,
   target: RoomPosition,
   range: number,
-): RoomPosition | undefined {
+): RoomPosition[] {
   const cacheKey = `traffic:path:${creep.name}`;
-  const cachedPath = cached(cacheKey, () => {
+  return cached(cacheKey, () => {
     const costMatrix = getRoomCostMatrix(creep.room);
     const result = PathFinder.search(
       creep.pos,
@@ -218,7 +237,6 @@ function getNextStep(
     );
     return result.path;
   });
-  return cachedPath[0];
 }
 
 function getRoomCostMatrix(room: Room): CostMatrix {

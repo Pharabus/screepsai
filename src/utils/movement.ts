@@ -15,5 +15,5 @@ export function moveTo(
   const range = opts?.range ?? 1;
   const priority = opts?.priority ?? PRIORITY_DEFAULT;
 
-  registerMove(creep, targetPos, priority, range);
+  registerMove(creep, targetPos, priority, range, opts?.visualizePathStyle?.stroke);
 }
