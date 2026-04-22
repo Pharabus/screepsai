@@ -27,6 +27,7 @@ const states: StateMachineDefinition = {
       if (container) {
         if (creep.pos.isEqualTo(container.pos)) return 'HARVEST';
         moveTo(creep, container, {
+          range: 0,
           priority: PRIORITY_WORKER,
           visualizePathStyle: { stroke: '#ffaa00' },
         });
