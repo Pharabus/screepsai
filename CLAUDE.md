@@ -10,9 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run localdeploy` — Bumps patch version and builds only (no upload). Use when copying `dist/main.js` to a local Screeps server manually.
 - `npm run lint` — ESLint over `src/`.
 - `npm run format` / `npm run format:check` — Prettier.
-- `npx tsc --noEmit` — Type-check only. Use this as the fast correctness check; there is no test runner configured.
+- `npx tsc --noEmit` — Type-check only.
+- `npm test` — Run all Vitest tests (`test/**/*.test.ts`).
+- `npm run test:watch` — Vitest in watch mode.
+- `npm run test:coverage` — Run tests with V8 coverage report.
 
-There are no unit tests. `"npm test"` intentionally exits non-zero.
+Pre-commit hooks (husky + lint-staged) run `prettier --check` and `eslint` on staged `.ts` files automatically.
 
 ## Architecture
 
@@ -93,6 +96,16 @@ The rollup build stamps a version banner (`// screepsAI v{version} - built {time
 ### Error mapping
 
 `src/utils/ErrorMapper.ts` wraps the main loop with `wrapLoop`. It uses a custom synchronous VLQ decoder (not the `source-map` package, which is async and too slow for Screeps) to map runtime errors back to TypeScript source lines. The bundled `main.js.map` is loaded via Screeps' `require('main.js.map')`; the parsed map is cached across ticks and rebuilt on global reset.
+
+## Testing
+
+Tests live in `test/` mirroring the `src/` structure. Vitest is the runner, configured in `vitest.config.ts` with `globals: true` (no imports needed for `describe`/`it`/`expect`).
+
+`test/mocks/screeps.ts` is a setup file that injects Screeps constants (`WORK`, `FIND_STRUCTURES`, etc.) and provides `mockCreep()`, `mockRoom()`, and `resetGameGlobals()` factory helpers. Call `resetGameGlobals()` in `beforeEach` when tests mutate `Game` or `Memory`.
+
+**When to write tests:** When adding or modifying utility functions, manager logic, or role state machines, add or update corresponding tests. Pure logic (no Screeps runtime dependency) is highest priority. Functions that need only light mocking (mock creep/room) are also good candidates. Skip tests for code tightly coupled to the Screeps runtime (construction placement, error mapping, the main loop).
+
+**To make internal functions testable:** Export them. The spawner's `*Needed()` functions and `buildSpawnQueue()` are exported specifically for testing.
 
 ## TypeScript / Screeps specifics
 

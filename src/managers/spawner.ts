@@ -24,7 +24,7 @@ function countCreepsByRole(role: CreepRoleName): number {
 /**
  * Count how many sources in a room have containers and still need a miner.
  */
-function minersNeeded(room: Room): number {
+export function minersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.sources) return 0;
   let needed = 0;
@@ -39,7 +39,7 @@ function minersNeeded(room: Room): number {
  * Hauler count based on source count and room capacity.
  * At low energy capacity haulers are small so we need more of them.
  */
-function haulersNeeded(room: Room): number {
+export function haulersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.sources) return 0;
   const withContainers = mem.sources.filter((s) => !!s.containerId);
@@ -60,7 +60,7 @@ function haulersNeeded(room: Room): number {
  * Upgrader count. In miner economy, scale to available energy surplus.
  * In bootstrap, keep 2 minimum.
  */
-function upgradersNeeded(room: Room): number {
+export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
 
@@ -84,8 +84,9 @@ function upgradersNeeded(room: Room): number {
  * back to upgrading when idle), up to 3 when there's heavy construction.
  */
 function buildersNeeded(room: Room): number {
-  const sites = cached('spawner:sites:' + room.name, () =>
-    room.find(FIND_MY_CONSTRUCTION_SITES).length,
+  const sites = cached(
+    'spawner:sites:' + room.name,
+    () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
   );
   if (sites === 0) return 1; // idle-upgrades
   return Math.min(Math.ceil(sites / 3), 3);
@@ -97,13 +98,15 @@ function buildersNeeded(room: Room): number {
  */
 function repairersNeeded(room: Room): number {
   const REPAIR_THRESHOLD = 0.75;
-  const damaged = cached('spawner:damaged:' + room.name, () =>
-    room.find(FIND_STRUCTURES, {
-      filter: (s) =>
-        s.hits < s.hitsMax * REPAIR_THRESHOLD &&
-        s.structureType !== STRUCTURE_WALL &&
-        s.structureType !== STRUCTURE_RAMPART,
-    }).length,
+  const damaged = cached(
+    'spawner:damaged:' + room.name,
+    () =>
+      room.find(FIND_STRUCTURES, {
+        filter: (s) =>
+          s.hits < s.hitsMax * REPAIR_THRESHOLD &&
+          s.structureType !== STRUCTURE_WALL &&
+          s.structureType !== STRUCTURE_RAMPART,
+      }).length,
   );
   if (damaged > 5) return 2;
   return 1;
@@ -113,14 +116,15 @@ function mineralMinersNeeded(room: Room): number {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return 0;
   // Check if extractor is built
-  const hasExtractor = room.find(FIND_MY_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
-  }).length > 0;
+  const hasExtractor =
+    room.find(FIND_MY_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
+    }).length > 0;
   if (!hasExtractor) return 0;
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
-function buildSpawnQueue(room: Room): SpawnRequest[] {
+export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
   const isMinerEconomy = mem?.minerEconomy ?? false;
@@ -139,21 +143,45 @@ function buildSpawnQueue(room: Room): SpawnRequest[] {
       // [WORK, WORK, CARRY, MOVE] x3 = max 6W 3C 3M (900 energy).
       // CARRY enables link transfers. At 300: 2W 1C 1M.
       // At 550+: 4W 2C 2M. At 800+: 6W 3C 3M — fully saturates source.
-      queue.push({ role: 'miner', pattern: [WORK, WORK, CARRY, MOVE], maxRepeats: 3, minCount: miners + countCreepsByRole('miner') });
+      queue.push({
+        role: 'miner',
+        pattern: [WORK, WORK, CARRY, MOVE],
+        maxRepeats: 3,
+        minCount: miners + countCreepsByRole('miner'),
+      });
     }
-    queue.push({ role: 'hauler', pattern: [CARRY, CARRY, MOVE, MOVE], minCount: haulersNeeded(room) });
+    queue.push({
+      role: 'hauler',
+      pattern: [CARRY, CARRY, MOVE, MOVE],
+      minCount: haulersNeeded(room),
+    });
     // Keep 1 harvester as emergency bootstrap in case all miners die
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 1 });
     // Upgrader: [WORK, WORK, CARRY, MOVE] × up to 4 = max 8W 4C 4M (1200 energy)
     // At 300: 2W 1C 1M — always affordable. Scales with extensions.
-    queue.push({ role: 'upgrader', pattern: [WORK, WORK, CARRY, MOVE], maxRepeats: 4, minCount: upgradersNeeded(room) });
+    queue.push({
+      role: 'upgrader',
+      pattern: [WORK, WORK, CARRY, MOVE],
+      maxRepeats: 4,
+      minCount: upgradersNeeded(room),
+    });
     // Builder: [WORK, CARRY, MOVE, MOVE] × up to 4 = max 4W 4C 8M (800 energy)
     // Needs more MOVE for travel between source and construction sites.
-    queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE, MOVE], maxRepeats: 4, minCount: buildersNeeded(room) });
+    queue.push({
+      role: 'builder',
+      pattern: [WORK, CARRY, MOVE, MOVE],
+      maxRepeats: 4,
+      minCount: buildersNeeded(room),
+    });
     queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
     const mineralMiners = mineralMinersNeeded(room);
     if (mineralMiners > 0) {
-      queue.push({ role: 'mineralMiner', pattern: [WORK, WORK, MOVE], maxRepeats: 5, minCount: mineralMiners });
+      queue.push({
+        role: 'mineralMiner',
+        pattern: [WORK, WORK, MOVE],
+        maxRepeats: 5,
+        minCount: mineralMiners,
+      });
     }
   } else {
     // Bootstrap economy: original patterns

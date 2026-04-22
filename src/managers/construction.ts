@@ -74,24 +74,72 @@ function findOpenPosition(
 // Layout fills four quadrants in a checkerboard, closest positions first.
 const EXTENSION_STAMP: [number, number][] = [
   // Quadrant fills, ring 1 (distance ~2): RCL 2 (5 extensions)
-  [-1, -2], [1, -2], [-2, -1], [2, -1], [-2, 1],
+  [-1, -2],
+  [1, -2],
+  [-2, -1],
+  [2, -1],
+  [-2, 1],
   // Ring 2 (distance ~2-3): RCL 3 (10 total)
-  [2, 1], [-1, 2], [1, 2], [-2, -2], [2, -2],
+  [2, 1],
+  [-1, 2],
+  [1, 2],
+  [-2, -2],
+  [2, -2],
   // Ring 3 (distance ~3): RCL 4 (20 total)
-  [-2, 2], [2, 2], [-1, -3], [1, -3], [-3, -1],
-  [3, -1], [-3, 1], [3, 1], [-1, 3], [1, 3],
+  [-2, 2],
+  [2, 2],
+  [-1, -3],
+  [1, -3],
+  [-3, -1],
+  [3, -1],
+  [-3, 1],
+  [3, 1],
+  [-1, 3],
+  [1, 3],
   // Ring 4 (distance ~3-4): RCL 5 (30 total)
-  [-3, -2], [3, -2], [-3, 2], [3, 2], [-2, -3],
-  [2, -3], [-2, 3], [2, 3], [-3, -3], [3, -3],
+  [-3, -2],
+  [3, -2],
+  [-3, 2],
+  [3, 2],
+  [-2, -3],
+  [2, -3],
+  [-2, 3],
+  [2, 3],
+  [-3, -3],
+  [3, -3],
   // Ring 5 (distance ~4): RCL 6 (40 total)
-  [-3, 3], [3, 3], [-1, -4], [1, -4], [-4, -1],
-  [4, -1], [-4, 1], [4, 1], [-1, 4], [1, 4],
+  [-3, 3],
+  [3, 3],
+  [-1, -4],
+  [1, -4],
+  [-4, -1],
+  [4, -1],
+  [-4, 1],
+  [4, 1],
+  [-1, 4],
+  [1, 4],
   // Ring 6 (distance ~4-5): RCL 7 (50 total)
-  [-4, -2], [4, -2], [-4, 2], [4, 2], [-2, -4],
-  [2, -4], [-2, 4], [2, 4], [-4, -3], [4, -3],
+  [-4, -2],
+  [4, -2],
+  [-4, 2],
+  [4, 2],
+  [-2, -4],
+  [2, -4],
+  [-2, 4],
+  [2, 4],
+  [-4, -3],
+  [4, -3],
   // Ring 7 (distance ~5): RCL 8 (60 total)
-  [-4, 3], [4, 3], [-3, -4], [3, -4], [-3, 4],
-  [3, 4], [-4, -4], [4, -4], [-4, 4], [4, 4],
+  [-4, 3],
+  [4, 3],
+  [-3, -4],
+  [3, -4],
+  [-3, 4],
+  [3, 4],
+  [-4, -4],
+  [4, -4],
+  [-4, 4],
+  [4, 4],
 ];
 
 function placeExtensions(room: Room): void {
@@ -113,8 +161,7 @@ function placeExtensions(room: Room): void {
 
     const pos = new RoomPosition(x, y, room.name);
     const blocked =
-      pos.lookFor(LOOK_STRUCTURES).length > 0 ||
-      pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
     if (blocked) continue;
 
     room.createConstructionSite(pos, STRUCTURE_EXTENSION);

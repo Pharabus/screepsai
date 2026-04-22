@@ -7,7 +7,10 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ["vitest.config.ts"],
+          defaultProject: "tsconfig.test.json",
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -18,6 +21,18 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-require-imports": "off", // needed for Screeps source map loading
+    },
+  },
+  {
+    files: ["test/**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: "./tsconfig.test.json",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
   {

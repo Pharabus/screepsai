@@ -39,15 +39,17 @@ export function runTowers(): void {
 
     // Cache repair target per room (avoids per-tower find)
     const maxWallHits = wallRepairMax(room);
-    const repairTarget = cached('towers:repair:' + room.name, () =>
-      room.find(FIND_STRUCTURES, {
-        filter: (s) => {
-          if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
-            return s.hits < maxWallHits;
-          }
-          return s.hits < s.hitsMax * REPAIR_THRESHOLD;
-        },
-      })[0],
+    const repairTarget = cached(
+      'towers:repair:' + room.name,
+      () =>
+        room.find(FIND_STRUCTURES, {
+          filter: (s) => {
+            if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
+              return s.hits < maxWallHits;
+            }
+            return s.hits < s.hitsMax * REPAIR_THRESHOLD;
+          },
+        })[0],
     );
 
     for (const tower of towers) {

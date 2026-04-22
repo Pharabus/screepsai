@@ -217,11 +217,7 @@ function getWalkableAdjacent(pos: RoomPosition): RoomPosition[] {
   return result;
 }
 
-function getPath(
-  creep: Creep,
-  target: RoomPosition,
-  range: number,
-): RoomPosition[] {
+function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   const cacheKey = `traffic:path:${creep.name}`;
   return cached(cacheKey, () => {
     const costMatrix = getRoomCostMatrix(creep.room);

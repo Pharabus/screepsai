@@ -29,7 +29,9 @@ export const status = () => {
     const containers = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
     const links = mem?.sources?.filter((s) => !!s.linkId).length ?? 0;
     const storageLink = mem?.storageLinkId ? 'yes' : 'no';
-    lines.push(`${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}, links=${links}, storageLink=${storageLink}`);
+    lines.push(
+      `${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}, links=${links}, storageLink=${storageLink}`,
+    );
   }
   return lines.join('\n') || 'no owned rooms';
 };

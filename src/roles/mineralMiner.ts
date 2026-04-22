@@ -21,12 +21,18 @@ const states: StateMachineDefinition = {
         const container = Game.getObjectById(mem.mineralContainerId);
         if (container) {
           if (creep.pos.isEqualTo(container.pos)) return 'HARVEST';
-          moveTo(creep, container, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#cc66ff' } });
+          moveTo(creep, container, {
+            priority: PRIORITY_WORKER,
+            visualizePathStyle: { stroke: '#cc66ff' },
+          });
           return undefined;
         }
       }
       if (creep.pos.isNearTo(mineral)) return 'HARVEST';
-      moveTo(creep, mineral, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#cc66ff' } });
+      moveTo(creep, mineral, {
+        priority: PRIORITY_WORKER,
+        visualizePathStyle: { stroke: '#cc66ff' },
+      });
       return undefined;
     },
   },

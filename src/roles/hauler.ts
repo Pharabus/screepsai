@@ -32,7 +32,10 @@ function pickup(creep: Creep): void {
   });
   if (dropped) {
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, dropped, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffaa00' } });
+      moveTo(creep, dropped, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
     }
     return;
   }
@@ -42,7 +45,10 @@ function pickup(creep: Creep): void {
     const storageLink = Game.getObjectById(mem.storageLinkId);
     if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
       if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storageLink, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffaa00' } });
+        moveTo(creep, storageLink, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
       }
       return;
     }
@@ -50,20 +56,21 @@ function pickup(creep: Creep): void {
 
   const containers = creep.room.find(FIND_STRUCTURES, {
     filter: (s): s is StructureContainer =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
+      s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
   });
 
   const controllerContainerId = mem?.controllerContainerId;
   const sourceContainers = containers.filter((c) => c.id !== controllerContainerId);
   const target = sourceContainers.sort(
-    (a, b) =>
-      b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),
+    (a, b) => b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),
   )[0];
 
   if (target) {
     if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, target, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffaa00' } });
+      moveTo(creep, target, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
     }
     return;
   }
@@ -81,7 +88,10 @@ function pickup(creep: Creep): void {
       );
       if (mineralType) {
         if (creep.withdraw(mineralContainer, mineralType) === ERR_NOT_IN_RANGE) {
-          moveTo(creep, mineralContainer, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#cc66ff' } });
+          moveTo(creep, mineralContainer, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#cc66ff' },
+          });
         }
         return;
       }
@@ -100,13 +110,15 @@ function pickup(creep: Creep): void {
       creep.room.find(FIND_MY_STRUCTURES, {
         filter: (s): s is StructureTower =>
           s.structureType === STRUCTURE_TOWER &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) >
-            s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
       }).length > 0;
 
     if (hasSpawnNeed || hasTowerNeed) {
       if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storage, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffaa00' } });
+        moveTo(creep, storage, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
       }
     }
   }
@@ -122,7 +134,10 @@ function deliver(creep: Creep): void {
       );
       if (mineralType) {
         if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
-          moveTo(creep, storage, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#cc66ff' } });
+          moveTo(creep, storage, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#cc66ff' },
+          });
         }
         return;
       }
@@ -136,7 +151,10 @@ function deliver(creep: Creep): void {
   });
   if (spawnTarget) {
     if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, spawnTarget, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffffff' } });
+      moveTo(creep, spawnTarget, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffffff' },
+      });
     }
     return;
   }
@@ -144,12 +162,14 @@ function deliver(creep: Creep): void {
   const tower = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
     filter: (s): s is StructureTower =>
       s.structureType === STRUCTURE_TOWER &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) >
-        s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
+      s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
   });
   if (tower) {
     if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, tower, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffffff' } });
+      moveTo(creep, tower, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffffff' },
+      });
     }
     return;
   }
@@ -157,12 +177,12 @@ function deliver(creep: Creep): void {
   const mem = Memory.rooms[creep.room.name];
   if (mem?.controllerContainerId) {
     const controllerContainer = Game.getObjectById(mem.controllerContainerId);
-    if (
-      controllerContainer &&
-      controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    ) {
+    if (controllerContainer && controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
       if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, controllerContainer, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffffff' } });
+        moveTo(creep, controllerContainer, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffffff' },
+        });
       }
       return;
     }
@@ -171,7 +191,10 @@ function deliver(creep: Creep): void {
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, storage, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ffffff' } });
+      moveTo(creep, storage, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffffff' },
+      });
     }
     return;
   }

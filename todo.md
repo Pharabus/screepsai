@@ -145,6 +145,6 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 ## Testing & Quality
 
-- [ ] **Add unit tests** - Use Vitest or Jest with mocked Screeps globals to test role logic, spawn decisions, etc.
-- [ ] **Add a CI pipeline** - GitHub Actions or similar to run `tsc --noEmit`, lint, and tests on every push.
-- [ ] **Add pre-commit hooks** - Use `husky` + `lint-staged` to run type-checking and linting before commits.
+- [x] **Add unit tests** - Vitest with hand-rolled Screeps mocks (`test/mocks/screeps.ts`). 48 tests covering `buildBody`, `tickCache`, `stateMachine`, `threatScore`/`pickPriorityTarget`, and `spawner` (buildSpawnQueue, minersNeeded, haulersNeeded, upgradersNeeded). Run via `npm test`, watch mode via `npm run test:watch`, coverage via `npm run test:coverage`.
+- [x] **Add a CI pipeline** - GitHub Actions (`.github/workflows/ci.yml`) runs tsc, lint, format:check, test, and build on push/PR to main.
+- [x] **Add pre-commit hooks** - husky + lint-staged runs `prettier --check` and `eslint --max-warnings=0` on staged `.ts` files. `tsc --noEmit` only in CI (too slow for pre-commit).
