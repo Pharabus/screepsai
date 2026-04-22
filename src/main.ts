@@ -9,13 +9,9 @@ import { runLinks } from './managers/links';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
 import { flushSegments } from './utils/segments';
-import { profile, installProfilerGlobals, formatStats, resetStatsNow } from './utils/profiler';
+import { profile, formatStats, resetStatsNow } from './utils/profiler';
 
-// Runs once per global reset (new IVM sandbox).
-installProfilerGlobals();
-
-// Also export as module.exports properties — the Screeps console can call any
-// export from the main module directly (e.g. `stats()` in console).
+// Console-callable exports.
 export const stats = () => formatStats();
 export const resetStats = () => {
   resetStatsNow();
@@ -36,6 +32,11 @@ export const status = () => {
   }
   return lines.join('\n') || 'no owned rooms';
 };
+
+// Register console globals (Screeps IVM evaluates console input against `global`)
+global.stats = stats;
+global.resetStats = resetStats;
+global.status = status;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {
