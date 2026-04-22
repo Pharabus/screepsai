@@ -1,8 +1,26 @@
 import { pickPriorityTarget } from '../utils/threat';
+import { cached } from '../utils/tickCache';
 
 const REPAIR_THRESHOLD = 0.75;
-const WALL_REPAIR_MAX = 10_000; // don't dump all energy into walls
-const COMBAT_ENERGY_RESERVE = 0.5; // min fill before using towers for repair
+const COMBAT_ENERGY_RESERVE = 0.5;
+
+const WALL_CAPS: Record<number, number> = {
+  3: 10_000,
+  4: 50_000,
+  5: 300_000,
+  6: 1_000_000,
+  7: 5_000_000,
+  8: 50_000_000,
+};
+
+function wallRepairMax(room: Room): number {
+  return cached('towers:wallMax:' + room.name, () => {
+    const rcl = room.controller?.level ?? 0;
+    const cap = WALL_CAPS[rcl] ?? 10_000;
+    const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    return Math.max(10_000, Math.min(Math.floor(stored * 0.5), cap));
+  });
+}
 
 export function runTowers(): void {
   for (const room of Object.values(Game.rooms)) {
@@ -19,8 +37,20 @@ export function runTowers(): void {
       continue;
     }
 
+    // Cache repair target per room (avoids per-tower find)
+    const maxWallHits = wallRepairMax(room);
+    const repairTarget = cached('towers:repair:' + room.name, () =>
+      room.find(FIND_STRUCTURES, {
+        filter: (s) => {
+          if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
+            return s.hits < maxWallHits;
+          }
+          return s.hits < s.hitsMax * REPAIR_THRESHOLD;
+        },
+      })[0],
+    );
+
     for (const tower of towers) {
-      // Priority 2: heal the closest damaged friendly.
       const wounded = tower.pos.findClosestByRange(FIND_MY_CREEPS, {
         filter: (c) => c.hits < c.hitsMax,
       });
@@ -29,8 +59,6 @@ export function runTowers(): void {
         continue;
       }
 
-      // Priority 3: repair — only if the tower is above the combat reserve,
-      // so we always have energy on hand when hostiles arrive.
       if (
         tower.store.getUsedCapacity(RESOURCE_ENERGY) <
         tower.store.getCapacity(RESOURCE_ENERGY) * COMBAT_ENERGY_RESERVE
@@ -38,15 +66,7 @@ export function runTowers(): void {
         continue;
       }
 
-      const damaged = tower.pos.findClosestByRange(FIND_STRUCTURES, {
-        filter: (s) => {
-          if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
-            return s.hits < WALL_REPAIR_MAX;
-          }
-          return s.hits < s.hitsMax * REPAIR_THRESHOLD;
-        },
-      });
-      if (damaged) tower.repair(damaged);
+      if (repairTarget) tower.repair(repairTarget);
     }
   }
 }

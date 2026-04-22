@@ -5,6 +5,7 @@ import { runTowers } from './managers/towers';
 import { runConstruction } from './managers/construction';
 import { runDefense } from './managers/defense';
 import { runVisuals } from './managers/visuals';
+import { runLinks } from './managers/links';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
 import { flushSegments } from './utils/segments';
@@ -29,7 +30,9 @@ export const status = () => {
     const rcl = room.controller.level;
     const sources = mem?.sources?.length ?? '?';
     const containers = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
-    lines.push(`${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}`);
+    const links = mem?.sources?.filter((s) => !!s.linkId).length ?? 0;
+    const storageLink = mem?.storageLinkId ? 'yes' : 'no';
+    lines.push(`${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}, links=${links}, storageLink=${storageLink}`);
   }
   return lines.join('\n') || 'no owned rooms';
 };
@@ -43,6 +46,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     // build defenders and before towers pick their focus-fire target.
     profile('defense', runDefense);
     profile('spawner', runSpawner);
+    profile('links', runLinks);
     profile('rooms', runRooms);
     profile('towers', runTowers);
     profile('construction', runConstruction);

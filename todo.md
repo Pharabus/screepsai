@@ -69,7 +69,8 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 - [x] **Extend `CreepRoleName` and memory for energy logistics** — Added `miner` and `hauler` to `CreepRoleName`. Extended `CreepMemory` with `targetId`, `working`. Extended `RoomMemory` with `sources[]` (id, containerId, minerName), `controllerContainerId`, `minerEconomy`. Remaining non-energy roles (`depositMiner`, `powerMiner`, `powerHealer`, `powerHauler`) and fields (`resource`, `home`) deferred to later stages.
 - [x] **Per-role body patterns in spawner** — Spawner now uses role-specific patterns: miner `[WORK×5, MOVE]`, hauler `[CARRY×2, MOVE×2]`, upgrader `[WORK×3, CARRY, MOVE×2]`, builder `[WORK×2, CARRY, MOVE×2]` in miner economy. Bootstrap economy retains `[WORK, CARRY, MOVE]` for all roles. `buildBody` util unchanged; patterns passed per-role via the spawn queue.
-- [ ] **RCL-gated construction planner extensions** — Extend `src/managers/construction.ts` with placement for: container under mineral, extractor on mineral (RCL 6), terminal near storage (RCL 6), factory (RCL 7), labs cluster (RCL 6+, expand at 7 and 8), power spawn + observer (RCL 8). Add `MAX_*` maps and `place*` functions mirroring the existing extension/tower pattern.
+- [x] **RCL-gated construction planner extensions (RCL 5-6)** — Added `placeLinks` (RCL 5+: storage link, source links, controller link at RCL 6), `placeExtractor` + `placeMineralContainer` (RCL 6), `placeTerminal` (RCL 6). Remaining: factory (RCL 7), labs cluster (RCL 6+), power spawn + observer (RCL 8).
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — Factory (RCL 7), labs cluster (RCL 6+, expand at 7 and 8), power spawn + observer (RCL 8).
 - [x] **Room memory & planning layer** — `src/utils/roomPlanner.ts` caches source IDs, container assignments, miner assignments, and controller container ID into `RoomMemory`. `ensureRoomPlan(room)` validates each tick (cheap after first scan). Auto-detects miner economy transition when first source container is built.
 
 ##### Stage 1 — Storage + hauler logistics (RCL 4)
@@ -79,12 +80,20 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Static `miner` role for energy sources** — `src/roles/miner.ts`. `[WORK×5, MOVE]` body. Assigned a source via `roomPlanner.findUnminedSource`, moves to its container tile and harvests indefinitely. 5 WORK fully drains the source per regen cycle.
 - [x] **Container placement on source paths** — `placeSourceContainers(room)` at RCL ≥ 2. Places on first path step from source toward spawn (adjacent to source, on road). Also added `placeControllerContainer(room)` within range 2 of controller for upgraders.
 
+##### Stage 1.5 — Link network (RCL 5)
+
+- [x] **Link construction placement** — `placeLinks(room)` places storage link (receiver, priority), source links (sender, most distant first), controller link (RCL 6+). `MAX_LINKS` table. Room planner discovers and caches link IDs with source/storage/controller link disambiguation.
+- [x] **Link manager** — `src/managers/links.ts` `runLinks()` transfers energy from source links to storage link (primary) or controller link (secondary). Runs after spawner, before rooms in tick pipeline.
+- [x] **Miner link integration** — Miner transfers energy to adjacent link after harvesting (requires CARRY parts). Falls back to container overflow if link is full.
+- [x] **Hauler link integration** — Hauler empties storage link as highest-priority pickup (after dropped resources). Hauler count reduced for linked sources (1 hauler vs 2-3 for unlinked).
+- [x] **Miner body scaling** — Pattern changed to `[WORK,WORK,CARRY,MOVE]` x3 (was `[WORK,WORK,MOVE]` x3). CARRY enables link transfers. 6W fully saturates source at 800+ capacity.
+
 ##### Stage 2 — Mineral mining (RCL 6)
 
-- [ ] **Place Extractor + Container on the room's mineral** — Single mineral per room, `room.find(FIND_MINERALS)[0]`. Extractor on top, container 1 tile away. Gate on RCL ≥ 6.
-- [ ] **Add `mineralMiner` role** — Heavy WORK body. Checks `mineral.mineralAmount > 0` and `mineral.ticksToRegeneration` before harvesting (minerals have cooldowns and can deplete for ~50k ticks). Stands on the container tile.
-- [ ] **Teach hauler about mineral containers** — Hauler should drain the mineral container into the Storage, then Storage → Terminal when storage threshold is hit.
-- [ ] **Place Terminal** — Required for market trading and cross-shard transfers. Construction manager at RCL ≥ 6.
+- [x] **Place Extractor + Container on the room's mineral** — `placeExtractor(room)` places `STRUCTURE_EXTRACTOR` on mineral at RCL 6+. `placeMineralContainer(room)` places container adjacent to mineral. Room planner discovers mineral ID and container.
+- [x] **Add `mineralMiner` role** — `src/roles/mineralMiner.ts`. Stands on mineral container, harvests when `mineralAmount > 0`. Body: `[WORK,WORK,MOVE]` x5. Spawned at low priority when extractor built + container exists + mineral not depleted.
+- [x] **Teach hauler about mineral containers** — Hauler picks up non-energy resources from mineral container and delivers directly to storage (skipping spawn/extensions/towers).
+- [x] **Place Terminal** — `placeTerminal(room)` at RCL 6+, within 1-3 tiles of storage.
 - [ ] **Basic terminal policy** — If storage has > N of a mineral, push excess into the terminal. Stub for later market sell orders.
 
 ##### Stage 3 — Labs & boosts (RCL 6 → 8)
@@ -123,6 +132,8 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Hauler storage withdrawal guard** - Haulers only withdraw from storage when spawn/extensions or towers (below 75%) need energy. Prevents draining storage to fill controller container.
 - [x] **Clustered extension placement** - Extensions now use a stamp pattern (`EXTENSION_STAMP` in construction.ts) instead of ring scanning. Compact diamond layout leaving road corridors on dx=0/dy=0 axes. Falls back to `findOpenPosition()` if all stamp cells are terrain-blocked.
 - [x] **Rampart placement on critical structures** - `placeRamparts()` at RCL ≥ 3 places ramparts on spawns, towers, and storage. One per tick. Towers already repair ramparts (capped at 10k hits).
+- [x] **Wall/rampart repair scaling** - `wallRepairMax(room)` replaces hardcoded 10k cap. Scales with storage energy (stored × 0.5) clamped to per-RCL caps: 3=10k, 4=50k, 5=300k, 6=1M, 7=5M, 8=50M. Cached per room per tick.
+- [x] **CPU optimizations** - Construction runs every 5 ticks instead of every tick. Tower repair target cached per room (shared across towers). `status()` console command shows link info.
 - [x] **Dynamic spawn counts for all roles** - All role counts in `spawner.ts` are now computed per-room per-tick via `*Needed(room)` functions: `buildersNeeded` scales 1–3 by `ceil(constructionSites / 3)`, `repairersNeeded` scales 1–2 when >5 structures below 75% HP, `upgradersNeeded` scales 1–3 by room energy capacity, `haulersNeeded` 2–3 per source container, `minersNeeded` 1 per container without a miner, `defendersNeeded` by threat score. No hardcoded minimums except bootstrap harvesters (2) and emergency miner-economy harvester (1). Idle builders/repairers fall back to upgrading.
 - [ ] **Add multi-room support** - Scout, claim, and manage remote rooms for resource harvesting.
 - [x] **Add resource logistics (phase 1)** - Static miner + hauler + container mining economy with automatic transition from bootstrap. Link networks and terminal trading deferred to later stages.

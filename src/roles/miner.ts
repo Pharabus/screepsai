@@ -42,7 +42,14 @@ export const miner: Role = {
       return;
     }
 
-    // Harvest
     creep.harvest(source);
+
+    // Transfer energy to adjacent link if available (requires CARRY parts)
+    if (entry?.linkId && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      const link = Game.getObjectById(entry.linkId);
+      if (link && link.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+        creep.transfer(link, RESOURCE_ENERGY);
+      }
+    }
   },
 };

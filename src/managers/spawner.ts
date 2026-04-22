@@ -1,7 +1,7 @@
 import { buildBody } from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
-import { ensureRoomPlan } from '../utils/roomPlanner';
+import { ensureRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -42,11 +42,18 @@ function minersNeeded(room: Room): number {
 function haulersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.sources) return 0;
-  const containerCount = mem.sources.filter((s) => !!s.containerId).length;
-  if (containerCount === 0) return 0;
-  // Bigger hauler bodies at higher capacity means fewer needed
-  const perSource = room.energyCapacityAvailable >= 800 ? 2 : 3;
-  return containerCount * perSource;
+  const withContainers = mem.sources.filter((s) => !!s.containerId);
+  if (withContainers.length === 0) return 0;
+
+  const perUnlinked = room.energyCapacityAvailable >= 800 ? 2 : 3;
+  const linked = withContainers.filter(
+    (s) => s.linkId && Game.getObjectById(s.linkId as Id<StructureLink>),
+  ).length;
+  const unlinked = withContainers.length - linked;
+
+  // Linked sources need 1 hauler (storage link emptying + overflow);
+  // unlinked sources need full hauler complement
+  return unlinked * perUnlinked + Math.min(linked, 1);
 }
 
 /**
@@ -102,6 +109,17 @@ function repairersNeeded(room: Room): number {
   return 1;
 }
 
+function mineralMinersNeeded(room: Room): number {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return 0;
+  // Check if extractor is built
+  const hasExtractor = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
+  }).length > 0;
+  if (!hasExtractor) return 0;
+  return needsMineralMiner(room.name) ? 1 : 0;
+}
+
 function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
@@ -118,11 +136,10 @@ function buildSpawnQueue(room: Room): SpawnRequest[] {
     // then harvesters as emergency bootstrap if both die, then upgraders/builders.
     const miners = minersNeeded(room);
     if (miners > 0) {
-      // [WORK, WORK, MOVE] repeated up to 3× = max 6 WORK, 3 MOVE (750 energy).
-      // At low capacity (300): 2W 1M (250 energy) — still useful.
-      // At 550+: 4W 2M — nearly saturates a source.
-      // At 750+: 6W 3M — fully saturates with margin.
-      queue.push({ role: 'miner', pattern: [WORK, WORK, MOVE], maxRepeats: 3, minCount: miners + countCreepsByRole('miner') });
+      // [WORK, WORK, CARRY, MOVE] x3 = max 6W 3C 3M (900 energy).
+      // CARRY enables link transfers. At 300: 2W 1C 1M.
+      // At 550+: 4W 2C 2M. At 800+: 6W 3C 3M — fully saturates source.
+      queue.push({ role: 'miner', pattern: [WORK, WORK, CARRY, MOVE], maxRepeats: 3, minCount: miners + countCreepsByRole('miner') });
     }
     queue.push({ role: 'hauler', pattern: [CARRY, CARRY, MOVE, MOVE], minCount: haulersNeeded(room) });
     // Keep 1 harvester as emergency bootstrap in case all miners die
@@ -134,6 +151,10 @@ function buildSpawnQueue(room: Room): SpawnRequest[] {
     // Needs more MOVE for travel between source and construction sites.
     queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE, MOVE], maxRepeats: 4, minCount: buildersNeeded(room) });
     queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
+    const mineralMiners = mineralMinersNeeded(room);
+    if (mineralMiners > 0) {
+      queue.push({ role: 'mineralMiner', pattern: [WORK, WORK, MOVE], maxRepeats: 5, minCount: mineralMiners });
+    }
   } else {
     // Bootstrap economy: original patterns
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });

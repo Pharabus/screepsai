@@ -1,9 +1,17 @@
-type CreepRoleName = 'harvester' | 'upgrader' | 'builder' | 'repairer' | 'defender' | 'miner' | 'hauler';
+type CreepRoleName =
+  | 'harvester'
+  | 'upgrader'
+  | 'builder'
+  | 'repairer'
+  | 'defender'
+  | 'miner'
+  | 'hauler'
+  | 'mineralMiner';
 
 interface CreepMemory {
   role: CreepRoleName;
-  /** ID of the assigned target (source, container, controller, etc.) */
-  targetId?: Id<Source | StructureContainer | StructureStorage | StructureController>;
+  /** ID of the assigned target (source, container, controller, mineral, etc.) */
+  targetId?: Id<Source | Mineral | StructureContainer | StructureStorage | StructureController>;
   /** Toggle: true = working (upgrading/building/delivering), false = gathering */
   working?: boolean;
 }
@@ -18,12 +26,20 @@ interface RoomMemory {
   sources?: {
     id: Id<Source>;
     containerId?: Id<StructureContainer>;
+    linkId?: Id<StructureLink>;
     /** Name of the miner creep assigned to this source */
     minerName?: string;
   }[];
   controllerContainerId?: Id<StructureContainer>;
   /** Set to true once containers are built and the room transitions to miner+hauler economy */
   minerEconomy?: boolean;
+  // Links (src/managers/links.ts)
+  storageLinkId?: Id<StructureLink>;
+  controllerLinkId?: Id<StructureLink>;
+  // Mineral mining (RCL 6+)
+  mineralId?: Id<Mineral>;
+  mineralContainerId?: Id<StructureContainer>;
+  mineralMinerName?: string;
 }
 
 interface ProfilerSample {

@@ -39,6 +39,18 @@ function pickup(creep: Creep): void {
     return;
   }
 
+  // Withdraw from storage link (receives energy from source links)
+  const mem = Memory.rooms[creep.room.name];
+  if (mem?.storageLinkId) {
+    const storageLink = Game.getObjectById(mem.storageLinkId);
+    if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storageLink, { visualizePathStyle: { stroke: '#ffaa00' } });
+      }
+      return;
+    }
+  }
+
   // Then withdraw from the fullest source container
   const containers = creep.room.find(FIND_STRUCTURES, {
     filter: (s): s is StructureContainer =>
@@ -47,7 +59,6 @@ function pickup(creep: Creep): void {
   });
 
   // Prefer source containers (exclude the controller container)
-  const mem = Memory.rooms[creep.room.name];
   const controllerContainerId = mem?.controllerContainerId;
   const sourceContainers = containers.filter((c) => c.id !== controllerContainerId);
   const target = sourceContainers.sort(
@@ -59,6 +70,21 @@ function pickup(creep: Creep): void {
       moveTo(creep, target, { visualizePathStyle: { stroke: '#ffaa00' } });
     }
     return;
+  }
+
+  // Pick up minerals from mineral container
+  if (mem?.mineralContainerId) {
+    const mineralContainer = Game.getObjectById(mem.mineralContainerId);
+    if (mineralContainer && mineralContainer.store.getUsedCapacity() > mineralContainer.store.getUsedCapacity(RESOURCE_ENERGY)) {
+      const mineralTypes = Object.keys(mineralContainer.store) as ResourceConstant[];
+      const mineralType = mineralTypes.find((r) => r !== RESOURCE_ENERGY && mineralContainer.store.getUsedCapacity(r) > 0);
+      if (mineralType) {
+        if (creep.withdraw(mineralContainer, mineralType) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, mineralContainer, { visualizePathStyle: { stroke: '#cc66ff' } });
+        }
+        return;
+      }
+    }
   }
 
   // Fallback: withdraw from storage only if a critical target needs energy
@@ -84,6 +110,21 @@ function pickup(creep: Creep): void {
 }
 
 function deliver(creep: Creep): void {
+  // If carrying non-energy resources, deliver directly to storage
+  if (creep.store.getUsedCapacity() > creep.store.getUsedCapacity(RESOURCE_ENERGY)) {
+    const storage = creep.room.storage;
+    if (storage) {
+      const resourceTypes = Object.keys(creep.store) as ResourceConstant[];
+      const mineralType = resourceTypes.find((r) => r !== RESOURCE_ENERGY && creep.store.getUsedCapacity(r) > 0);
+      if (mineralType) {
+        if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, storage, { visualizePathStyle: { stroke: '#cc66ff' } });
+        }
+        return;
+      }
+    }
+  }
+
   // Priority 1: Spawn and extensions
   const spawnTarget = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
     filter: (s) =>

@@ -1,13 +1,14 @@
 # Screeps AI
 
-A TypeScript Screeps AI focused on automated room bootstrapping: spawning a balanced creep workforce, expanding the base (extensions, towers, roads) as the controller levels up, and defending with towers.
+A TypeScript Screeps AI focused on automated room management from RCL 1 through RCL 6+: bootstrapping a creep workforce, transitioning to a miner/hauler/link economy, expanding the base (extensions, towers, roads, storage, links, terminal, extractor), defending with towers and defenders, and mining minerals.
 
 ## Features
 
 - **TypeScript** with strict mode, bundled by Rollup into a single `dist/main.js`.
 - **ErrorMapper** to translate runtime errors back to TypeScript source lines.
 - **Priority-based spawner** that maintains minimum creep counts per role and scales bodies to the room's `energyCapacityAvailable`.
-- **Automated construction manager** that places extensions, towers, and roads based on RCL.
+- **Automated construction manager** that places extensions (stamp layout), towers, containers, storage, links, terminal, extractor, roads, and ramparts based on RCL.
+- **Link network** (RCL 5+) — source links near miners transfer energy instantly to a storage link; hauler count auto-reduces for linked sources.
 - **Defense stack** — threat-scored focus-fire for towers, automatic safe-mode activation on base-perimeter breach, and reactive `defender` creeps spawned by a dynamic spawn queue.
 - **Load-balanced harvesting** that spreads creeps across available sources.
 - **Memory optimisations** — lazy `RawMemory` segment wrapper, per-tick cache, and one-shot Memory shape init to keep the per-tick JSON parse cheap as persistent data grows.
@@ -47,24 +48,26 @@ src/
   managers/
     spawner.ts            # Dynamic spawn queue, miner/bootstrap economy switch
     room.ts               # Per-tick creep dispatch + dead-creep memory cleanup
-    towers.ts             # Focus-fire attack / heal / repair logic for towers
-    construction.ts       # Places extensions, towers, containers, storage, roads by RCL
+    towers.ts             # Focus-fire attack / heal / repair with scaled wall targets
+    construction.ts       # Places extensions, towers, containers, storage, links, terminal, extractor, roads, ramparts by RCL
     defense.ts            # Threat tracking, safe-mode activation, defender demand
+    links.ts              # Link network: source links → storage/controller link transfers
     visuals.ts            # Opt-in RoomVisual overlays (gated by Memory.visuals)
   roles/
     Role.ts               # Role interface (run(creep))
     index.ts              # Role registry keyed by CreepRoleName
     harvester.ts          # Bootstrap economy energy delivery
     upgrader.ts           # Controller upgrader (container/storage or self-harvest)
-    builder.ts
-    repairer.ts
+    builder.ts            # Build sites, withdraw from logistics in miner economy
+    repairer.ts           # Repair structures, withdraw from logistics in miner economy
     defender.ts
-    miner.ts              # Static source miner (heavy WORK, sits on container)
-    hauler.ts             # Energy logistics (container → spawn/ext/tower/storage)
+    miner.ts              # Static source miner (heavy WORK+CARRY, link-aware)
+    hauler.ts             # Energy + mineral logistics (link/container → structures/storage)
+    mineralMiner.ts       # Mineral extractor miner (RCL 6+)
   utils/
     body.ts               # buildBody(pattern, energy, maxRepeats)
-    sources.ts            # findBestSource / harvestFromBestSource (load-balanced)
-    roomPlanner.ts        # Room plan caching (sources, containers, miner assignments)
+    sources.ts            # findBestSource / harvestFromBestSource / withdrawFromLogistics
+    roomPlanner.ts        # Room plan caching (sources, containers, links, minerals, miner assignments)
     threat.ts             # threatScore / pickPriorityTarget for hostile creeps
     ErrorMapper.ts        # Source-map aware error logging
     tickCache.ts          # Transient per-tick memoisation (cleared at loop start)
@@ -82,27 +85,29 @@ src/
 2. `resetTickCache()` — Clears the transient per-tick memoisation map.
 3. `runDefense()` — Refreshes per-room threat state and activates safe mode if a hostile has breached the base perimeter. Runs first so the spawner and towers both see the same threat view.
 4. `runSpawner()` — Walks the (dynamically built) spawn queue and issues one spawn per tick if a role is under its minimum.
-5. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler.
-6. `runTowers()` — All towers focus-fire the highest-threat hostile; otherwise heal wounded allies, then repair.
-7. `runConstruction()` — Places one new extension/tower/road site per tick as RCL allows.
-8. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true).
-9. `flushSegments()` — Serialises any mutated `RawMemory.segments` entries and registers requested segments for the next tick.
+5. `runLinks()` — Transfers energy from source links to storage/controller links. Runs before rooms so creeps see fresh link state.
+6. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler.
+7. `runTowers()` — All towers focus-fire the highest-threat hostile; otherwise heal wounded allies, then repair. Wall/rampart repair target scales with storage energy.
+8. `runConstruction()` — Runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, roads, ramparts — gated by RCL.
+9. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true).
+10. `flushSegments()` — Serialises any mutated `RawMemory.segments` entries and registers requested segments for the next tick.
 
-Each of steps 3–8 is wrapped in `profile(...)` so per-manager CPU cost surfaces in `stats()`. Per-creep dispatch in step 5 is labelled `role.<roleName>` for per-role CPU tracking.
+Each of steps 3–9 is wrapped in `profile(...)` so per-manager CPU cost surfaces in `stats()`. Per-creep dispatch in step 6 is labelled `role.<roleName>` for per-role CPU tracking.
 
 ## Roles
 
 All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts`. Each non-harvester role refills by calling `harvestFromBestSource` when empty, which picks the active source with the fewest nearby harvesters and breaks ties by distance (`src/utils/sources.ts`).
 
-| Role        | Minimum | Body pattern        | Behavior |
-|-------------|---------|---------------------|----------|
-| `miner`     | 1/source (miner economy) | `[WORK×5, MOVE]` | Sits on a container adjacent to its assigned source and harvests indefinitely. Never moves once positioned. 5 WORK = full source drain per regen cycle. |
-| `hauler`    | 2/source (miner economy) | `[CARRY, CARRY, MOVE, MOVE]` | Withdraws from source containers (or picks up drops), delivers to spawn/extensions/towers/controller container/storage. Uses `working` toggle. |
-| `harvester` | 2 (bootstrap) / 1 (miner economy) | `[WORK, CARRY, MOVE]` | Self-harvests then delivers energy to spawn/extension/tower. Acts as emergency bootstrap when all miners die. |
-| `upgrader`  | 2 (bootstrap) / 1–3 (miner economy) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×3, CARRY, MOVE×2]` | In miner economy: withdraws from controller container or storage, camps at controller (range 3). In bootstrap: self-harvests. |
-| `builder`   | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE×2]` | Builds construction sites, falls back to upgrading when idle. Scales up during heavy construction (many extensions/roads at once). |
-| `repairer`  | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. Scales to 2 when >5 structures need repair. |
-| `defender`  | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Rallies near spawn when idle. Only produced during active threats. |
+| Role           | Minimum | Body pattern        | Behavior |
+|----------------|---------|---------------------|----------|
+| `miner`        | 1/source (miner economy) | `[WORK×2, CARRY, MOVE]` ×3 | Sits on a container adjacent to its assigned source and harvests indefinitely. Transfers energy to adjacent link if available (requires CARRY). |
+| `hauler`       | 2-3/source unlinked, 1 total linked | `[CARRY×2, MOVE×2]` | Empties storage link (priority), then source containers, delivers to spawn/extensions/towers/controller container/storage. Picks up minerals from mineral container. |
+| `harvester`    | 2 (bootstrap) / 1 (miner economy) | `[WORK, CARRY, MOVE]` | Self-harvests then delivers energy to spawn/extension/tower. Acts as emergency bootstrap when all miners die. |
+| `upgrader`     | 2 (bootstrap) / 1–6 (miner economy) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE]` ×4 | In miner economy: withdraws from controller container or storage, camps at controller (range 3). Count scales with storage surplus. |
+| `builder`      | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4 | Builds construction sites, falls back to upgrading when idle. In miner economy: withdraws from containers/storage via `withdrawFromLogistics()`. |
+| `repairer`     | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. In miner economy: withdraws from containers/storage. |
+| `defender`     | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Rallies near spawn when idle. Only produced during active threats. |
+| `mineralMiner` | 0–1 (RCL 6+) | `[WORK×2, MOVE]` ×5 | Stands on mineral container and harvests when mineral is not depleted. Spawned only when extractor + container exist. |
 
 Bodies are generated by `buildBody` (`src/utils/body.ts`), which repeats the pattern as many times as `energyCapacityAvailable` allows (default cap: 50 / pattern length). As the room's energy capacity grows, newly spawned creeps automatically get larger bodies.
 
@@ -114,11 +119,12 @@ The spawn queue in `src/managers/spawner.ts` is rebuilt each tick per room by `b
 
 0. defender (dynamic — only when threats active)
 1. miner (1 per source with a container)
-2. hauler (2–3 per source container, fewer at higher energy capacity)
+2. hauler (2–3 per unlinked source, 1 total for linked sources)
 3. harvester (1 — emergency bootstrap)
-4. upgrader (1–3, scales with `energyCapacityAvailable`)
+4. upgrader (1–6, scales with capacity + storage surplus: >50k/200k/500k = +1/+2/+3)
 5. builder (1–3, scales with active construction sites: `ceil(sites / 3)`)
 6. repairer (1–2, scales to 2 when >5 damaged structures)
+7. mineralMiner (0–1, RCL 6+ when extractor + container + mineral available)
 
 **Bootstrap economy** (before containers):
 
@@ -138,40 +144,47 @@ Progression is driven by the controller level (RCL) of each owned room. The cons
 
 ### Structure caps per RCL
 
-| RCL | Extensions | Towers | Containers | Storage | Roads |
-|-----|------------|--------|------------|---------|-------|
-| 1   | 0          | 0      | —          | —       | —     |
-| 2   | 5          | 0      | Source + controller | — | Enabled: spawn → sources, spawn → controller |
-| 3   | 10         | 1      | "          | —       | "    |
-| 4   | 20         | 1      | "          | 1       | "    |
-| 5   | 30         | 2      | "          | "       | "    |
-| 6   | 40         | 2      | "          | "       | "    |
-| 7   | 50         | 3      | "          | "       | "    |
-| 8   | 60         | 6      | "          | "       | "    |
+| RCL | Extensions | Towers | Links | Containers | Storage | Other |
+|-----|------------|--------|-------|------------|---------|-------|
+| 1   | 0          | 0      | 0     | —          | —       | —     |
+| 2   | 5          | 0      | 0     | Source + controller | — | Roads |
+| 3   | 10         | 1      | 0     | "          | —       | Roads, ramparts |
+| 4   | 20         | 1      | 0     | "          | 1       | Roads, ramparts |
+| 5   | 30         | 2      | 2     | "          | "       | Roads, ramparts |
+| 6   | 40         | 2      | 3     | + mineral  | "       | Roads, ramparts, extractor, terminal |
+| 7   | 50         | 3      | 4     | "          | "       | "    |
+| 8   | 60         | 6      | 6     | "          | "       | "    |
 
-- **Extensions** are placed on ring positions 2–5 tiles from the first spawn, skipping walls and occupied tiles.
+- **Extensions** use a compact stamp pattern (`EXTENSION_STAMP`) around the spawn with road corridors on the cardinal axes. Falls back to ring scanning if stamp positions are terrain-blocked.
 - **Towers** are placed on ring positions 3–6 tiles from the first spawn.
 - **Source containers** are placed at RCL 2+ on the first path step from each source toward the spawn (so they sit on the road, adjacent to the source).
 - **Controller container** is placed at RCL 2+ within range 2 of the controller (on the path toward spawn), so upgraders can stand on it and still be in upgradeController range (3).
 - **Storage** is placed at RCL 4+ in an open position 2–4 tiles from the first spawn.
-- **Roads** start at RCL 2. The manager paths from the spawn to each source and to the controller, placing at most one road site per tick and capping open road sites at 3 to control CPU and construction-energy load.
+- **Links** are placed at RCL 5+. Priority: storage link (within 2 tiles of storage), then source link (within 2 tiles of most distant source), then controller link at RCL 6+ (within 3 tiles of controller).
+- **Extractor** is placed on the room mineral at RCL 6+. A mineral container is placed adjacent.
+- **Terminal** is placed at RCL 6+ within 1–3 tiles of storage.
+- **Ramparts** are placed at RCL 3+ on spawns, towers, and storage.
+- **Roads** start at RCL 2. The manager paths from the spawn to each source, the controller, and storage (when built), placing at most one road site per tick and capping open road sites at 3.
 
 ### Economy transition
 
 The room starts in **bootstrap economy** (harvesters self-harvest and deliver) and transitions to **miner economy** when the room planner (`src/utils/roomPlanner.ts`) detects the first source container is built. The transition is automatic and tracked via `RoomMemory.minerEconomy`.
 
 In miner economy:
-- Static **miners** (5 WORK + 1 MOVE) sit on source containers and harvest continuously.
-- **Haulers** (CARRY + MOVE) distribute energy from source containers to spawn/extensions/towers/controller container/storage.
-- **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently.
+- Static **miners** (WORK+CARRY+MOVE) sit on source containers and harvest continuously. With CARRY parts, they can transfer energy directly to adjacent links.
+- **Haulers** (CARRY + MOVE) empty the storage link (priority), then source containers, delivering to spawn/extensions/towers/controller container/storage.
+- **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently. Count scales with storage surplus.
+- **Builders** and **repairers** withdraw from the nearest source container or storage (via `withdrawFromLogistics()`) instead of self-harvesting.
 - One **harvester** is kept as an emergency bootstrap in case all miners die simultaneously.
 
-### Typical early-game flow
+### Typical progression
 
 1. **RCL 1 (bootstrap):** Two harvesters feed the spawn; two upgraders push the controller toward RCL 2. One builder and one repairer idle-upgrade until there is work.
 2. **RCL 2 (transition):** Extensions, roads, source containers, and controller container construction sites appear. Once the first source container is built, the room switches to miner economy — miners, haulers, and heavy-WORK upgraders replace the harvester-based flow. Upgrade throughput jumps significantly.
-3. **RCL 3:** The first tower goes up; the tower manager starts defending, healing, and repairing (holding 50% of its energy in reserve for combat). The repairer picks up the slack on non-wall structures below 75% HP.
-4. **RCL 4+:** The extension count keeps scaling, which in turn scales body sizes via `buildBody`. Additional towers come online at RCL 5, 7, and 8.
+3. **RCL 3:** The first tower goes up; ramparts are placed on critical structures. The tower manager starts defending, healing, and repairing (holding 50% of its energy in reserve for combat).
+4. **RCL 4:** Storage is built; haulers stockpile surplus. Upgrader count scales with storage energy (>50k/200k/500k). Extension stamp fills out to 20.
+5. **RCL 5:** Two links are built — storage link (receiver) and source link (sender). Miners transfer energy to the source link; it transfers instantly to the storage link; a hauler empties it. Hauler count drops for linked sources. Second tower comes online.
+6. **RCL 6:** Third link (controller or second source). Extractor + mineral container placed on the room mineral; a mineralMiner spawns. Terminal placed near storage. Haulers carry minerals to storage.
 
 ### Tower behavior
 
@@ -179,7 +192,7 @@ For each room with towers, each tick (`src/managers/towers.ts`):
 
 1. If any hostile is present, **every tower in the room focus-fires the highest-threat target** (see Defense below). Concentrating fire kills healers before they can negate the damage, which a closest-target approach can fail to do.
 2. Otherwise, each tower heals the closest damaged friendly creep.
-3. Otherwise, if the tower is at ≥50% energy, it repairs the closest damaged structure — walls and ramparts only if below 10,000 HP, other structures if below 75% of their max HP. The 50%-energy reserve guarantees combat responsiveness when hostiles arrive.
+3. Otherwise, if the tower is at ≥50% energy, it repairs damaged structures (cached per room per tick). Walls and ramparts are repaired up to `wallRepairMax(room)`, which scales with storage energy (stored × 0.5) clamped to per-RCL caps (10k at RCL 3, up to 50M at RCL 8). Other structures are repaired below 75% of max HP. The 50%-energy reserve guarantees combat responsiveness when hostiles arrive.
 
 ## Defense
 
@@ -245,7 +258,7 @@ Both default off.
 Instrumentation points (all gated by `Memory.profiling`, so production ticks pay ~nothing when it's off):
 
 - `main.loop` — the whole tick.
-- `spawner`, `rooms`, `towers`, `construction`, `visuals` — each manager.
+- `defense`, `spawner`, `links`, `rooms`, `towers`, `construction`, `visuals` — each manager.
 - `role.<roleName>` — per-creep dispatch, labelled with the role so hot roles surface separately.
 
 `installProfilerGlobals()` is called once per global reset from `main.ts`, registering two console-callable functions:

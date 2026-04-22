@@ -57,6 +57,83 @@ export function ensureRoomPlan(room: Room): void {
     }
   }
 
+  // Update link assignments for sources
+  for (const entry of mem.sources) {
+    if (entry.linkId) {
+      const link = Game.getObjectById(entry.linkId);
+      if (!link) entry.linkId = undefined;
+    }
+    if (!entry.linkId) {
+      const source = Game.getObjectById(entry.id);
+      if (source) {
+        const links = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+          filter: (s): s is StructureLink => s.structureType === STRUCTURE_LINK,
+        });
+        if (links.length > 0) entry.linkId = links[0]!.id;
+      }
+    }
+  }
+
+  // Update storage link
+  if (room.storage) {
+    if (mem.storageLinkId) {
+      const link = Game.getObjectById(mem.storageLinkId);
+      if (!link) mem.storageLinkId = undefined;
+    }
+    if (!mem.storageLinkId) {
+      const links = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+        filter: (s): s is StructureLink => s.structureType === STRUCTURE_LINK,
+      });
+      // Exclude links already assigned to sources
+      const sourceLinks = new Set(mem.sources.map((s) => s.linkId).filter(Boolean));
+      const storageLink = links.find((l) => !sourceLinks.has(l.id));
+      if (storageLink) mem.storageLinkId = storageLink.id;
+    }
+  }
+
+  // Update controller link
+  if (room.controller?.my) {
+    if (mem.controllerLinkId) {
+      const link = Game.getObjectById(mem.controllerLinkId);
+      if (!link) mem.controllerLinkId = undefined;
+    }
+    if (!mem.controllerLinkId) {
+      const links = room.controller.pos.findInRange(FIND_MY_STRUCTURES, 3, {
+        filter: (s): s is StructureLink => s.structureType === STRUCTURE_LINK,
+      });
+      const sourceLinks = new Set(mem.sources.map((s) => s.linkId).filter(Boolean));
+      const ctrlLink = links.find((l) => !sourceLinks.has(l.id) && l.id !== mem.storageLinkId);
+      if (ctrlLink) mem.controllerLinkId = ctrlLink.id;
+    }
+  }
+
+  // Mineral tracking (RCL 6+)
+  if (!mem.mineralId) {
+    const minerals = room.find(FIND_MINERALS);
+    if (minerals.length > 0) mem.mineralId = minerals[0]!.id;
+  }
+  if (mem.mineralId) {
+    if (mem.mineralContainerId) {
+      const c = Game.getObjectById(mem.mineralContainerId);
+      if (!c) mem.mineralContainerId = undefined;
+    }
+    if (!mem.mineralContainerId) {
+      const mineral = Game.getObjectById(mem.mineralId);
+      if (mineral) {
+        const containers = mineral.pos.findInRange(FIND_STRUCTURES, 1, {
+          filter: (s): s is StructureContainer => s.structureType === STRUCTURE_CONTAINER,
+        });
+        if (containers.length > 0) mem.mineralContainerId = containers[0]!.id;
+      }
+    }
+    if (mem.mineralMinerName) {
+      const creep = Game.creeps[mem.mineralMinerName];
+      if (!creep || creep.memory.role !== 'mineralMiner') {
+        mem.mineralMinerName = undefined;
+      }
+    }
+  }
+
   // Determine if we've transitioned to miner economy (at least one source has
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
@@ -93,4 +170,24 @@ export function assignMiner(roomName: string, sourceId: Id<Source>, creepName: s
   if (!mem?.sources) return;
   const entry = mem.sources.find((s) => s.id === sourceId);
   if (entry) entry.minerName = creepName;
+}
+
+/**
+ * Check if a room needs a mineral miner and doesn't have one assigned.
+ */
+export function needsMineralMiner(roomName: string): boolean {
+  const mem = Memory.rooms[roomName];
+  if (!mem?.mineralId || !mem.mineralContainerId) return false;
+  if (mem.mineralMinerName && Game.creeps[mem.mineralMinerName]) return false;
+  const mineral = Game.getObjectById(mem.mineralId);
+  if (!mineral || mineral.mineralAmount === 0) return false;
+  return true;
+}
+
+/**
+ * Assign a mineral miner creep in room memory.
+ */
+export function assignMineralMiner(roomName: string, creepName: string): void {
+  const mem = Memory.rooms[roomName];
+  if (mem) mem.mineralMinerName = creepName;
 }

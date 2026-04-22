@@ -23,6 +23,13 @@ const MAX_TOWERS: Record<number, number> = {
   8: 6,
 };
 
+const MAX_LINKS: Record<number, number> = {
+  5: 2,
+  6: 3,
+  7: 4,
+  8: 6,
+};
+
 function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
   const built = room.find(FIND_MY_STRUCTURES, {
     filter: (s) => s.structureType === type,
@@ -258,6 +265,152 @@ function placeRoads(room: Room): void {
   }
 }
 
+function placeTerminal(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return;
+  if (room.terminal) return;
+
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_TERMINAL,
+  });
+  if (sites.length > 0) return;
+  if (!room.storage) return;
+
+  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
+  if (pos) {
+    room.createConstructionSite(pos, STRUCTURE_TERMINAL);
+  }
+}
+
+function placeExtractor(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return;
+
+  const minerals = room.find(FIND_MINERALS);
+  const mineral = minerals[0];
+  if (!mineral) return;
+
+  const hasExtractor = mineral.pos
+    .lookFor(LOOK_STRUCTURES)
+    .some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+  const hasSite = mineral.pos
+    .lookFor(LOOK_CONSTRUCTION_SITES)
+    .some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+  if (hasExtractor || hasSite) return;
+
+  room.createConstructionSite(mineral.pos, STRUCTURE_EXTRACTOR);
+}
+
+function placeMineralContainer(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return;
+
+  const minerals = room.find(FIND_MINERALS);
+  const mineral = minerals[0];
+  if (!mineral) return;
+
+  // Only place after extractor exists (or is being built)
+  const hasExtractor =
+    mineral.pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_EXTRACTOR) ||
+    mineral.pos
+      .lookFor(LOOK_CONSTRUCTION_SITES)
+      .some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+  if (!hasExtractor) return;
+
+  const nearbyContainers = mineral.pos.findInRange(FIND_STRUCTURES, 1, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  const nearbySites = mineral.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 1, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  if (nearbyContainers.length > 0 || nearbySites.length > 0) return;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  const path = room.findPath(mineral.pos, anchor.pos, { ignoreCreeps: true });
+  const step = path[0];
+  if (step) {
+    room.createConstructionSite(step.x, step.y, STRUCTURE_CONTAINER);
+  }
+}
+
+function placeLinks(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  const max = MAX_LINKS[rcl] ?? 0;
+  if (max === 0) return;
+  const current = countStructuresAndSites(room, STRUCTURE_LINK);
+  if (current >= max) return;
+
+  const mem = Memory.rooms[room.name];
+
+  // Priority 1: storage link (receiver — must exist before source links are useful)
+  if (room.storage && !mem?.storageLinkId) {
+    const existing = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    });
+    const existingSites = room.storage.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 2, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    });
+    if (existing.length === 0 && existingSites.length === 0) {
+      const pos = findOpenPosition(room, room.storage.pos, 1, 2);
+      if (pos) {
+        room.createConstructionSite(pos, STRUCTURE_LINK);
+        return;
+      }
+    }
+  }
+
+  // Priority 2: source link for the most distant source (sender)
+  if (mem?.sources) {
+    const spawns = room.find(FIND_MY_SPAWNS);
+    const anchor = spawns[0];
+    if (anchor) {
+      const unlinked = mem.sources
+        .filter((s) => s.containerId && !s.linkId)
+        .map((s) => ({ entry: s, source: Game.getObjectById(s.id) }))
+        .filter((x) => !!x.source)
+        .sort((a, b) => b.source!.pos.getRangeTo(anchor) - a.source!.pos.getRangeTo(anchor));
+
+      for (const { entry } of unlinked) {
+        const source = Game.getObjectById(entry.id);
+        if (!source) continue;
+        const nearbyLinks = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+          filter: (s) => s.structureType === STRUCTURE_LINK,
+        });
+        const nearbySites = source.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 2, {
+          filter: (s) => s.structureType === STRUCTURE_LINK,
+        });
+        if (nearbyLinks.length > 0 || nearbySites.length > 0) continue;
+
+        const pos = findOpenPosition(room, source.pos, 1, 2);
+        if (pos) {
+          room.createConstructionSite(pos, STRUCTURE_LINK);
+          return;
+        }
+      }
+    }
+  }
+
+  // Priority 3: controller link at RCL 6+ (receiver for upgraders)
+  if (rcl >= 6 && room.controller && !mem?.controllerLinkId) {
+    const existing = room.controller.pos.findInRange(FIND_MY_STRUCTURES, 3, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    });
+    const existingSites = room.controller.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 3, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    });
+    if (existing.length === 0 && existingSites.length === 0) {
+      const pos = findOpenPosition(room, room.controller.pos, 2, 3);
+      if (pos) {
+        room.createConstructionSite(pos, STRUCTURE_LINK);
+        return;
+      }
+    }
+  }
+}
+
 function placeRamparts(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 3) return;
@@ -285,6 +438,8 @@ function placeRamparts(room: Room): void {
 }
 
 export function runConstruction(): void {
+  if (Game.time % 5 !== 0) return;
+
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
 
@@ -293,6 +448,10 @@ export function runConstruction(): void {
     placeSourceContainers(room);
     placeControllerContainer(room);
     placeStorage(room);
+    placeTerminal(room);
+    placeExtractor(room);
+    placeMineralContainer(room);
+    placeLinks(room);
     placeRoads(room);
     placeRamparts(room);
   }
