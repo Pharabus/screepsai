@@ -19,6 +19,9 @@ const states: StateMachineDefinition = {
       }
       return undefined;
     },
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
   },
   BUILD: {
     run(creep) {
