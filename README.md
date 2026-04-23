@@ -13,7 +13,7 @@ A TypeScript Screeps AI focused on automated room management from RCL 1 through 
 - **Load-balanced harvesting** that spreads creeps across available sources.
 - **Memory optimisations** — lazy `RawMemory` segment wrapper, per-tick cache, and one-shot Memory shape init to keep the per-tick JSON parse cheap as persistent data grows.
 - **CPU profiler** with exponential-moving-average samples per manager and per role, exposed via console globals `stats()` / `resetStats()`.
-- **Intent-based traffic manager** that resolves movement conflicts by priority, handles 2-way swaps natively, breaks 3+ way cycles, and shoves idle creeps out of the way.
+- **Soft traffic manager** — CostMatrix-based pathing avoids creep clusters (cost 15) and hard-blocks stationary miners (cost 255). Each creep paths and moves independently; the Screeps engine handles 2-way swaps natively. Stuck detection fallback after 3 ticks.
 - **Creep state machine** — all roles use a lightweight FSM (`StateMachineDefinition`) with state persisted in `creep.memory.state` for in-game debugging.
 - **Visual debugging overlay** (opt-in) drawing per-room RCL / energy / creep counts / source load / idle creep indicators / path visualizations via `RoomVisual`.
 
@@ -76,8 +76,8 @@ src/
     roomPlanner.ts        # Room plan caching (sources, containers, links, minerals, miner assignments)
     threat.ts             # threatScore / pickPriorityTarget for hostile creeps
     stateMachine.ts       # Lightweight FSM engine (StateMachineDefinition, runStateMachine)
-    movement.ts           # moveTo wrapper — registers intents with the traffic manager
-    trafficManager.ts     # Intent-based movement resolver (priority, swaps, cycle breaking)
+    movement.ts           # moveTo wrapper — stuck detection + PathFinder pathing
+    trafficManager.ts     # CostMatrix builder, path computation, stationary tile tracking
     idle.ts               # Idle creep tracking, rally-to-storage, grey circle indicators
     ErrorMapper.ts        # Source-map aware error logging
     tickCache.ts          # Transient per-tick memoisation (cleared at loop start)
@@ -93,13 +93,13 @@ src/
 
 1. `initMemory()` — One-shot (per global reset) shape init for `Memory.creeps` / `Memory.rooms`, so hot-path code skips defensive `??= {}` branches.
 2. `resetTickCache()` — Clears the transient per-tick memoisation map.
-2b. `resetTraffic()` — Clears intent-based traffic manager state.
+2b. `resetTraffic()` — Clears stationary creep set and visualization buffer.
 2c. `resetIdle()` — Clears the idle creep set for fresh per-tick tracking.
 3. `runDefense()` — Refreshes per-room threat state and activates safe mode if a hostile has breached the base perimeter. Runs first so the spawner and towers both see the same threat view.
 4. `runSpawner()` — Walks the (dynamically built) spawn queue and issues one spawn per tick if a role is under its minimum.
 5. `runLinks()` — Transfers energy from source links to storage/controller links. Runs before rooms so creeps see fresh link state.
 6. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler. Roles register movement intents via `moveTo()` during this phase.
-6b. `resolveTraffic()` — Processes all movement intents, resolves tile conflicts by priority, executes swaps, breaks 3+ way cycles, and issues `creep.move()` calls.
+6b. `resolveTraffic()` — Draws path visualizations when `Memory.visuals` is enabled. Movement already happened during role execution via `executeMove()`.
 7. `runTowers()` — All towers focus-fire the highest-threat hostile; otherwise heal wounded allies, then repair. Wall/rampart repair target scales with storage energy.
 8. `runConstruction()` — Runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, roads, ramparts — gated by RCL.
 9. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true). Includes idle creep indicators.
