@@ -109,6 +109,9 @@
   poly() {
     return this;
   }
+  circle() {
+    return this;
+  }
 };
 
 // Factory helpers

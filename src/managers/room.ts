@@ -14,7 +14,12 @@ function runCreeps(): void {
     const creep = Game.creeps[name];
     if (!creep) continue;
 
-    const role = roles[creep.memory.role];
+    const role = creep.memory.role ? roles[creep.memory.role] : undefined;
+    if (!role) {
+      const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+      if (spawn) spawn.recycleCreep(creep);
+      continue;
+    }
     profile(`role.${creep.memory.role}`, () => role.run(creep));
   }
 }

@@ -1,6 +1,7 @@
 import { Role } from './Role';
 import { harvestFromBestSource } from '../utils/sources';
 import { moveTo } from '../utils/movement';
+import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
 const states: StateMachineDefinition = {
@@ -26,6 +27,8 @@ const states: StateMachineDefinition = {
         if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           moveTo(creep, target, { visualizePathStyle: { stroke: '#ffffff' } });
         }
+      } else {
+        markIdle(creep);
       }
       return undefined;
     },

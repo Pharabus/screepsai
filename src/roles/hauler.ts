@@ -1,5 +1,6 @@
 import { Role } from './Role';
 import { moveTo } from '../utils/movement';
+import { markIdle } from '../utils/idle';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
@@ -120,8 +121,11 @@ function pickup(creep: Creep): void {
           visualizePathStyle: { stroke: '#ffaa00' },
         });
       }
+      return;
     }
   }
+
+  markIdle(creep);
 }
 
 function deliver(creep: Creep): void {
@@ -198,4 +202,6 @@ function deliver(creep: Creep): void {
     }
     return;
   }
+
+  markIdle(creep);
 }

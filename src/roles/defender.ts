@@ -1,6 +1,7 @@
 import { Role } from './Role';
 import { pickPriorityTarget } from '../utils/threat';
 import { moveTo } from '../utils/movement';
+import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
 const states: StateMachineDefinition = {
@@ -20,10 +21,7 @@ const states: StateMachineDefinition = {
       const target = pickPriorityTarget(creep.room);
       if (target) return 'ATTACK';
 
-      const rally = creep.room.find(FIND_MY_SPAWNS)[0];
-      if (rally && !creep.pos.inRangeTo(rally, 3)) {
-        moveTo(creep, rally, { range: 3, visualizePathStyle: { stroke: '#888888' } });
-      }
+      markIdle(creep);
       return undefined;
     },
   },
