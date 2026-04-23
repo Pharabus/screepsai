@@ -26,6 +26,7 @@ The AI is a single `loop` function exported from `src/main.ts`, called once per 
 1. `initMemory()` — one-shot Memory shape init (per global reset).
 2. `resetTickCache()` — clears the transient per-tick memoisation map.
 2b. `resetTraffic()` — clears intent-based traffic manager state.
+2c. `resetIdle()` — clears the idle creep set for fresh per-tick tracking.
 3. `runDefense` — scans hostiles, updates `RoomMemory.threatLastSeen` / `lastThreatScore`, activates safe mode on perimeter breach. Runs first so the spawner and towers see the same threat view.
 4. `runSpawner` — calls `ensureRoomPlan(room)` to refresh source/container/miner cache, then **rebuilds the spawn queue per room** via `buildSpawnQueue(room)`. Uses bootstrap economy (harvester-based) until the first source container is detected, then switches to miner economy (miner + hauler + heavy-WORK upgrader). Defenders are prepended dynamically when threats are active.
 5. `runLinks` — transfers energy from source links to storage link (primary) or controller link (secondary). Runs before rooms so creeps see fresh link state.
@@ -73,7 +74,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 Both gated by Memory flags so production ticks pay ~nothing when off:
 
 - `Memory.profiling = true` → `profile(name, fn)` records CPU deltas as exponential moving averages in `Memory.stats`.
-- `Memory.visuals = true` → `runVisuals()` draws per-room RCL/energy/creep-count/CPU headers and source-load markers.
+- `Memory.visuals = true` → `runVisuals()` draws per-room RCL/energy/creep-count/CPU headers, source-load markers, and idle creep indicators (grey circles).
 
 When adding a new manager or hot path, wrap it in `profile('label', fn)` so it surfaces in `stats()`.
 
@@ -85,7 +86,13 @@ All roles use `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefi
 
 ### Movement & traffic
 
-`src/utils/movement.ts` provides a `moveTo` wrapper used by all roles. Instead of calling `creep.moveTo()` directly, it registers a movement intent with the traffic manager (`src/utils/trafficManager.ts`). After all roles run, `resolveTraffic()` processes intents: computes next steps via `PathFinder.search` (CostMatrix cached per room per tick), resolves tile conflicts by priority (STATIC=100 > HAULER=50 > WORKER=30 > DEFAULT=10), handles swap detection, and shoves idle creeps out of the way. Stationary creeps (miners on containers) call `registerStationary(creep, PRIORITY_STATIC)` to claim their tile. Always use `moveTo()` instead of direct `creep.moveTo()` or `creep.move()`.
+`src/utils/movement.ts` provides a `moveTo` wrapper used by all roles. Instead of calling `creep.moveTo()` directly, it registers a movement intent with the traffic manager (`src/utils/trafficManager.ts`). After all roles run, `resolveTraffic()` processes intents: computes next steps via `PathFinder.search` (CostMatrix cached per room per tick, includes creep positions at cost 15 to discourage pathing through clusters), resolves tile conflicts by priority (STATIC=100 > HAULER=50 > WORKER=30 > DEFAULT=10), executes 2-way swaps (both creeps move simultaneously), detects and breaks 3+ way cycles (Screeps only resolves 2-way swaps natively), and shoves idle creeps out of the way. Stationary creeps (miners on containers) call `registerStationary(creep, PRIORITY_STATIC)` to claim their tile. Always use `moveTo()` instead of direct `creep.moveTo()` or `creep.move()`.
+
+When a role's `moveTo` target requires standing on a specific tile (e.g. miner on container), pass `range: 0` — the default range is 1, and the traffic manager skips movement when already in range.
+
+### Idle creep management
+
+`src/utils/idle.ts` provides `markIdle(creep)` for roles that have no work to do. It registers the creep as idle (for visual indicators), and rallies the creep toward storage or spawn (range 3) so it doesn't block traffic near busy areas. Roles that can go idle: hauler (nothing to pick up or deliver), harvester (all delivery targets full), defender (no hostiles). Builders, repairers, and upgraders always fall back to upgrading the controller so they never idle. When `Memory.visuals` is enabled, idle creeps are marked with a grey circle overlay. The indicator auto-clears when the creep gets work (since `markIdle` is only called on idle ticks).
 
 ### Deployment
 

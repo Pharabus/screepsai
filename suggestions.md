@@ -30,6 +30,44 @@ Options for speeding up RCL progression, presented by effort/impact tier. No cod
 13. **Boosts (RCL 6+, needs labs).** `XGH2O` boost triples `upgradeController`. Irrelevant until labs land, but worth noting because Stage 3 in `todo.md` already plans labs.
 14. **GCL-aware upgrade targeting.** At very low GCL, emptying every tick of excess energy into the controller (even via overflow builders) is good; at higher GCL or approaching RCL 8 you want to throttle. Room-memory policy flag.
 
+---
+
+# Suggestion — Fix Current Intent-Based Traffic Manager (Option B)
+
+Instead of simplifying the traffic manager (Option A in `todo.md`), the current design could be fixed by addressing its incomplete world model. This is more complex but preserves the theoretical benefits of centralized conflict resolution.
+
+## What's wrong
+
+The current solver only tracks creeps that register movement intents during `runRooms`. Creeps that don't register (idle, orphaned, between states) are invisible — the solver assigns tiles it thinks are free but are actually occupied. This causes:
+
+- **Frozen columns**: multiple creeps assigned to occupied tiles, none can move
+- **Swap failures**: solver detects a 2-way swap but the "other" creep didn't register, so only one side moves
+- **Cascade patches**: each bug prompted a new subsystem (idle shoving, cycle breaking, stuck fallback, orphan recycling) adding complexity
+
+## Fixes required
+
+1. **Register ALL creep positions in `occupied` at the start of `resolveTraffic()`** — not just idle ones found via room.find, but every creep in every room. This gives the solver a complete picture of what tiles are taken before it starts assigning moves.
+
+2. **Chain validation before issuing moves** — after the greedy assignment loop, walk each creep's move chain and verify the destination tile will actually be vacated (the creep currently on it is also moving away). Cancel moves where the chain is broken.
+
+3. **Direction-aware `tryAlternative`** — current implementation picks the first walkable adjacent tile regardless of direction. Should prefer tiles that are closer to the creep's actual goal (dot product of alternative direction vs. goal direction > 0), so a blocked creep sidesteps rather than backtracking.
+
+4. **Idle creep registration** — every creep that doesn't register a move intent should be auto-registered as stationary at priority 0, so the solver knows about them without needing the separate `room.find` scan.
+
+## Trade-offs vs Option A
+
+| | Option A (simplify) | Option B (fix) |
+|---|---|---|
+| Lines of code | ~60 | ~250+ |
+| Collision resolution | Soft (CostMatrix discourages, stuck fallback recovers) | Hard (solver guarantees no conflicts) |
+| CPU cost | Lower (no central solver loop) | Higher (O(n²) intent processing) |
+| Edge cases | Rare stuck creeps recover after 3 ticks | Fewer stuck creeps but more complex failure modes |
+| Maintenance | Simple to understand and debug | Requires careful reasoning about world model completeness |
+
+Option A is recommended for the current codebase size. Option B becomes worthwhile if the AI scales to 50+ creeps per room or multi-room logistics where coordinated movement matters (e.g., narrow corridor chokepoints between rooms).
+
+---
+
 ## Diagnostics first
 
 Before picking: turn on profiling (`Memory.profiling = true`) and visuals (`Memory.visuals = true`) and read:
