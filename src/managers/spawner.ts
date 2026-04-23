@@ -1,11 +1,12 @@
-import { buildBody } from '../utils/body';
+import { buildBody, buildMinerBody, buildUpgraderBody } from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
 import { ensureRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
 
 interface SpawnRequest {
   role: CreepRoleName;
-  pattern: BodyPartConstant[];
+  pattern?: BodyPartConstant[];
+  body?: BodyPartConstant[];
   maxRepeats?: number;
   minCount: number;
 }
@@ -140,13 +141,9 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     // then harvesters as emergency bootstrap if both die, then upgraders/builders.
     const miners = minersNeeded(room);
     if (miners > 0) {
-      // [WORK, WORK, CARRY, MOVE] x3 = max 6W 3C 3M (900 energy).
-      // CARRY enables link transfers. At 300: 2W 1C 1M.
-      // At 550+: 4W 2C 2M. At 800+: 6W 3C 3M — fully saturates source.
       queue.push({
         role: 'miner',
-        pattern: [WORK, WORK, CARRY, MOVE],
-        maxRepeats: 3,
+        body: buildMinerBody(room.energyCapacityAvailable),
         minCount: miners + countCreepsByRole('miner'),
       });
     }
@@ -157,12 +154,9 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     });
     // Keep 1 harvester as emergency bootstrap in case all miners die
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 1 });
-    // Upgrader: [WORK, WORK, CARRY, MOVE] × up to 4 = max 8W 4C 4M (1200 energy)
-    // At 300: 2W 1C 1M — always affordable. Scales with extensions.
     queue.push({
       role: 'upgrader',
-      pattern: [WORK, WORK, CARRY, MOVE],
-      maxRepeats: 4,
+      body: buildUpgraderBody(room.energyCapacityAvailable),
       minCount: upgradersNeeded(room),
     });
     // Builder: [WORK, CARRY, MOVE, MOVE] × up to 4 = max 4W 4C 8M (800 energy)
@@ -212,7 +206,7 @@ export function runSpawner(): void {
       if (!spawn) break;
 
       const energy = room.energyCapacityAvailable;
-      const body = buildBody(request.pattern, energy, request.maxRepeats);
+      const body = request.body ?? buildBody(request.pattern!, energy, request.maxRepeats);
       if (body.length === 0) continue; // can't afford this role, try cheaper ones below
 
       const name = `${request.role}_${Game.time}`;

@@ -8,7 +8,8 @@ const states: StateMachineDefinition = {
   PICKUP: {
     run(creep) {
       if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return 'DELIVER';
-      pickup(creep);
+      const found = pickup(creep);
+      if (!found && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) return 'DELIVER';
       return undefined;
     },
   },
@@ -27,7 +28,7 @@ export const hauler: Role = {
   },
 };
 
-function pickup(creep: Creep): void {
+function pickup(creep: Creep): boolean {
   const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
@@ -38,7 +39,7 @@ function pickup(creep: Creep): void {
         visualizePathStyle: { stroke: '#ffaa00' },
       });
     }
-    return;
+    return true;
   }
 
   const mem = Memory.rooms[creep.room.name];
@@ -51,7 +52,7 @@ function pickup(creep: Creep): void {
           visualizePathStyle: { stroke: '#ffaa00' },
         });
       }
-      return;
+      return true;
     }
   }
 
@@ -73,7 +74,7 @@ function pickup(creep: Creep): void {
         visualizePathStyle: { stroke: '#ffaa00' },
       });
     }
-    return;
+    return true;
   }
 
   if (mem?.mineralContainerId) {
@@ -94,7 +95,7 @@ function pickup(creep: Creep): void {
             visualizePathStyle: { stroke: '#cc66ff' },
           });
         }
-        return;
+        return true;
       }
     }
   }
@@ -113,19 +114,26 @@ function pickup(creep: Creep): void {
           s.structureType === STRUCTURE_TOWER &&
           s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
       }).length > 0;
+    const hasControllerNeed =
+      mem?.controllerContainerId &&
+      (() => {
+        const cc = Game.getObjectById(mem.controllerContainerId!);
+        return cc && cc.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+      })();
 
-    if (hasSpawnNeed || hasTowerNeed) {
+    if (hasSpawnNeed || hasTowerNeed || hasControllerNeed) {
       if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
           priority: PRIORITY_HAULER,
           visualizePathStyle: { stroke: '#ffaa00' },
         });
       }
-      return;
+      return true;
     }
   }
 
   markIdle(creep);
+  return false;
 }
 
 function deliver(creep: Creep): void {

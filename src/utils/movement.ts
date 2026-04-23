@@ -1,4 +1,4 @@
-import { registerMove, PRIORITY_DEFAULT } from './trafficManager';
+import { executeMove } from './trafficManager';
 
 export interface MoveOpts {
   range?: number;
@@ -16,7 +16,6 @@ export function moveTo(
 ): void {
   const targetPos = 'pos' in target ? target.pos : target;
   const range = opts?.range ?? 1;
-  const priority = opts?.priority ?? PRIORITY_DEFAULT;
 
   const prev = stuckTicks.get(creep.name);
   if (prev && prev.x === creep.pos.x && prev.y === creep.pos.y) {
@@ -30,7 +29,7 @@ export function moveTo(
     stuckTicks.set(creep.name, { x: creep.pos.x, y: creep.pos.y, count: 0 });
   }
 
-  registerMove(creep, targetPos, priority, range, opts?.visualizePathStyle?.stroke);
+  executeMove(creep, targetPos, range, opts?.visualizePathStyle?.stroke);
 }
 
 export function cleanStuckTracker(): void {

@@ -3,12 +3,31 @@ import { moveTo } from './movement';
 /**
  * Try to withdraw energy from logistics infrastructure (containers/storage).
  * Returns true if a withdrawal target was found, false if caller should self-harvest.
+ * Persists target in creep.memory.targetId so the creep commits to one source
+ * until full or the target runs dry.
  */
 export function withdrawFromLogistics(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   const controllerContainerId = mem?.controllerContainerId;
 
-  // Source containers with meaningful energy (closest first)
+  if (creep.memory.targetId) {
+    const cached = Game.getObjectById(creep.memory.targetId);
+    if (
+      cached &&
+      'store' in cached &&
+      (cached as StructureContainer | StructureStorage).store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      if (
+        creep.withdraw(cached as StructureContainer | StructureStorage, RESOURCE_ENERGY) ===
+        ERR_NOT_IN_RANGE
+      ) {
+        moveTo(creep, cached, { visualizePathStyle: { stroke: '#ffaa00' } });
+      }
+      return true;
+    }
+    delete creep.memory.targetId;
+  }
+
   const containers = creep.room
     .find(FIND_STRUCTURES, {
       filter: (s): s is StructureContainer =>
@@ -16,10 +35,13 @@ export function withdrawFromLogistics(creep: Creep): boolean {
         s.id !== controllerContainerId &&
         s.store.getUsedCapacity(RESOURCE_ENERGY) > 100,
     })
-    .sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
+    .sort(
+      (a, b) => b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),
+    );
 
   const container = containers[0];
   if (container) {
+    creep.memory.targetId = container.id;
     if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, container, { visualizePathStyle: { stroke: '#ffaa00' } });
     }
@@ -28,6 +50,7 @@ export function withdrawFromLogistics(creep: Creep): boolean {
 
   const storage = creep.room.storage;
   if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    creep.memory.targetId = storage.id;
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
     }

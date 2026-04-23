@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { harvestFromBestSource } from '../utils/sources';
+import { harvestFromBestSource, withdrawFromLogistics } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
@@ -8,8 +8,19 @@ const states: StateMachineDefinition = {
   HARVEST: {
     run(creep) {
       if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return 'DELIVER';
-      harvestFromBestSource(creep);
+
+      const mem = Memory.rooms[creep.room.name];
+      if (mem?.minerEconomy) {
+        if (!withdrawFromLogistics(creep)) {
+          harvestFromBestSource(creep);
+        }
+      } else {
+        harvestFromBestSource(creep);
+      }
       return undefined;
+    },
+    onEnter(creep) {
+      delete creep.memory.targetId;
     },
   },
   DELIVER: {

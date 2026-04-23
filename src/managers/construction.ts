@@ -297,7 +297,8 @@ function placeRoads(room: Room): void {
   }
 
   for (const target of targets) {
-    const path = room.findPath(anchor.pos, target, { ignoreCreeps: true });
+    const path = room.findPath(anchor.pos, target, { ignoreCreeps: true, range: 1 });
+    if (path.length === 0) continue;
     for (const step of path) {
       const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
       const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);

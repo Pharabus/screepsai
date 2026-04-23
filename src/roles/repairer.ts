@@ -21,6 +21,9 @@ const states: StateMachineDefinition = {
       }
       return undefined;
     },
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
   },
   REPAIR: {
     run(creep) {
