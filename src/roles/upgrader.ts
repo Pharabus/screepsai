@@ -15,7 +15,10 @@ const states: StateMachineDefinition = {
           const container = Game.getObjectById(mem.controllerContainerId);
           if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
             if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-              moveTo(creep, container, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#ffaa00' } });
+              moveTo(creep, container, {
+                priority: PRIORITY_WORKER,
+                visualizePathStyle: { stroke: '#ffaa00' },
+              });
             }
             return undefined;
           }
@@ -23,7 +26,10 @@ const states: StateMachineDefinition = {
         const storage = creep.room.storage;
         if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
           if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            moveTo(creep, storage, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#ffaa00' } });
+            moveTo(creep, storage, {
+              priority: PRIORITY_WORKER,
+              visualizePathStyle: { stroke: '#ffaa00' },
+            });
           }
           return undefined;
         }
@@ -39,7 +45,11 @@ const states: StateMachineDefinition = {
       const controller = creep.room.controller;
       if (controller) {
         if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-          moveTo(creep, controller, { range: 3, priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#3333ff' } });
+          moveTo(creep, controller, {
+            range: 3,
+            priority: PRIORITY_WORKER,
+            visualizePathStyle: { stroke: '#3333ff' },
+          });
         }
       }
       return undefined;

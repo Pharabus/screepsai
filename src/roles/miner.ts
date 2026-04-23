@@ -22,16 +22,21 @@ const states: StateMachineDefinition = {
 
       const mem = Memory.rooms[creep.room.name];
       const entry = mem?.sources?.find((s) => s.id === source.id);
-      const container = entry?.containerId
-        ? Game.getObjectById(entry.containerId)
-        : undefined;
+      const container = entry?.containerId ? Game.getObjectById(entry.containerId) : undefined;
 
       if (container) {
         if (creep.pos.isEqualTo(container.pos)) return 'HARVEST';
-        moveTo(creep, container, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#ffaa00' } });
+        moveTo(creep, container, {
+          range: 0,
+          priority: PRIORITY_WORKER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
       } else {
         if (creep.pos.isNearTo(source)) return 'HARVEST';
-        moveTo(creep, source, { priority: PRIORITY_WORKER, visualizePathStyle: { stroke: '#ffaa00' } });
+        moveTo(creep, source, {
+          priority: PRIORITY_WORKER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
       }
       return undefined;
     },

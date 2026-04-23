@@ -13,7 +13,9 @@ A TypeScript Screeps AI focused on automated room management from RCL 1 through 
 - **Load-balanced harvesting** that spreads creeps across available sources.
 - **Memory optimisations** — lazy `RawMemory` segment wrapper, per-tick cache, and one-shot Memory shape init to keep the per-tick JSON parse cheap as persistent data grows.
 - **CPU profiler** with exponential-moving-average samples per manager and per role, exposed via console globals `stats()` / `resetStats()`.
-- **Visual debugging overlay** (opt-in) drawing per-room RCL / energy / creep counts / source load via `RoomVisual`.
+- **Intent-based traffic manager** that resolves movement conflicts by priority, handles 2-way swaps natively, breaks 3+ way cycles, and shoves idle creeps out of the way.
+- **Creep state machine** — all roles use a lightweight FSM (`StateMachineDefinition`) with state persisted in `creep.memory.state` for in-game debugging.
+- **Visual debugging overlay** (opt-in) drawing per-room RCL / energy / creep counts / source load / idle creep indicators / path visualizations via `RoomVisual`.
 
 ## Getting Started
 
@@ -32,9 +34,13 @@ npm install
 
 - `npm run build` — Bundles `src/` into `dist/main.js` (with source map).
 - `npm run watch` — Rebuilds on file changes.
-- `npm run deploy` — Builds and uploads to Screeps via `screeps-api` (`--branch default`).
+- `npm run deploy` — Bumps patch version, builds, and uploads to Screeps world servers.
+- `npm run localdeploy` — Bumps patch version and builds only (no upload).
 - `npm run lint` — Runs ESLint over `src/`.
 - `npm run format` / `npm run format:check` — Prettier.
+- `npm test` — Run all Vitest tests.
+- `npm run test:watch` — Vitest in watch mode.
+- `npm run test:coverage` — Run tests with V8 coverage report.
 
 ### Deploying
 
@@ -69,6 +75,10 @@ src/
     sources.ts            # findBestSource / harvestFromBestSource / withdrawFromLogistics
     roomPlanner.ts        # Room plan caching (sources, containers, links, minerals, miner assignments)
     threat.ts             # threatScore / pickPriorityTarget for hostile creeps
+    stateMachine.ts       # Lightweight FSM engine (StateMachineDefinition, runStateMachine)
+    movement.ts           # moveTo wrapper — registers intents with the traffic manager
+    trafficManager.ts     # Intent-based movement resolver (priority, swaps, cycle breaking)
+    idle.ts               # Idle creep tracking, rally-to-storage, grey circle indicators
     ErrorMapper.ts        # Source-map aware error logging
     tickCache.ts          # Transient per-tick memoisation (cleared at loop start)
     segments.ts           # Lazy RawMemory.segments wrapper with dirty-flush
@@ -83,20 +93,23 @@ src/
 
 1. `initMemory()` — One-shot (per global reset) shape init for `Memory.creeps` / `Memory.rooms`, so hot-path code skips defensive `??= {}` branches.
 2. `resetTickCache()` — Clears the transient per-tick memoisation map.
+2b. `resetTraffic()` — Clears intent-based traffic manager state.
+2c. `resetIdle()` — Clears the idle creep set for fresh per-tick tracking.
 3. `runDefense()` — Refreshes per-room threat state and activates safe mode if a hostile has breached the base perimeter. Runs first so the spawner and towers both see the same threat view.
 4. `runSpawner()` — Walks the (dynamically built) spawn queue and issues one spawn per tick if a role is under its minimum.
 5. `runLinks()` — Transfers energy from source links to storage/controller links. Runs before rooms so creeps see fresh link state.
-6. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler.
+6. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler. Roles register movement intents via `moveTo()` during this phase.
+6b. `resolveTraffic()` — Processes all movement intents, resolves tile conflicts by priority, executes swaps, breaks 3+ way cycles, and issues `creep.move()` calls.
 7. `runTowers()` — All towers focus-fire the highest-threat hostile; otherwise heal wounded allies, then repair. Wall/rampart repair target scales with storage energy.
 8. `runConstruction()` — Runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, roads, ramparts — gated by RCL.
-9. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true).
+9. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true). Includes idle creep indicators.
 10. `flushSegments()` — Serialises any mutated `RawMemory.segments` entries and registers requested segments for the next tick.
 
 Each of steps 3–9 is wrapped in `profile(...)` so per-manager CPU cost surfaces in `stats()`. Per-creep dispatch in step 6 is labelled `role.<roleName>` for per-role CPU tracking.
 
 ## Roles
 
-All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts`. Each non-harvester role refills by calling `harvestFromBestSource` when empty, which picks the active source with the fewest nearby harvesters and breaks ties by distance (`src/utils/sources.ts`).
+All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Each non-harvester role refills by calling `harvestFromBestSource` when empty, which picks the active source with the fewest nearby harvesters and breaks ties by distance (`src/utils/sources.ts`).
 
 | Role           | Minimum | Body pattern        | Behavior |
 |----------------|---------|---------------------|----------|
@@ -106,7 +119,7 @@ All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/rol
 | `upgrader`     | 2 (bootstrap) / 1–6 (miner economy) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE]` ×4 | In miner economy: withdraws from controller container or storage, camps at controller (range 3). Count scales with storage surplus. |
 | `builder`      | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4 | Builds construction sites, falls back to upgrading when idle. In miner economy: withdraws from containers/storage via `withdrawFromLogistics()`. |
 | `repairer`     | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. In miner economy: withdraws from containers/storage. |
-| `defender`     | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Rallies near spawn when idle. Only produced during active threats. |
+| `defender`     | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Marks idle and rallies near storage/spawn when no hostiles. Only produced during active threats. |
 | `mineralMiner` | 0–1 (RCL 6+) | `[WORK×2, MOVE]` ×5 | Stands on mineral container and harvests when mineral is not depleted. Spawned only when extractor + container exist. |
 
 Bodies are generated by `buildBody` (`src/utils/body.ts`), which repeats the pattern as many times as `energyCapacityAvailable` allows (default cap: 50 / pattern length). As the room's energy capacity grows, newly spawned creeps automatically get larger bodies.
@@ -280,13 +293,28 @@ When enabled, for each owned room it draws:
 - A summary of creep counts by role (e.g. `builder:1 harvester:2 repairer:1 upgrader:2`).
 - Last-tick CPU (`cpu used / limit`) — matches the `main.loop` entry in `stats()` when profiling is on.
 - A `⛏ N` marker above each source showing how many creeps are within range 2 (red when zero — likely an under-served source).
+- **Idle creep indicators** — grey circle overlay on creeps with no current task (auto-clears when they get work).
+- **Path visualizations** — dashed lines showing each creep's intended path, color-coded by activity.
 
-Extend `runVisuals()` with more overlays (construction plans, tower ranges, haul paths, etc.) as the AI grows.
+### Path colors
+
+| Color | Hex | Activity |
+|-------|-----|----------|
+| Orange | `#ffaa00` | Gathering energy — miners positioning, haulers picking up, upgraders/builders/repairers withdrawing |
+| Green | `#33ff33` | Builders moving to construction sites |
+| White | `#ffffff` | Haulers delivering to spawns/extensions/towers/controller container/storage |
+| Blue | `#3333ff` | Upgrading controller (upgraders, and builders/repairers falling back to upgrade) |
+| Red | `#ff0000` | Defenders attacking hostiles |
+| Purple | `#cc66ff` | Mineral operations — mineral miner positioning, haulers carrying minerals |
+| Grey | `#888888` | Idle creeps rallying toward storage/spawn |
+
+Extend `runVisuals()` with more overlays (construction plans, tower ranges, etc.) as the AI grows.
 
 ## Extending
 
-- **New role:** Add `src/roles/<name>.ts` exporting a `Role`, register it in `src/roles/index.ts`, extend `CreepRoleName` in `src/types.d.ts`, and add an entry to the spawn queue in `src/managers/spawner.ts`.
+- **New role:** Add `src/roles/<name>.ts` exporting a `Role`, define states as a `StateMachineDefinition`, register it in `src/roles/index.ts`, extend `CreepRoleName` in `src/types.d.ts`, and add an entry to the spawn queue in `src/managers/spawner.ts`. Use `moveTo()` with appropriate `PRIORITY_*` for movement. If the role can go idle (no work to do), call `markIdle(creep)` from `src/utils/idle.ts`. Add tests in `test/roles/`.
 - **New structure placement:** Extend `src/managers/construction.ts` with another `place*` function and an RCL cap map.
-- **Smarter pathing / memory:** `CreepMemory` is intentionally minimal — add fields (e.g. `working`, `targetId`, assigned source) as roles grow. Put cold per-room planning data on `Memory.rooms[name]` (extend `RoomMemory` in `types.d.ts`) or in a `RawMemory` segment via `src/utils/segments.ts`.
+- **Smarter pathing / memory:** `CreepMemory` is intentionally minimal — add fields (e.g. `targetId`, assigned source) as roles grow. Put cold per-room planning data on `Memory.rooms[name]` (extend `RoomMemory` in `types.d.ts`) or in a `RawMemory` segment via `src/utils/segments.ts`.
 - **New manager or hot path:** Wrap it in `profile('yourLabel', fn)` so CPU cost shows up in `stats()`, and consider memoising expensive finds via `cached(key, () => …)` from `src/utils/tickCache.ts`.
 - **New overlay:** Add a draw function to `src/managers/visuals.ts` using `room.visual`; the manager is already gated by `Memory.visuals` and profiled.
+- **Tests:** Add or update tests in `test/` when modifying utility functions, manager logic, or role state machines. Run `npm test` before committing.

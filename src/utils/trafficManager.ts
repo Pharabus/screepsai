@@ -106,20 +106,18 @@ export function resolveTraffic(): void {
     if (blocker && allCreeps.has(blocker.creep.name)) {
       const blockerIntent = intents.find((i) => i.creep.name === blocker.creep.name);
       if (blockerIntent && blockerIntent.nextPos.isEqualTo(intent.creep.pos)) {
-        // Swap conflict — higher priority wins
-        if (intent.priority >= blockerIntent.priority) {
-          assigned.set(key, intent);
-          occupied.set(key, { creep: intent.creep, priority: intent.priority });
-          moves.set(intent.creep.name, intent.creep.pos.getDirectionTo(intent.nextPos));
-          // Cancel the blocker's move
-          moves.delete(blockerIntent.creep.name);
-          const blockerKey = posKey(blockerIntent.nextPos);
-          if (assigned.get(blockerKey)?.creep.name === blockerIntent.creep.name) {
-            assigned.delete(blockerKey);
-          }
-        } else {
-          tryAlternative(intent, assigned, occupied, moves);
-        }
+        // Direct swap — both creeps move simultaneously (Screeps handles 2-way swaps)
+        assigned.set(key, intent);
+        occupied.set(key, { creep: intent.creep, priority: intent.priority });
+        moves.set(intent.creep.name, intent.creep.pos.getDirectionTo(intent.nextPos));
+
+        const blockerKey = posKey(blockerIntent.nextPos);
+        assigned.set(blockerKey, blockerIntent);
+        occupied.set(blockerKey, { creep: blockerIntent.creep, priority: blockerIntent.priority });
+        moves.set(
+          blockerIntent.creep.name,
+          blockerIntent.creep.pos.getDirectionTo(blockerIntent.nextPos),
+        );
         continue;
       }
     }
@@ -129,6 +127,9 @@ export function resolveTraffic(): void {
     occupied.set(key, { creep: intent.creep, priority: intent.priority });
     moves.set(intent.creep.name, intent.creep.pos.getDirectionTo(intent.nextPos));
   }
+
+  // Break 3+ way cycles — Screeps only resolves 2-way swaps natively
+  breakCycles(moves, intents);
 
   // Issue move commands
   for (const [name, direction] of moves) {
@@ -154,6 +155,63 @@ export function resolveTraffic(): void {
   }
 }
 
+function breakCycles(moves: Map<string, DirectionConstant>, allIntents: MoveIntent[]): void {
+  // Build position maps for moving creeps only
+  const occupantAt = new Map<string, string>();
+  const nextPosOf = new Map<string, string>();
+  const priorityOf = new Map<string, number>();
+
+  for (const intent of allIntents) {
+    if (!moves.has(intent.creep.name)) continue;
+    if (intent.nextPos.isEqualTo(intent.creep.pos)) continue; // stationary
+    const curKey = posKey(intent.creep.pos);
+    const nxtKey = posKey(intent.nextPos);
+    occupantAt.set(curKey, intent.creep.name);
+    nextPosOf.set(intent.creep.name, nxtKey);
+    priorityOf.set(intent.creep.name, intent.priority);
+  }
+
+  const visited = new Set<string>();
+
+  for (const [startName] of nextPosOf) {
+    if (visited.has(startName)) continue;
+
+    const chain: string[] = [];
+    const chainSet = new Set<string>();
+    let cur: string | undefined = startName;
+
+    while (cur && !chainSet.has(cur) && !visited.has(cur)) {
+      chain.push(cur);
+      chainSet.add(cur);
+      const nxt = nextPosOf.get(cur);
+      if (!nxt) break;
+      cur = occupantAt.get(nxt);
+    }
+
+    for (const name of chain) visited.add(name);
+
+    if (cur && chainSet.has(cur)) {
+      const cycleStart = chain.indexOf(cur);
+      const cycle = chain.slice(cycleStart);
+
+      if (cycle.length > 2) {
+        // Remove the lowest-priority creep's move (name tiebreak for stability)
+        let worst = cycle[0]!;
+        let worstPri = priorityOf.get(worst) ?? 0;
+        for (let i = 1; i < cycle.length; i++) {
+          const name = cycle[i]!;
+          const pri = priorityOf.get(name) ?? 0;
+          if (pri < worstPri || (pri === worstPri && name > worst)) {
+            worst = name;
+            worstPri = pri;
+          }
+        }
+        moves.delete(worst);
+      }
+    }
+  }
+}
+
 function posKey(pos: RoomPosition): string {
   return `${pos.roomName}:${pos.x}:${pos.y}`;
 }
@@ -165,7 +223,7 @@ function tryAlternative(
   moves: Map<string, DirectionConstant>,
 ): void {
   const { creep } = intent;
-  const adjacent = getWalkableAdjacent(creep.pos);
+  const adjacent = getWalkableAdjacent(creep.pos, creep.room);
   for (const pos of adjacent) {
     const key = posKey(pos);
     if (!assigned.has(key) && !occupied.has(key)) {
@@ -184,7 +242,7 @@ function shoveCreep(
   assigned: Map<string, MoveIntent>,
   occupied: Map<string, { creep: Creep; priority: number }>,
 ): boolean {
-  const adjacent = getWalkableAdjacent(blocker.pos);
+  const adjacent = getWalkableAdjacent(blocker.pos, blocker.room);
   for (const pos of adjacent) {
     if (pos.isEqualTo(avoidPos)) continue;
     const key = posKey(pos);
@@ -199,10 +257,11 @@ function shoveCreep(
   return false;
 }
 
-function getWalkableAdjacent(pos: RoomPosition): RoomPosition[] {
+function getWalkableAdjacent(pos: RoomPosition, room: Room): RoomPosition[] {
   const terrain = cached('traffic:terrain:' + pos.roomName, () =>
     Game.map.getRoomTerrain(pos.roomName),
   );
+  const costs = getRoomCostMatrix(room);
   const result: RoomPosition[] = [];
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
@@ -211,17 +270,14 @@ function getWalkableAdjacent(pos: RoomPosition): RoomPosition[] {
       const y = pos.y + dy;
       if (x < 1 || x > 48 || y < 1 || y > 48) continue;
       if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+      if (costs.get(x, y) >= 255) continue;
       result.push(new RoomPosition(x, y, pos.roomName));
     }
   }
   return result;
 }
 
-function getPath(
-  creep: Creep,
-  target: RoomPosition,
-  range: number,
-): RoomPosition[] {
+function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   const cacheKey = `traffic:path:${creep.name}`;
   return cached(cacheKey, () => {
     const costMatrix = getRoomCostMatrix(creep.room);
@@ -250,6 +306,12 @@ function getRoomCostMatrix(room: Room): CostMatrix {
         !(struct.structureType === STRUCTURE_RAMPART && (struct as StructureRampart).my)
       ) {
         costs.set(struct.pos.x, struct.pos.y, 255);
+      }
+    }
+    for (const creep of room.find(FIND_MY_CREEPS)) {
+      const current = costs.get(creep.pos.x, creep.pos.y);
+      if (current < 255) {
+        costs.set(creep.pos.x, creep.pos.y, Math.max(current, 15));
       }
     }
     return costs;

@@ -1,3 +1,5 @@
+import { drawIdleIndicators } from '../utils/idle';
+
 /**
  * Per-room debug overlay.
  *
@@ -79,4 +81,5 @@ export function runVisuals(): void {
     drawHeader(room);
     drawSourceLoad(room);
   }
+  drawIdleIndicators();
 }
