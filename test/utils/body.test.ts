@@ -1,4 +1,4 @@
-import { buildBody } from '../../src/utils/body';
+import { buildBody, buildMinerBody, buildUpgraderBody } from '../../src/utils/body';
 
 describe('buildBody', () => {
   it('returns correct body for exact energy match', () => {
@@ -44,5 +44,56 @@ describe('buildBody', () => {
   it('handles mixed combat body', () => {
     // [ATTACK, MOVE] costs 80+50 = 130
     expect(buildBody([ATTACK, MOVE], 260)).toEqual([ATTACK, MOVE, ATTACK, MOVE]);
+  });
+});
+
+describe('buildMinerBody', () => {
+  it('returns empty when energy too low for 1 WORK + CARRY + MOVE', () => {
+    expect(buildMinerBody(199)).toEqual([]);
+  });
+
+  it('returns 1W 1C 1M at minimum energy (200)', () => {
+    expect(buildMinerBody(200)).toEqual([WORK, CARRY, MOVE]);
+  });
+
+  it('returns 2W 1C 1M at 300 energy', () => {
+    expect(buildMinerBody(300)).toEqual([WORK, WORK, CARRY, MOVE]);
+  });
+
+  it('returns 4W 1C 1M at 550 energy', () => {
+    expect(buildMinerBody(550)).toEqual([WORK, WORK, WORK, WORK, CARRY, MOVE]);
+  });
+
+  it('returns 5W 1C 1M at 600 energy', () => {
+    expect(buildMinerBody(600)).toEqual([WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
+  });
+
+  it('caps at 6 WORK even with excess energy', () => {
+    expect(buildMinerBody(1000)).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
+  });
+});
+
+describe('buildUpgraderBody', () => {
+  it('returns empty when energy too low', () => {
+    expect(buildUpgraderBody(199)).toEqual([]);
+  });
+
+  it('returns 1W 1C 1M at minimum energy (200)', () => {
+    expect(buildUpgraderBody(200)).toEqual([WORK, CARRY, MOVE]);
+  });
+
+  it('returns 4W 1C 1M at 550 energy', () => {
+    expect(buildUpgraderBody(550)).toEqual([WORK, WORK, WORK, WORK, CARRY, MOVE]);
+  });
+
+  it('returns 7W 1C 1M at 800 energy', () => {
+    expect(buildUpgraderBody(800)).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
+  });
+
+  it('caps at 15 WORK even with excess energy', () => {
+    const body = buildUpgraderBody(5000);
+    expect(body.filter((p) => p === WORK).length).toBe(15);
+    expect(body).toContain(CARRY);
+    expect(body).toContain(MOVE);
   });
 });
