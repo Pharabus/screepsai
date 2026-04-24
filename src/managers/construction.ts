@@ -142,7 +142,7 @@ const EXTENSION_STAMP: [number, number][] = [
   [4, 4],
 ];
 
-function placeExtensions(room: Room): void {
+export function placeExtensions(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_EXTENSIONS[rcl] ?? 0;
   const current = countStructuresAndSites(room, STRUCTURE_EXTENSION);
@@ -175,7 +175,7 @@ function placeExtensions(room: Room): void {
   }
 }
 
-function placeTowers(room: Room): void {
+export function placeTowers(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_TOWERS[rcl] ?? 0;
   const current = countStructuresAndSites(room, STRUCTURE_TOWER);
@@ -191,7 +191,7 @@ function placeTowers(room: Room): void {
   }
 }
 
-function placeSourceContainers(room: Room): void {
+export function placeSourceContainers(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 2) return;
 
@@ -221,7 +221,7 @@ function placeSourceContainers(room: Room): void {
   }
 }
 
-function placeControllerContainer(room: Room): void {
+export function placeControllerContainer(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 2) return;
   if (!room.controller) return;
@@ -252,7 +252,7 @@ function placeControllerContainer(room: Room): void {
   }
 }
 
-function placeStorage(room: Room): void {
+export function placeStorage(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 4) return;
 
@@ -273,7 +273,7 @@ function placeStorage(room: Room): void {
   }
 }
 
-function placeRoads(room: Room): void {
+export function placeRoads(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 2) return;
 
@@ -313,7 +313,7 @@ function placeRoads(room: Room): void {
   }
 }
 
-function placeTerminal(room: Room): void {
+export function placeTerminal(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
   if (room.terminal) return;
@@ -330,7 +330,7 @@ function placeTerminal(room: Room): void {
   }
 }
 
-function placeExtractor(room: Room): void {
+export function placeExtractor(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
 
@@ -349,7 +349,7 @@ function placeExtractor(room: Room): void {
   room.createConstructionSite(mineral.pos, STRUCTURE_EXTRACTOR);
 }
 
-function placeMineralContainer(room: Room): void {
+export function placeMineralContainer(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
 
@@ -384,7 +384,7 @@ function placeMineralContainer(room: Room): void {
   }
 }
 
-function placeLinks(room: Room): void {
+export function placeLinks(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_LINKS[rcl] ?? 0;
   if (max === 0) return;
@@ -459,7 +459,7 @@ function placeLinks(room: Room): void {
   }
 }
 
-function placeRamparts(room: Room): void {
+export function placeRamparts(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 3) return;
 

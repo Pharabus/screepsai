@@ -14,10 +14,10 @@
 export function ensureRoomPlan(room: Room): void {
   const mem = (Memory.rooms[room.name] ??= {});
 
-  // Initialise sources array if missing
-  if (!mem.sources) {
+  // Initialise sources array if missing or outdated (no position data)
+  if (!mem.sources || (mem.sources.length > 0 && mem.sources[0]!.x === undefined)) {
     const sources = room.find(FIND_SOURCES);
-    mem.sources = sources.map((s) => ({ id: s.id }));
+    mem.sources = sources.map((s) => ({ id: s.id, x: s.pos.x, y: s.pos.y }));
   }
 
   // Update container assignments for sources
@@ -138,7 +138,7 @@ export function ensureRoomPlan(room: Room): void {
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
 
-  // Validate miner assignments (clear dead/reassigned miners)
+  // Validate miner assignments (clear dead/reassigned miners, restore orphaned ones)
   for (const entry of mem.sources) {
     if (entry.minerName) {
       const creep = Game.creeps[entry.minerName];
@@ -146,20 +146,95 @@ export function ensureRoomPlan(room: Room): void {
         entry.minerName = undefined;
       }
     }
+    if (!entry.minerName) {
+      for (const creep of Object.values(Game.creeps)) {
+        if (creep.memory.role === 'miner' && creep.memory.targetId === entry.id) {
+          entry.minerName = creep.name;
+          break;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Scan sources in a remote (unowned) room and populate Memory.rooms[roomName].sources.
+ * Only tracks source IDs — no containers, links, or controller tracking.
+ */
+export function ensureRemoteRoomPlan(roomName: string): void {
+  const mem = (Memory.rooms[roomName] ??= {});
+  const room = Game.rooms[roomName];
+
+  if (room && (!mem.sources || (mem.sources.length > 0 && mem.sources[0]!.x === undefined))) {
+    const sources = room.find(FIND_SOURCES);
+    mem.sources = sources.map((s) => ({ id: s.id, x: s.pos.x, y: s.pos.y }));
+  }
+
+  // Bootstrap sources from scout data when we don't have visibility yet
+  if (!mem.sources && mem.scoutedSourceData) {
+    mem.sources = mem.scoutedSourceData.map((s) => ({ id: s.id, x: s.x, y: s.y }));
+  }
+
+  if (!mem.sources) return;
+
+  if (room) {
+    // Update container assignments for remote sources (requires visibility)
+    for (const entry of mem.sources) {
+      if (entry.containerId) {
+        const container = Game.getObjectById(entry.containerId);
+        if (container) continue;
+        entry.containerId = undefined;
+      }
+      const source = Game.getObjectById(entry.id);
+      if (!source) continue;
+      const containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: (s): s is StructureContainer => s.structureType === STRUCTURE_CONTAINER,
+      });
+      if (containers.length > 0) {
+        entry.containerId = containers[0]!.id;
+      }
+    }
+  }
+
+  // Validate miner assignments (works without visibility — just checks Game.creeps)
+  for (const entry of mem.sources) {
+    if (entry.minerName) {
+      const creep = Game.creeps[entry.minerName];
+      if (!creep || creep.memory.role !== 'miner') {
+        entry.minerName = undefined;
+      }
+    }
+    if (!entry.minerName) {
+      for (const creep of Object.values(Game.creeps)) {
+        if (creep.memory.role === 'miner' && creep.memory.targetId === entry.id) {
+          entry.minerName = creep.name;
+          break;
+        }
+      }
+    }
   }
 }
 
 /**
  * Find a source that has a container but no assigned miner, for spawning or
- * assigning a new miner.
+ * assigning a new miner. For remote rooms (no containers), any unassigned
+ * source qualifies.
  */
 export function findUnminedSource(roomName: string): Id<Source> | undefined {
   const mem = Memory.rooms[roomName];
   if (!mem?.sources) return undefined;
   for (const entry of mem.sources) {
-    if (entry.containerId && !entry.minerName) return entry.id;
+    if (!entry.minerName && (entry.containerId || isRemoteRoom(roomName))) return entry.id;
   }
   return undefined;
+}
+
+function isRemoteRoom(roomName: string): boolean {
+  for (const homeRoomName of Object.keys(Memory.rooms)) {
+    const homeMem = Memory.rooms[homeRoomName];
+    if (homeMem?.remoteRooms?.includes(roomName)) return true;
+  }
+  return false;
 }
 
 /**

@@ -1,0 +1,43 @@
+/**
+ * Evaluate and select adjacent rooms for remote mining.
+ * Called periodically to update Memory.rooms[homeRoom].remoteRooms.
+ */
+
+export function evaluateRemoteRoom(targetRoomName: string): number {
+  const rmem = Memory.rooms[targetRoomName];
+  if (!rmem?.scoutedAt) return -1;
+
+  // Reject owned or reserved rooms
+  if (rmem.scoutedOwner) return -1;
+  if (rmem.scoutedReservation) return -1;
+
+  // Reject rooms with recent hostile presence (stale sightings are likely transient invaders)
+  const hostiles = rmem.scoutedHostiles ?? 0;
+  const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
+  if (hostiles > 0 && scoutAge < 1500) return -1;
+
+  // Reject rooms with no sources
+  if ((rmem.scoutedSources ?? 0) === 0) return -1;
+
+  // Score: more sources = better
+  return rmem.scoutedSources ?? 0;
+}
+
+export function selectRemoteRooms(homeRoom: Room): void {
+  const exits = Game.map.describeExits(homeRoom.name);
+  if (!exits) return;
+
+  const scored: { name: string; score: number }[] = [];
+  for (const roomName of Object.values(exits)) {
+    const score = evaluateRemoteRoom(roomName);
+    if (score > 0) {
+      scored.push({ name: roomName, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const mem = (Memory.rooms[homeRoom.name] ??= {});
+  // Pick up to 2 best remote rooms
+  mem.remoteRooms = scored.slice(0, 2).map((r) => r.name);
+}

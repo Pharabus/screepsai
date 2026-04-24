@@ -4,24 +4,56 @@ import { moveTo } from '../utils/movement';
 import { registerStationary, PRIORITY_STATIC, PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
+function getSourcePos(creep: Creep): RoomPosition | undefined {
+  const roomName = creep.memory.targetRoom ?? creep.room.name;
+  const mem = Memory.rooms[roomName];
+  const entry = mem?.sources?.find((s) => s.id === creep.memory.targetId);
+  if (entry) return new RoomPosition(entry.x, entry.y, roomName);
+  return undefined;
+}
+
 const states: StateMachineDefinition = {
   POSITION: {
     run(creep) {
       if (!creep.memory.targetId) {
-        const sourceId = findUnminedSource(creep.room.name);
-        if (!sourceId) return undefined;
+        const roomName = creep.memory.targetRoom ?? creep.room.name;
+        const sourceId = findUnminedSource(roomName);
+        if (!sourceId) {
+          // No source data yet — path to target room to establish visibility
+          if (creep.memory.targetRoom && creep.room.name !== creep.memory.targetRoom) {
+            moveTo(creep, new RoomPosition(25, 25, creep.memory.targetRoom), {
+              range: 20,
+              priority: PRIORITY_WORKER,
+              visualizePathStyle: { stroke: '#ffaa00' },
+            });
+          }
+          return undefined;
+        }
         creep.memory.targetId = sourceId;
-        assignMiner(creep.room.name, sourceId, creep.name);
+        assignMiner(roomName, sourceId, creep.name);
       }
 
-      const source = Game.getObjectById(creep.memory.targetId as Id<Source>);
-      if (!source) {
+      // Use stored position — works even without visibility
+      const sourcePos = getSourcePos(creep);
+      if (!sourcePos) {
         creep.memory.targetId = undefined;
         return undefined;
       }
 
+      const source = Game.getObjectById(creep.memory.targetId as Id<Source>);
+
+      // Not in the right room yet — path directly to the source
+      if (creep.room.name !== sourcePos.roomName) {
+        moveTo(creep, sourcePos, {
+          priority: PRIORITY_WORKER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+        return undefined;
+      }
+
+      // In the right room — check for container positioning
       const mem = Memory.rooms[creep.room.name];
-      const entry = mem?.sources?.find((s) => s.id === source.id);
+      const entry = mem?.sources?.find((s) => s.id === creep.memory.targetId);
       const container = entry?.containerId ? Game.getObjectById(entry.containerId) : undefined;
 
       if (container) {
@@ -31,9 +63,20 @@ const states: StateMachineDefinition = {
           priority: PRIORITY_WORKER,
           visualizePathStyle: { stroke: '#ffaa00' },
         });
-      } else {
-        if (creep.pos.isNearTo(source)) return 'HARVEST';
+      } else if (source) {
+        // No container — stand adjacent to source (remote mining or pre-container)
+        if (creep.pos.isNearTo(source)) {
+          placeRemoteContainer(creep, source);
+          return 'HARVEST';
+        }
         moveTo(creep, source, {
+          priority: PRIORITY_WORKER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+      } else {
+        // No visibility — path to stored position
+        if (creep.pos.inRangeTo(sourcePos, 1)) return 'HARVEST';
+        moveTo(creep, sourcePos, {
           priority: PRIORITY_WORKER,
           visualizePathStyle: { stroke: '#ffaa00' },
         });
@@ -51,6 +94,17 @@ const states: StateMachineDefinition = {
         return 'POSITION';
       }
 
+      // Build container construction site if one exists nearby
+      if (creep.memory.targetRoom && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        const site = source.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 1, {
+          filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+        })[0];
+        if (site) {
+          creep.build(site);
+          return undefined;
+        }
+      }
+
       creep.harvest(source);
 
       const mem = Memory.rooms[creep.room.name];
@@ -61,10 +115,36 @@ const states: StateMachineDefinition = {
           creep.transfer(link, RESOURCE_ENERGY);
         }
       }
+
+      // Once a container is built, reposition onto it
+      if (creep.memory.targetRoom && entry && !entry.containerId) {
+        const container = source.pos.findInRange(FIND_STRUCTURES, 1, {
+          filter: (s): s is StructureContainer => s.structureType === STRUCTURE_CONTAINER,
+        })[0];
+        if (container) {
+          entry.containerId = container.id;
+          return 'POSITION';
+        }
+      }
+
       return undefined;
     },
   },
 };
+
+function placeRemoteContainer(creep: Creep, source: Source): void {
+  if (!creep.memory.targetRoom) return;
+  const existing = source.pos.findInRange(FIND_STRUCTURES, 1, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  if (existing.length > 0) return;
+  const sites = source.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 1, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+  });
+  if (sites.length > 0) return;
+
+  creep.room.createConstructionSite(creep.pos, STRUCTURE_CONTAINER);
+}
 
 export const miner: Role = {
   run(creep: Creep): void {

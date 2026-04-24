@@ -4,6 +4,16 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
+const BUILD_PRIORITY: Partial<Record<BuildableStructureConstant, number>> = {
+  [STRUCTURE_SPAWN]: 0,
+  [STRUCTURE_EXTENSION]: 1,
+  [STRUCTURE_TOWER]: 2,
+  [STRUCTURE_CONTAINER]: 3,
+  [STRUCTURE_STORAGE]: 4,
+  [STRUCTURE_ROAD]: 6,
+  [STRUCTURE_RAMPART]: 7,
+};
+
 const states: StateMachineDefinition = {
   GATHER: {
     run(creep) {
@@ -27,7 +37,11 @@ const states: StateMachineDefinition = {
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';
 
-      const site = creep.room.find(FIND_CONSTRUCTION_SITES)[0];
+      const sites = creep.room.find(FIND_CONSTRUCTION_SITES);
+      sites.sort(
+        (a, b) => (BUILD_PRIORITY[a.structureType] ?? 5) - (BUILD_PRIORITY[b.structureType] ?? 5),
+      );
+      const site = sites[0];
       if (site) {
         if (creep.build(site) === ERR_NOT_IN_RANGE) {
           moveTo(creep, site, {
