@@ -18,6 +18,11 @@
 (globalThis as any).FIND_MY_CONSTRUCTION_SITES = 111;
 (globalThis as any).FIND_MY_SPAWNS = 112;
 (globalThis as any).FIND_DROPPED_RESOURCES = 113;
+(globalThis as any).FIND_MINERALS = 110;
+
+// Look constants
+(globalThis as any).LOOK_STRUCTURES = 'structure';
+(globalThis as any).LOOK_CONSTRUCTION_SITES = 'constructionSite';
 
 // Structure type constants
 (globalThis as any).STRUCTURE_SPAWN = 'spawn';
@@ -39,6 +44,8 @@
 (globalThis as any).OK = 0;
 (globalThis as any).ERR_NOT_IN_RANGE = -9;
 (globalThis as any).ERR_NOT_ENOUGH_ENERGY = -6;
+(globalThis as any).ERR_NO_PATH = -2;
+(globalThis as any).ERR_INVALID_ARGS = -10;
 
 // Terrain
 (globalThis as any).TERRAIN_MASK_WALL = 1;
@@ -52,6 +59,8 @@
   getObjectById: () => undefined,
   map: {
     getRoomTerrain: () => ({ get: () => 0 }),
+    describeExits: () => ({}),
+    findExit: () => -2,
   },
 };
 
@@ -89,7 +98,8 @@
     return Math.abs(this.x - other.x) <= 1 && Math.abs(this.y - other.y) <= 1;
   }
   inRangeTo(other: any, range: number) {
-    return Math.abs(this.x - other.x) <= range && Math.abs(this.y - other.y) <= range;
+    const pos = other.pos ?? other;
+    return Math.abs(this.x - pos.x) <= range && Math.abs(this.y - pos.y) <= range;
   }
   getRangeTo(other: any) {
     return Math.max(Math.abs(this.x - other.x), Math.abs(this.y - other.y));
@@ -101,6 +111,9 @@
     return undefined;
   }
   findInRange(_type: any, _range: number, _opts?: any) {
+    return [];
+  }
+  lookFor(_type: any) {
     return [];
   }
 };
@@ -164,6 +177,8 @@ export function resetGameGlobals(): void {
     getObjectById: () => undefined,
     map: {
       getRoomTerrain: () => ({ get: () => 0 }),
+      describeExits: () => ({}),
+      findExit: () => -2,
     },
   };
   (globalThis as any).Memory = {

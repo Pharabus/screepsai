@@ -50,25 +50,29 @@ export function executeMove(
   creep.move(creep.pos.getDirectionTo(nextPos));
 
   if (stroke && path.length > 0) {
-    vizBuffer.push({
-      roomName: creep.room.name,
-      points: [creep.pos, ...path],
-      stroke,
-    });
+    const room = creep.room.name;
+    const localPoints = [creep.pos, ...path].filter((p) => p.roomName === room);
+    if (localPoints.length > 1) {
+      vizBuffer.push({ roomName: room, points: localPoints, stroke });
+    }
   }
 }
 
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   return cached(`traffic:path:${creep.name}`, () => {
-    const costMatrix = getRoomCostMatrix(creep.room);
+    const crossRoom = creep.pos.roomName !== target.roomName;
     const result = PathFinder.search(
       creep.pos,
       { pos: target, range },
       {
         plainCost: 2,
         swampCost: 10,
-        maxRooms: 1,
-        roomCallback: () => costMatrix,
+        maxRooms: crossRoom ? 2 : 1,
+        roomCallback: (roomName) => {
+          const room = Game.rooms[roomName];
+          if (!room) return false;
+          return getRoomCostMatrix(room);
+        },
       },
     );
     return result.path;

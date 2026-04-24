@@ -28,7 +28,7 @@ The AI is a single `loop` function exported from `src/main.ts`, called once per 
 2b. `resetTraffic()` — clears intent-based traffic manager state.
 2c. `resetIdle()` — clears the idle creep set for fresh per-tick tracking.
 3. `runDefense` — scans hostiles, updates `RoomMemory.threatLastSeen` / `lastThreatScore`, activates safe mode on perimeter breach. Runs first so the spawner and towers see the same threat view.
-4. `runSpawner` — calls `ensureRoomPlan(room)` to refresh source/container/miner cache, then **rebuilds the spawn queue per room** via `buildSpawnQueue(room)`. Uses bootstrap economy (harvester-based) until the first source container is detected, then switches to miner economy (miner + hauler + heavy-WORK upgrader). Defenders are prepended dynamically when threats are active.
+4. `runSpawner` — calls `ensureRoomPlan(room)` to refresh source/container/miner cache, runs `selectRemoteRooms` every 100 ticks, scans remote rooms via `ensureRemoteRoomPlan`, then **rebuilds the spawn queue per room** via `buildSpawnQueue(room)`. Uses bootstrap economy (harvester-based) until the first source container is detected, then switches to miner economy (miner + hauler + heavy-WORK upgrader). Remote mining roles (scout, remote miners, remote haulers) are appended at lowest priority in miner economy. Defenders are prepended dynamically when threats are active.
 5. `runLinks` — transfers energy from source links to storage link (primary) or controller link (secondary). Runs before rooms so creeps see fresh link state.
 6. `runRooms` — purges dead-creep memory, then dispatches each creep to its role via the `roles` registry (`src/roles/index.ts`). Roles register movement intents via `moveTo()` during this phase. Per-creep calls are profiled as `role.<roleName>`.
 6b. `resolveTraffic` — processes all movement intents registered during `runRooms`, resolves tile conflicts by priority, and issues `creep.move()` calls.
@@ -60,7 +60,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 
 ### Body scaling
 
-`src/utils/body.ts` `buildBody(pattern, energy, maxRepeats?)` repeats a body pattern as many times as the room's `energyCapacityAvailable` allows. Spawner always passes `spawn.room.energyCapacityAvailable`, so creeps automatically grow as extensions get built — do not hardcode bodies.
+`src/utils/body.ts` `buildBody(pattern, energy, maxRepeats?)` repeats a body pattern as many times as the room's `energyCapacityAvailable` allows. Spawner always passes `spawn.room.energyCapacityAvailable`, so creeps automatically grow as extensions get built — do not hardcode bodies. Specialized builders exist for miners (`buildMinerBody` — maximizes WORK, cap 6), upgraders (`buildUpgraderBody` — maximizes WORK, cap 15), and remote miners (`buildRemoteMinerBody` — WORK+MOVE pairs at 1:1 ratio for off-road travel, plus 1 CARRY for building containers, cap 5 WORK).
 
 ### Defense
 
@@ -88,7 +88,23 @@ All roles use `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefi
 
 `src/utils/movement.ts` provides a `moveTo` wrapper used by all roles. Each creep computes its own path via `PathFinder.search` and issues `creep.move(direction)` directly — there is no centralised intent queue. Traffic avoidance is handled entirely through the CostMatrix (`src/utils/trafficManager.ts`, cached per room per tick): roads cost 1, other creeps cost 15 (soft avoid — paths route around clusters but can go through), stationary creeps (miners) cost 255 (hard block — paths must go around), impassable structures cost 255, hostile creeps cost 255. Stationary roles call `registerStationary(creep, PRIORITY_STATIC)` to mark their tile as impassable in the CostMatrix. The Screeps engine handles 2-way swaps natively when both creeps move into each other's tile. A stuck detection fallback in `movement.ts` bypasses to native `creep.moveTo(reusePath: 0)` after 3 ticks at the same position. Always use `moveTo()` instead of direct `creep.moveTo()` or `creep.move()`.
 
+For cross-room movement, `getPath` uses `maxRooms: 2` when the target is in a different room than the creep. The `roomCallback` returns per-room CostMatrix when visibility exists, or `false` for unseen rooms (PathFinder uses default terrain costs). Remote roles path directly to stored source positions via `RoomPosition` constructed from Memory coordinates — no `Game.map.findExit` needed.
+
 When a role's `moveTo` target requires standing on a specific tile (e.g. miner on container), pass `range: 0` — the default range is 1, and the traffic manager skips movement when already in range.
+
+### Remote mining
+
+Remote mining sends creeps to harvest sources in adjacent unowned rooms. Gated by miner economy (containers must be built first). The flow:
+
+1. A `scout` (1 MOVE) explores adjacent rooms and records source count, ownership, hostile presence, and source positions (`scoutedSourceData`) in `RoomMemory`. Re-scouts rooms every 5000 ticks. Idles near storage/spawn when all rooms are scouted.
+2. `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) evaluates scouted rooms every 100 ticks — rejects owned/reserved/sourceless rooms and rooms with recent hostile sightings (< 1500 ticks old). Picks up to 2 best by source count, stores in `RoomMemory.remoteRooms`.
+3. `ensureRemoteRoomPlan()` scans sources in remote rooms we have visibility into; bootstraps source data from `scoutedSourceData` when no visibility.
+4. Remote miners (reusing `miner` role with `targetRoom` set) path directly to stored source positions via cross-room PathFinder. They harvest at the source and build their own container (they have 1 CARRY part for this). Before the container is built, energy drops on the ground for haulers.
+5. `remoteHauler` creeps pick up dropped energy or withdraw from containers in the remote room, then deliver to storage/spawns/towers/controller container in the home room. When idle in the remote room, they wait near the source to avoid border-tile bouncing.
+
+`CreepMemory.homeRoom` identifies which room a remote creep belongs to. `CreepMemory.targetRoom` tells it which room to operate in. Local miners have neither field set.
+
+Future concerns for claiming are tracked in `todo.md`.
 
 ### Idle creep management
 

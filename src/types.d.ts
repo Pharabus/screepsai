@@ -6,7 +6,9 @@ type CreepRoleName =
   | 'defender'
   | 'miner'
   | 'hauler'
-  | 'mineralMiner';
+  | 'mineralMiner'
+  | 'scout'
+  | 'remoteHauler';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -14,6 +16,10 @@ interface CreepMemory {
   targetId?: Id<Source | Mineral | StructureContainer | StructureStorage | StructureController>;
   /** FSM state name */
   state?: string;
+  /** Room the creep was spawned in / belongs to (set for remote roles) */
+  homeRoom?: string;
+  /** Target room for cross-room movement (scout, remote roles) */
+  targetRoom?: string;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
@@ -25,6 +31,9 @@ interface RoomMemory {
   // Room planning (src/managers/spawner.ts, construction.ts)
   sources?: {
     id: Id<Source>;
+    /** Cached position so we can path without visibility */
+    x: number;
+    y: number;
     containerId?: Id<StructureContainer>;
     linkId?: Id<StructureLink>;
     /** Name of the miner creep assigned to this source */
@@ -40,6 +49,16 @@ interface RoomMemory {
   mineralId?: Id<Mineral>;
   mineralContainerId?: Id<StructureContainer>;
   mineralMinerName?: string;
+  // Remote mining
+  remoteRooms?: string[];
+  // Scout data (populated by scouts visiting unowned rooms)
+  scoutedAt?: number;
+  scoutedSources?: number;
+  /** Source data recorded by scouts, so miners can path without visibility */
+  scoutedSourceData?: { id: Id<Source>; x: number; y: number }[];
+  scoutedOwner?: string;
+  scoutedReservation?: string;
+  scoutedHostiles?: number;
 }
 
 interface ProfilerSample {

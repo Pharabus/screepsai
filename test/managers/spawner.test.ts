@@ -32,7 +32,9 @@ describe('buildSpawnQueue', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
-        sources: [{ id: 'src1' as any, containerId: 'cnt1' as any, minerName: 'miner_1' }],
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
       },
     };
     (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
@@ -52,7 +54,7 @@ describe('buildSpawnQueue', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
-        sources: [{ id: 'src1' as any, containerId: 'cnt1' as any }],
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
       },
     };
     (Game as any).creeps = {};
@@ -78,7 +80,9 @@ describe('buildSpawnQueue', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
-        sources: [{ id: 'src1' as any, containerId: 'cnt1' as any, minerName: 'miner_1' }],
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
       },
     };
     (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
@@ -100,7 +104,7 @@ describe('minersNeeded', () => {
 
   it('returns 0 when source has no container', () => {
     (Memory as any).rooms = {
-      W1N1: { sources: [{ id: 'src1' as any }] },
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10 }] },
     };
     const room = mockRoom({ name: 'W1N1' });
     expect(minersNeeded(room)).toBe(0);
@@ -108,7 +112,7 @@ describe('minersNeeded', () => {
 
   it('returns 1 when source has container but no miner', () => {
     (Memory as any).rooms = {
-      W1N1: { sources: [{ id: 'src1' as any, containerId: 'cnt1' as any }] },
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
     };
     (Game as any).creeps = {};
     const room = mockRoom({ name: 'W1N1' });
@@ -118,7 +122,9 @@ describe('minersNeeded', () => {
   it('returns 0 when miner is alive and assigned', () => {
     (Memory as any).rooms = {
       W1N1: {
-        sources: [{ id: 'src1' as any, containerId: 'cnt1' as any, minerName: 'miner_1' }],
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
       },
     };
     (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
@@ -129,7 +135,9 @@ describe('minersNeeded', () => {
   it('returns 1 when assigned miner is dead', () => {
     (Memory as any).rooms = {
       W1N1: {
-        sources: [{ id: 'src1' as any, containerId: 'cnt1' as any, minerName: 'miner_dead' }],
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_dead' },
+        ],
       },
     };
     (Game as any).creeps = {};
@@ -147,7 +155,7 @@ describe('haulersNeeded', () => {
 
   it('returns 0 when no containers', () => {
     (Memory as any).rooms = {
-      W1N1: { sources: [{ id: 'src1' as any }] },
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10 }] },
     };
     const room = mockRoom({ name: 'W1N1' });
     expect(haulersNeeded(room)).toBe(0);
@@ -155,7 +163,7 @@ describe('haulersNeeded', () => {
 
   it('returns 3 per unlinked source at low capacity', () => {
     (Memory as any).rooms = {
-      W1N1: { sources: [{ id: 'src1' as any, containerId: 'cnt1' as any }] },
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 550 });
     expect(haulersNeeded(room)).toBe(3);
@@ -163,7 +171,7 @@ describe('haulersNeeded', () => {
 
   it('returns 2 per unlinked source at high capacity', () => {
     (Memory as any).rooms = {
-      W1N1: { sources: [{ id: 'src1' as any, containerId: 'cnt1' as any }] },
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(2);

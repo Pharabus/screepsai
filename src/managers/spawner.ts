@@ -1,7 +1,8 @@
-import { buildBody, buildMinerBody, buildUpgraderBody } from '../utils/body';
+import { buildBody, buildMinerBody, buildRemoteMinerBody, buildUpgraderBody } from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
-import { ensureRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
+import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
+import { selectRemoteRooms } from '../utils/remotePlanner';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -9,6 +10,7 @@ interface SpawnRequest {
   body?: BodyPartConstant[];
   maxRepeats?: number;
   minCount: number;
+  memory?: CreepMemory;
 }
 
 function countCreepsByRole(role: CreepRoleName): number {
@@ -20,6 +22,26 @@ function countCreepsByRole(role: CreepRoleName): number {
     return totals;
   });
   return counts[role] ?? 0;
+}
+
+function countRemoteMiners(remoteRoom: string): number {
+  return cached('spawner:remoteMiners:' + remoteRoom, () => {
+    let count = 0;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role === 'miner' && c.memory.targetRoom === remoteRoom) count++;
+    }
+    return count;
+  });
+}
+
+function countRemoteHaulers(remoteRoom: string): number {
+  return cached('spawner:remoteHaulers:' + remoteRoom, () => {
+    let count = 0;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role === 'remoteHauler' && c.memory.targetRoom === remoteRoom) count++;
+    }
+    return count;
+  });
 }
 
 /**
@@ -177,6 +199,63 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         minCount: mineralMiners,
       });
     }
+    // Remote mining roles (lower priority than local economy)
+    const remoteRooms = mem?.remoteRooms ?? [];
+    for (const remoteRoom of remoteRooms) {
+      const remoteMem = Memory.rooms[remoteRoom];
+      const remoteBody = buildRemoteMinerBody(room.energyCapacityAvailable);
+      if (remoteBody.length === 0) continue;
+      const sourceCount = remoteMem?.sources?.length ?? remoteMem?.scoutedSources ?? 0;
+      if (sourceCount === 0) continue;
+
+      const existingRemoteMiners = countRemoteMiners(remoteRoom);
+      const existingRemoteHaulers = countRemoteHaulers(remoteRoom);
+      const totalMiners = countCreepsByRole('miner');
+      const totalHaulers = countCreepsByRole('remoteHauler');
+
+      // Spawn remote miners: 1 per source, using source assignments when available
+      if (remoteMem?.sources) {
+        for (const entry of remoteMem.sources) {
+          if (entry.minerName && Game.creeps[entry.minerName]) continue;
+          queue.push({
+            role: 'miner',
+            body: remoteBody,
+            minCount: totalMiners + 1,
+            memory: { role: 'miner' as CreepRoleName, homeRoom: room.name, targetRoom: remoteRoom },
+          });
+        }
+      } else if (existingRemoteMiners < sourceCount) {
+        queue.push({
+          role: 'miner',
+          body: remoteBody,
+          minCount: totalMiners + 1,
+          memory: { role: 'miner' as CreepRoleName, homeRoom: room.name, targetRoom: remoteRoom },
+        });
+      }
+
+      // Remote haulers: 2 per source
+      const haulersWanted = sourceCount * 2;
+      if (existingRemoteHaulers < haulersWanted) {
+        queue.push({
+          role: 'remoteHauler',
+          pattern: [CARRY, CARRY, MOVE, MOVE],
+          maxRepeats: 4,
+          minCount: totalHaulers + 1,
+          memory: {
+            role: 'remoteHauler' as CreepRoleName,
+            homeRoom: room.name,
+            targetRoom: remoteRoom,
+          },
+        });
+      }
+    }
+    // Scout (1 per room, cheap — idles when nothing to explore)
+    queue.push({
+      role: 'scout',
+      pattern: [MOVE],
+      minCount: 1,
+      memory: { role: 'scout' as CreepRoleName, homeRoom: room.name },
+    });
   } else {
     // Bootstrap economy: original patterns
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });
@@ -191,7 +270,16 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 export function runSpawner(): void {
   // Ensure room plans are up to date before making spawn decisions
   for (const room of Object.values(Game.rooms)) {
-    if (room.controller?.my) ensureRoomPlan(room);
+    if (room.controller?.my) {
+      ensureRoomPlan(room);
+      // Periodically re-evaluate remote room selection
+      if (Game.time % 100 === 0) selectRemoteRooms(room);
+      // Scan remote rooms we have visibility into
+      const remoteRooms = Memory.rooms[room.name]?.remoteRooms ?? [];
+      for (const remoteName of remoteRooms) {
+        ensureRemoteRoomPlan(remoteName);
+      }
+    }
   }
 
   for (const room of Object.values(Game.rooms)) {
@@ -211,7 +299,7 @@ export function runSpawner(): void {
 
       const name = `${request.role}_${Game.time}`;
       const result = spawn.spawnCreep(body, name, {
-        memory: { role: request.role },
+        memory: request.memory ?? { role: request.role },
       });
 
       if (result === OK) {
