@@ -1,11 +1,7 @@
 import { moveTo } from './movement';
 
-/**
- * Try to withdraw energy from logistics infrastructure (containers/storage).
- * Returns true if a withdrawal target was found, false if caller should self-harvest.
- * Persists target in creep.memory.targetId so the creep commits to one source
- * until full or the target runs dry.
- */
+export const STORAGE_ENERGY_FLOOR = 10_000;
+
 export function withdrawFromLogistics(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   const controllerContainerId = mem?.controllerContainerId;
@@ -18,14 +14,22 @@ export function withdrawFromLogistics(creep: Creep): boolean {
       (cached as StructureContainer | StructureStorage).store.getUsedCapacity(RESOURCE_ENERGY) > 0
     ) {
       if (
-        creep.withdraw(cached as StructureContainer | StructureStorage, RESOURCE_ENERGY) ===
-        ERR_NOT_IN_RANGE
+        (cached as AnyStructure).structureType === STRUCTURE_STORAGE &&
+        (cached as StructureStorage).store.getUsedCapacity(RESOURCE_ENERGY) <= STORAGE_ENERGY_FLOOR
       ) {
-        moveTo(creep, cached, { visualizePathStyle: { stroke: '#ffaa00' } });
+        delete creep.memory.targetId;
+      } else {
+        if (
+          creep.withdraw(cached as StructureContainer | StructureStorage, RESOURCE_ENERGY) ===
+          ERR_NOT_IN_RANGE
+        ) {
+          moveTo(creep, cached, { visualizePathStyle: { stroke: '#ffaa00' } });
+        }
+        return true;
       }
-      return true;
+    } else {
+      delete creep.memory.targetId;
     }
-    delete creep.memory.targetId;
   }
 
   const containers = creep.room
@@ -49,7 +53,7 @@ export function withdrawFromLogistics(creep: Creep): boolean {
   }
 
   const storage = creep.room.storage;
-  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > STORAGE_ENERGY_FLOOR) {
     creep.memory.targetId = storage.id;
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });

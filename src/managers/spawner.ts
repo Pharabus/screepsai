@@ -253,6 +253,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     queue.push({
       role: 'scout',
       pattern: [MOVE],
+      maxRepeats: 1,
       minCount: 1,
       memory: { role: 'scout' as CreepRoleName, homeRoom: room.name },
     });

@@ -60,7 +60,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 
 ### Shared utilities for roles
 
-- **`gatherEnergy(creep)`** (`src/utils/sources.ts`) — shared GATHER state logic used by builder and repairer. Withdraws from logistics in miner economy, self-harvests in bootstrap. Returns `true` when store is full.
+- **`gatherEnergy(creep)`** (`src/utils/sources.ts`) — shared GATHER state logic used by builder and repairer. Withdraws from logistics in miner economy, self-harvests in bootstrap. Returns `true` when store is full. Storage withdrawals are guarded by `STORAGE_ENERGY_FLOOR` (10k) to preserve reserves for spawning.
 - **`deliverToSpawnOrExtension(creep)`** / **`deliverToControllerContainer(creep)`** (`src/utils/delivery.ts`) — shared delivery helpers used by hauler and remoteHauler. Return `true` if a target was found.
 
 ### Body scaling
@@ -69,7 +69,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 
 ### Defense
 
-- `src/utils/threat.ts` scores hostile creeps by body parts (HEAL 250 > CLAIM 200 > RANGED_ATTACK 150 > ATTACK 80 > WORK 30; dead parts ignored). `pickPriorityTarget(room)` returns the top-scoring hostile with a hits-ascending tiebreak.
+- `src/utils/threat.ts` scores hostile creeps by body parts (HEAL 250 > CLAIM 200 > RANGED_ATTACK 150 > ATTACK 80 > WORK 30; dead parts ignored). `pickPriorityTarget(room)` returns the top-scoring hostile with a hits-ascending tiebreak. Zero-threat hostiles (scouts, stripped invaders) are still targeted — towers will finish off any hostile in the room.
 - Focus-fire (`managers/towers.ts`) is the deliberate policy — closest-target fire lets healers keep attackers alive indefinitely.
 - Safe mode activates only when a hostile with `threatScore > 0` is within range 5 of a spawn / storage / controller, so scouts don't burn a charge.
 - `defendersNeeded(room)` = `min(ceil(threatScore / 200), 4)` while `threatLastSeen` is within 50 ticks. The memory window prevents an attacker stepping briefly out of view from cancelling an in-progress defender spawn.

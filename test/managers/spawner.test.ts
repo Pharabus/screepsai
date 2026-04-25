@@ -93,6 +93,25 @@ describe('buildSpawnQueue', () => {
 
     expect(harvester?.minCount).toBe(1);
   });
+
+  it('scout has maxRepeats 1 to prevent body bloat', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const queue = buildSpawnQueue(room);
+    const scout = queue.find((r) => r.role === 'scout');
+
+    expect(scout).toBeDefined();
+    expect(scout!.maxRepeats).toBe(1);
+  });
 });
 
 describe('minersNeeded', () => {
