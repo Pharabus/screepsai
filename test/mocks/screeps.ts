@@ -36,9 +36,27 @@
 (globalThis as any).STRUCTURE_EXTRACTOR = 'extractor';
 (globalThis as any).STRUCTURE_STORAGE = 'storage';
 (globalThis as any).STRUCTURE_TERMINAL = 'terminal';
+(globalThis as any).STRUCTURE_LAB = 'lab';
 
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';
+
+// Lab constants
+(globalThis as any).LAB_MINERAL_CAPACITY = 3000;
+(globalThis as any).LAB_ENERGY_CAPACITY = 2000;
+(globalThis as any).LAB_REACTION_AMOUNT = 5;
+(globalThis as any).LAB_COOLDOWN = 10;
+
+// Reactions (subset for testing)
+(globalThis as any).REACTIONS = {
+  H: { O: 'OH', L: 'LH', K: 'KH', U: 'UH', Z: 'ZH', G: 'GH' },
+  O: { H: 'OH', L: 'LO', K: 'KO', U: 'UO', Z: 'ZO', G: 'GO' },
+  Z: { K: 'ZK', H: 'ZH', O: 'ZO' },
+  L: { H: 'LH', O: 'LO' },
+  K: { H: 'KH', O: 'KO', Z: 'ZK' },
+  U: { H: 'UH', O: 'UO', L: 'UL' },
+  G: { H: 'GH', O: 'GO' },
+};
 
 // Return codes
 (globalThis as any).OK = 0;
@@ -157,6 +175,10 @@ export function mockCreep(overrides: Record<string, any> = {}): any {
     attack: vi.fn(() => 0),
     move: vi.fn(() => 0),
     moveTo: vi.fn(() => 0),
+    getActiveBodyparts: vi.fn((type: string) => {
+      const body = overrides.body ?? [];
+      return body.filter((p: any) => (p.type ?? p) === type && (p.hits ?? 100) > 0).length;
+    }),
     ...overrides,
   };
 }

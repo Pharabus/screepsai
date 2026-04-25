@@ -10,6 +10,7 @@ import {
   placeTerminal,
   placeExtractor,
   placeMineralContainer,
+  placeLabs,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -187,6 +188,56 @@ describe('construction RCL gating', () => {
     it('does not place before RCL 6', () => {
       const room = roomAt(5);
       placeMineralContainer(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('placeLabs', () => {
+    it('does not place before RCL 6', () => {
+      const room = roomAt(5);
+      placeLabs(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('does not place without storage', () => {
+      const room = roomAt(6);
+      room.storage = undefined;
+      placeLabs(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('places a lab at RCL 6 when storage exists', () => {
+      const storagePos = new RoomPosition(25, 25, 'W1N1');
+      (storagePos as any).lookFor = vi.fn(() => []);
+      const room = roomAt(6, {
+        storage: { pos: storagePos },
+      });
+      placeLabs(room);
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.any(RoomPosition),
+        STRUCTURE_LAB,
+      );
+    });
+
+    it('does not place if already at max for RCL', () => {
+      const storagePos = new RoomPosition(25, 25, 'W1N1');
+      (storagePos as any).lookFor = vi.fn(() => []);
+      const room = roomAt(6, {
+        storage: { pos: storagePos },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) {
+              // Return 3 labs (max for RCL 6)
+              return [{}, {}, {}];
+            }
+            return [];
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      placeLabs(room);
       expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
   });

@@ -6,6 +6,8 @@ import { runConstruction } from './managers/construction';
 import { runDefense } from './managers/defense';
 import { runVisuals } from './managers/visuals';
 import { runLinks } from './managers/links';
+import { runTerminal } from './managers/terminal';
+import { runLabs } from './managers/labs';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
 import { resetTraffic, resolveTraffic } from './utils/trafficManager';
@@ -59,6 +61,8 @@ export const loop = ErrorMapper.wrapLoop(() => {
     profile('rooms', runRooms);
     profile('traffic', resolveTraffic);
     profile('towers', runTowers);
+    profile('labs', runLabs);
+    profile('terminal', runTerminal);
     profile('construction', runConstruction);
     profile('visuals', runVisuals);
 

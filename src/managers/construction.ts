@@ -30,6 +30,28 @@ const MAX_LINKS: Record<number, number> = {
   8: 6,
 };
 
+const MAX_LABS: Record<number, number> = {
+  6: 3,
+  7: 6,
+  8: 10,
+};
+
+// Lab stamp: [dx, dy] offsets from anchor (storage).
+// Positions 0-1 are designated input labs; 2-9 are output labs.
+// All output positions are within Chebyshev range 2 of both input positions.
+const LAB_STAMP: [number, number][] = [
+  [0, 0], // input 1
+  [1, 1], // input 2
+  [0, 1], // output (RCL 6: 3 labs)
+  [1, 0], // output (RCL 7: +3)
+  [2, 1],
+  [1, 2],
+  [2, 0], // output (RCL 8: +4)
+  [0, 2],
+  [2, 2],
+  [-1, 1],
+];
+
 function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
   const built = room.find(FIND_MY_STRUCTURES, {
     filter: (s) => s.structureType === type,
@@ -459,6 +481,37 @@ export function placeLinks(room: Room): void {
   }
 }
 
+export function placeLabs(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  const max = MAX_LABS[rcl] ?? 0;
+  if (max === 0) return;
+  const current = countStructuresAndSites(room, STRUCTURE_LAB);
+  if (current >= max) return;
+  if (!room.storage) return;
+
+  const terrain = room.getTerrain();
+  const anchor = room.storage.pos;
+
+  // Offset the stamp so labs sit adjacent to storage rather than on top of it
+  const ox = anchor.x + 2;
+  const oy = anchor.y + 2;
+
+  for (const [dx, dy] of LAB_STAMP) {
+    const x = ox + dx;
+    const y = oy + dy;
+    if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+    const pos = new RoomPosition(x, y, room.name);
+    const blocked =
+      pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    if (blocked) continue;
+
+    room.createConstructionSite(pos, STRUCTURE_LAB);
+    return;
+  }
+}
+
 export function placeRamparts(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 3) return;
@@ -500,6 +553,7 @@ export function runConstruction(): void {
     placeExtractor(room);
     placeMineralContainer(room);
     placeLinks(room);
+    placeLabs(room);
     placeRoads(room);
     placeRamparts(room);
   }
