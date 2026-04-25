@@ -5,3 +5,4 @@ dist/
 .env
 .screeps.yaml
 .mcp.json
+coverage/
