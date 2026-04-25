@@ -105,7 +105,7 @@ Remote mining sends creeps to harvest sources in adjacent unowned rooms. Gated b
 2. `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) evaluates scouted rooms every 100 ticks — rejects owned/reserved/sourceless rooms and rooms with recent hostile sightings (< 1500 ticks old). Picks up to 2 best by source count, stores in `RoomMemory.remoteRooms`.
 3. `ensureRemoteRoomPlan()` scans sources in remote rooms we have visibility into; bootstraps source data from `scoutedSourceData` when no visibility.
 4. Remote miners (reusing `miner` role with `targetRoom` set) path directly to stored source positions via cross-room PathFinder. They harvest at the source and build their own container (they have 1 CARRY part for this). Before the container is built, energy drops on the ground for haulers.
-5. `remoteHauler` creeps pick up dropped energy or withdraw from containers in the remote room, then deliver to storage/spawns/towers/controller container in the home room. When idle in the remote room, they wait near the source to avoid border-tile bouncing.
+5. `remoteHauler` creeps pick up dropped energy or withdraw from containers in the remote room, then deliver to storage/spawns/towers/controller container in the home room. Before picking up energy, they repair any container below 50% HP to prevent decay-rebuild cycles. When idle in the remote room, they wait near the source to avoid border-tile bouncing.
 
 `CreepMemory.homeRoom` identifies which room a remote creep belongs to. `CreepMemory.targetRoom` tells it which room to operate in. Local miners have neither field set.
 
