@@ -78,6 +78,18 @@ describe('pickPriorityTarget', () => {
     expect(pickPriorityTarget(room)).toBe(healer);
   });
 
+  it('returns a zero-threat hostile (e.g. stripped invader or scout)', () => {
+    const scout = mockCreep({
+      name: 'scout',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+    });
+    const room = mockRoom({
+      find: vi.fn(() => [scout]),
+    });
+    expect(pickPriorityTarget(room)).toBe(scout);
+  });
+
   it('breaks ties by lower hits', () => {
     const strong = mockCreep({
       name: 'strong',

@@ -198,6 +198,7 @@ In miner economy:
 - **Haulers** (CARRY + MOVE) empty the storage link (priority), then source containers, delivering to spawn/extensions/towers/controller container/storage.
 - **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently. Count scales with storage surplus.
 - **Builders** and **repairers** gather energy via the shared `gatherEnergy()` helper, which withdraws from logistics infrastructure in miner economy or self-harvests in bootstrap.
+- All three roles (builder, repairer, upgrader) respect `STORAGE_ENERGY_FLOOR` (10k) — they won't withdraw from storage below this level, falling back to self-harvesting to preserve reserves for spawning and hauler redistribution.
 - One **harvester** is kept as an emergency bootstrap in case all miners die simultaneously.
 
 ### Typical progression
@@ -249,7 +250,7 @@ Each hostile creep's `threatScore` is the sum of per-part values, ignoring dead 
 | `ATTACK`       | 80    |
 | `WORK`         | 30    |
 
-`pickPriorityTarget(room)` returns the highest-scoring hostile in a room, breaking ties on current hits ascending (finish the weak ones first). Scouts score 0 but are still engaged to deny intel.
+`pickPriorityTarget(room)` returns the highest-scoring hostile in a room, breaking ties on current hits ascending (finish the weak ones first). Zero-threat hostiles (scouts, stripped invaders with only TOUGH parts remaining) are still targeted — towers will finish off any hostile in the room.
 
 ### Safe mode
 

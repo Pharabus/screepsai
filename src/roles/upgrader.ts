@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { harvestFromBestSource } from '../utils/sources';
+import { harvestFromBestSource, STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
@@ -24,7 +24,7 @@ const states: StateMachineDefinition = {
           }
         }
         const storage = creep.room.storage;
-        if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > STORAGE_ENERGY_FLOOR) {
           if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
             moveTo(creep, storage, {
               priority: PRIORITY_WORKER,

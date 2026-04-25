@@ -36,7 +36,7 @@ export function pickPriorityTarget(room: Room): Creep | undefined {
   if (hostiles.length === 0) return undefined;
 
   let best: Creep | undefined;
-  let bestScore = -1;
+  let bestScore = -Infinity;
   for (const h of hostiles) {
     // Break ties on hits ascending (finish the weak ones) then distance to
     // the first spawn (closer = more dangerous).
