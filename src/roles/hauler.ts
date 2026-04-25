@@ -3,6 +3,7 @@ import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -102,18 +103,18 @@ function pickup(creep: Creep): boolean {
 
   const storage = creep.room.storage;
   if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-    const hasSpawnNeed =
-      creep.room.find(FIND_MY_STRUCTURES, {
-        filter: (s) =>
-          (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-      }).length > 0;
-    const hasTowerNeed =
-      creep.room.find(FIND_MY_STRUCTURES, {
-        filter: (s): s is StructureTower =>
-          s.structureType === STRUCTURE_TOWER &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
-      }).length > 0;
+    const myStructures = creep.room.find(FIND_MY_STRUCTURES);
+    const hasSpawnNeed = myStructures.some(
+      (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    );
+    const hasTowerNeed = myStructures.some(
+      (s) =>
+        s.structureType === STRUCTURE_TOWER &&
+        (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) >
+          (s as StructureTower).store.getCapacity(RESOURCE_ENERGY) * 0.25,
+    );
     const hasControllerNeed =
       mem?.controllerContainerId &&
       (() => {
@@ -156,20 +157,7 @@ function deliver(creep: Creep): void {
     }
   }
 
-  const spawnTarget = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-  });
-  if (spawnTarget) {
-    if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, spawnTarget, {
-        priority: PRIORITY_HAULER,
-        visualizePathStyle: { stroke: '#ffffff' },
-      });
-    }
-    return;
-  }
+  if (deliverToSpawnOrExtension(creep)) return;
 
   const tower = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
     filter: (s): s is StructureTower =>
@@ -186,19 +174,7 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  const mem = Memory.rooms[creep.room.name];
-  if (mem?.controllerContainerId) {
-    const controllerContainer = Game.getObjectById(mem.controllerContainerId);
-    if (controllerContainer && controllerContainer.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-      if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, controllerContainer, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#ffffff' },
-        });
-      }
-      return;
-    }
-  }
+  if (deliverToControllerContainer(creep)) return;
 
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {

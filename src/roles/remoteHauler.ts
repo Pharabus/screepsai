@@ -2,6 +2,7 @@ import { Role } from './Role';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 
 function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
   const targetRoom = creep.memory.targetRoom;
@@ -109,20 +110,7 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      const spawnTarget = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
-        filter: (s) =>
-          (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-      });
-      if (spawnTarget) {
-        if (creep.transfer(spawnTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          moveTo(creep, spawnTarget, {
-            priority: PRIORITY_HAULER,
-            visualizePathStyle: { stroke: '#ffffff' },
-          });
-        }
-        return undefined;
-      }
+      if (deliverToSpawnOrExtension(creep)) return undefined;
 
       const tower = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
         filter: (s): s is StructureTower =>
@@ -138,19 +126,7 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      const mem = Memory.rooms[creep.room.name];
-      if (mem?.controllerContainerId) {
-        const cc = Game.getObjectById(mem.controllerContainerId);
-        if (cc && cc.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-          if (creep.transfer(cc, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-            moveTo(creep, cc, {
-              priority: PRIORITY_HAULER,
-              visualizePathStyle: { stroke: '#ffffff' },
-            });
-          }
-          return undefined;
-        }
-      }
+      if (deliverToControllerContainer(creep)) return undefined;
 
       return undefined;
     },

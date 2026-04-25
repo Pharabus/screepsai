@@ -58,6 +58,11 @@ Reordering these has subtle effects: e.g. moving `runSpawner` ahead of `runDefen
 
 The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forgetting any of these steps is a compile error.
 
+### Shared utilities for roles
+
+- **`gatherEnergy(creep)`** (`src/utils/sources.ts`) — shared GATHER state logic used by builder and repairer. Withdraws from logistics in miner economy, self-harvests in bootstrap. Returns `true` when store is full.
+- **`deliverToSpawnOrExtension(creep)`** / **`deliverToControllerContainer(creep)`** (`src/utils/delivery.ts`) — shared delivery helpers used by hauler and remoteHauler. Return `true` if a target was found.
+
 ### Body scaling
 
 `src/utils/body.ts` `buildBody(pattern, energy, maxRepeats?)` repeats a body pattern as many times as the room's `energyCapacityAvailable` allows. Spawner always passes `spawn.room.energyCapacityAvailable`, so creeps automatically grow as extensions get built — do not hardcode bodies. Specialized builders exist for miners (`buildMinerBody` — maximizes WORK, cap 6), upgraders (`buildUpgraderBody` — maximizes WORK, cap 15), and remote miners (`buildRemoteMinerBody` — WORK+MOVE pairs at 1:1 ratio for off-road travel, plus 1 CARRY for building containers, cap 5 WORK).
@@ -126,7 +131,7 @@ Tests live in `test/` mirroring the `src/` structure. Vitest is the runner, conf
 
 `test/mocks/screeps.ts` is a setup file that injects Screeps constants (`WORK`, `FIND_STRUCTURES`, etc.) and provides `mockCreep()`, `mockRoom()`, and `resetGameGlobals()` factory helpers. Call `resetGameGlobals()` in `beforeEach` when tests mutate `Game` or `Memory`.
 
-**When to write tests:** When adding or modifying utility functions, manager logic, or role state machines, add or update corresponding tests. Pure logic (no Screeps runtime dependency) is highest priority. Functions that need only light mocking (mock creep/room) are also good candidates. Skip tests for code tightly coupled to the Screeps runtime (construction placement, error mapping, the main loop).
+**When to write tests:** When adding or modifying utility functions, manager logic, or role state machines, add or update corresponding tests. Pure logic (no Screeps runtime dependency) is highest priority. Functions that need only light mocking (mock creep/room) are also good candidates. Skip tests for code tightly coupled to the Screeps runtime (construction placement, error mapping, the main loop). Well-tested modules: `sources.ts`, `remotePlanner.ts`, `roomPlanner.ts`, `scout.ts`, `miner.ts`, `threat.ts`, `body.ts`, `stateMachine.ts`, `spawner.ts`.
 
 **To make internal functions testable:** Export them. The spawner's `*Needed()` functions and `buildSpawnQueue()` are exported specifically for testing.
 

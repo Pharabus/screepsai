@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { harvestFromBestSource, withdrawFromLogistics } from '../utils/sources';
+import { gatherEnergy } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
@@ -9,16 +9,7 @@ const REPAIR_THRESHOLD = 0.75;
 const states: StateMachineDefinition = {
   GATHER: {
     run(creep) {
-      if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return 'REPAIR';
-
-      const mem = Memory.rooms[creep.room.name];
-      if (mem?.minerEconomy) {
-        if (!withdrawFromLogistics(creep)) {
-          harvestFromBestSource(creep);
-        }
-      } else {
-        harvestFromBestSource(creep);
-      }
+      if (gatherEnergy(creep)) return 'REPAIR';
       return undefined;
     },
     onEnter(creep) {

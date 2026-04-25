@@ -64,7 +64,7 @@ export function withdrawFromLogistics(creep: Creep): boolean {
  * Find the best energy source for a creep by balancing harvester load.
  * Picks the source with the fewest creeps assigned to it (by proximity).
  */
-export function findBestSource(creep: Creep): Source | undefined {
+function findBestSource(creep: Creep): Source | undefined {
   const sources = creep.room.find(FIND_SOURCES_ACTIVE);
   if (sources.length === 0) return undefined;
 
@@ -89,6 +89,22 @@ export function findBestSource(creep: Creep): Source | undefined {
   }
 
   return bestSource;
+}
+
+/**
+ * Gather energy from logistics or self-harvest. Returns true when store is full.
+ */
+export function gatherEnergy(creep: Creep): boolean {
+  if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return true;
+  const mem = Memory.rooms[creep.room.name];
+  if (mem?.minerEconomy) {
+    if (!withdrawFromLogistics(creep)) {
+      harvestFromBestSource(creep);
+    }
+  } else {
+    harvestFromBestSource(creep);
+  }
+  return false;
 }
 
 export function harvestFromBestSource(creep: Creep): void {

@@ -62,15 +62,3 @@ export function formatStats(): string {
 export function resetStatsNow(): void {
   Memory.stats = {};
 }
-
-/**
- * Install `stats()` and `resetStats()` as console-callable globals. Called
- * once per global reset from main.ts.
- */
-export function installProfilerGlobals(): void {
-  global.stats = () => formatStats();
-  global.resetStats = () => {
-    resetStatsNow();
-    return 'stats cleared';
-  };
-}
