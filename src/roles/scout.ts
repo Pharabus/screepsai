@@ -45,7 +45,7 @@ const states: StateMachineDefinition = {
           return undefined;
         }
         creep.memory.targetRoom = target;
-        delete (creep.memory as unknown as Record<string, unknown>)._scoutTick;
+        delete creep.memory._scoutTick;
       }
 
       const targetRoom = creep.memory.targetRoom as string;
@@ -67,7 +67,7 @@ const states: StateMachineDefinition = {
         rmem.scoutedHostiles = hostiles.length;
 
         creep.memory.targetRoom = undefined;
-        delete (creep.memory as unknown as Record<string, unknown>)._scoutTick;
+        delete creep.memory._scoutTick;
         return undefined;
       }
 
@@ -80,13 +80,12 @@ const states: StateMachineDefinition = {
       });
 
       // Stuck detection: if we haven't changed rooms after a while, mark unreachable
-      const mem = creep.memory as unknown as Record<string, unknown>;
-      if (!mem._scoutTick) {
-        mem._scoutTick = Game.time;
-      } else if (Game.time - (mem._scoutTick as number) > 50) {
+      if (!creep.memory._scoutTick) {
+        creep.memory._scoutTick = Game.time;
+      } else if (Game.time - creep.memory._scoutTick > 50) {
         markUnreachable(targetRoom);
         creep.memory.targetRoom = undefined;
-        delete mem._scoutTick;
+        delete creep.memory._scoutTick;
       }
       return undefined;
     },

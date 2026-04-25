@@ -92,17 +92,22 @@
     this.roomName = roomName;
   }
   isEqualTo(other: any) {
-    return this.x === other.x && this.y === other.y && this.roomName === other.roomName;
+    const pos = other.pos ?? other;
+    return (
+      this.x === pos.x && this.y === pos.y && this.roomName === (pos.roomName ?? other.roomName)
+    );
   }
   isNearTo(other: any) {
-    return Math.abs(this.x - other.x) <= 1 && Math.abs(this.y - other.y) <= 1;
+    const pos = other.pos ?? other;
+    return Math.abs(this.x - pos.x) <= 1 && Math.abs(this.y - pos.y) <= 1;
   }
   inRangeTo(other: any, range: number) {
     const pos = other.pos ?? other;
     return Math.abs(this.x - pos.x) <= range && Math.abs(this.y - pos.y) <= range;
   }
   getRangeTo(other: any) {
-    return Math.max(Math.abs(this.x - other.x), Math.abs(this.y - other.y));
+    const pos = other.pos ?? other;
+    return Math.max(Math.abs(this.x - pos.x), Math.abs(this.y - pos.y));
   }
   getDirectionTo(_other: any) {
     return 1 as any;

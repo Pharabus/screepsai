@@ -20,6 +20,8 @@ interface CreepMemory {
   homeRoom?: string;
   /** Target room for cross-room movement (scout, remote roles) */
   targetRoom?: string;
+  /** Tick when scout started pathing to current target (stuck detection) */
+  _scoutTick?: number;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data

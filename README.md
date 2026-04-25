@@ -75,7 +75,8 @@ src/
     remoteHauler.ts       # Cross-room energy transport (remote room → home room)
   utils/
     body.ts               # buildBody(pattern, energy, maxRepeats)
-    sources.ts            # findBestSource / harvestFromBestSource / withdrawFromLogistics
+    sources.ts            # gatherEnergy / withdrawFromLogistics / harvestFromBestSource
+    delivery.ts           # Shared delivery helpers (spawn/extension, controller container)
     roomPlanner.ts        # Room plan caching (sources, containers, links, minerals, miner assignments, remote rooms)
     remotePlanner.ts      # Evaluates and selects adjacent rooms for remote mining
     threat.ts             # threatScore / pickPriorityTarget for hostile creeps
@@ -113,7 +114,7 @@ Each of steps 3–9 is wrapped in `profile(...)` so per-manager CPU cost surface
 
 ## Roles
 
-All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Each non-harvester role refills by calling `harvestFromBestSource` when empty, which picks the active source with the fewest nearby harvesters and breaks ties by distance (`src/utils/sources.ts`).
+All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Builder and repairer roles refill via the shared `gatherEnergy()` helper (`src/utils/sources.ts`), which withdraws from logistics infrastructure (containers/storage) in miner economy or self-harvests from the best source in bootstrap economy. Delivery logic shared between hauler and remoteHauler is extracted into `src/utils/delivery.ts`.
 
 | Role           | Minimum | Body pattern        | Behavior |
 |----------------|---------|---------------------|----------|
@@ -121,8 +122,8 @@ All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/rol
 | `hauler`       | 2-3/source unlinked, 1 total linked | `[CARRY×2, MOVE×2]` | Empties storage link (priority), then source containers, delivers to spawn/extensions/towers/controller container/storage. Picks up minerals from mineral container. |
 | `harvester`    | 2 (bootstrap) / 1 (miner economy) | `[WORK, CARRY, MOVE]` | Self-harvests then delivers energy to spawn/extension/tower. Acts as emergency bootstrap when all miners die. |
 | `upgrader`     | 2 (bootstrap) / 1–6 (miner economy) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE]` ×4 | In miner economy: withdraws from controller container or storage, camps at controller (range 3). Count scales with storage surplus. |
-| `builder`      | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4 | Builds construction sites prioritized by type (spawn > extensions > tower > containers > storage > roads > ramparts), falls back to upgrading when idle. In miner economy: withdraws from containers/storage via `withdrawFromLogistics()`. |
-| `repairer`     | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. In miner economy: withdraws from containers/storage. |
+| `builder`      | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4 | Builds construction sites prioritized by type (spawn > extensions > tower > containers > storage > roads > ramparts), falls back to upgrading when idle. Gathers energy via shared `gatherEnergy()` (logistics withdrawal in miner economy, self-harvest in bootstrap). |
+| `repairer`     | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. Gathers energy via shared `gatherEnergy()`. |
 | `defender`     | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Marks idle and rallies near storage/spawn when no hostiles. Only produced during active threats. |
 | `mineralMiner` | 0–1 (RCL 6+) | `[WORK×2, MOVE]` ×5 | Stands on mineral container and harvests when mineral is not depleted. Spawned only when extractor + container exist. |
 | `scout`        | 1 (miner economy) | `[MOVE]` | Explores adjacent rooms, records source count/ownership/hostiles/positions. Re-scouts every 5000 ticks. Idles near base when all rooms scouted. |
@@ -196,7 +197,7 @@ In miner economy:
 - Static **miners** (WORK+CARRY+MOVE) sit on source containers and harvest continuously. With CARRY parts, they can transfer energy directly to adjacent links.
 - **Haulers** (CARRY + MOVE) empty the storage link (priority), then source containers, delivering to spawn/extensions/towers/controller container/storage.
 - **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently. Count scales with storage surplus.
-- **Builders** and **repairers** withdraw from the nearest source container or storage (via `withdrawFromLogistics()`) instead of self-harvesting.
+- **Builders** and **repairers** gather energy via the shared `gatherEnergy()` helper, which withdraws from logistics infrastructure in miner economy or self-harvests in bootstrap.
 - One **harvester** is kept as an emergency bootstrap in case all miners die simultaneously.
 
 ### Typical progression
@@ -299,7 +300,7 @@ Instrumentation points (all gated by `Memory.profiling`, so production ticks pay
 - `defense`, `spawner`, `links`, `rooms`, `towers`, `construction`, `visuals` — each manager.
 - `role.<roleName>` — per-creep dispatch, labelled with the role so hot roles surface separately.
 
-`installProfilerGlobals()` is called once per global reset from `main.ts`, registering two console-callable functions:
+Two console-callable functions are registered once per global reset from `main.ts`:
 
 ```text
 stats()         // print a sorted table: name / avg / last / max / n
