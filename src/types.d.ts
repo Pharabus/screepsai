@@ -51,6 +51,14 @@ interface RoomMemory {
   mineralId?: Id<Mineral>;
   mineralContainerId?: Id<StructureContainer>;
   mineralMinerName?: string;
+  // Labs (RCL 6+)
+  labIds?: Id<StructureLab>[];
+  inputLabIds?: [Id<StructureLab>, Id<StructureLab>];
+  activeReaction?: {
+    input1: ResourceConstant;
+    input2: ResourceConstant;
+    output: ResourceConstant;
+  };
   // Remote mining
   remoteRooms?: string[];
   // Scout data (populated by scouts visiting unowned rooms)

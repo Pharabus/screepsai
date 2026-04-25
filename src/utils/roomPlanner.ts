@@ -134,6 +134,35 @@ export function ensureRoomPlan(room: Room): void {
     }
   }
 
+  // Lab tracking (RCL 6+)
+  if ((room.controller?.level ?? 0) >= 6) {
+    const knownLabs = mem.labIds ?? [];
+    // Validate existing IDs
+    const validLabs = knownLabs.filter((id) => !!Game.getObjectById(id));
+    // Discover new labs
+    const allLabs = room.find(FIND_MY_STRUCTURES, {
+      filter: (s): s is StructureLab => s.structureType === STRUCTURE_LAB,
+    });
+    const knownSet = new Set(validLabs);
+    for (const lab of allLabs) {
+      if (!knownSet.has(lab.id)) validLabs.push(lab.id);
+    }
+    mem.labIds = validLabs.length > 0 ? validLabs : undefined;
+
+    // Designate first two labs as input labs (stable once assigned)
+    if (mem.labIds && mem.labIds.length >= 2) {
+      if (
+        !mem.inputLabIds ||
+        !Game.getObjectById(mem.inputLabIds[0]) ||
+        !Game.getObjectById(mem.inputLabIds[1])
+      ) {
+        mem.inputLabIds = [mem.labIds[0]!, mem.labIds[1]!];
+      }
+    } else {
+      mem.inputLabIds = undefined;
+    }
+  }
+
   // Determine if we've transitioned to miner economy (at least one source has
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
