@@ -36,6 +36,23 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
+      // Repair damaged containers before picking up energy
+      if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        const damaged = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+          filter: (s): s is StructureContainer =>
+            s.structureType === STRUCTURE_CONTAINER && s.hits < s.hitsMax * 0.5,
+        });
+        if (damaged) {
+          if (creep.repair(damaged) === ERR_NOT_IN_RANGE) {
+            moveTo(creep, damaged, {
+              priority: PRIORITY_HAULER,
+              visualizePathStyle: { stroke: '#ff3333' },
+            });
+          }
+          return undefined;
+        }
+      }
+
       // In the remote room — pick up dropped energy or withdraw from containers
       const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
         filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
