@@ -307,6 +307,174 @@ describe('miner', () => {
       expect(creep.harvest).not.toHaveBeenCalled();
     });
 
+    it('repairs damaged container in remote room instead of harvesting', () => {
+      const container = {
+        id: 'rc1' as Id<StructureContainer>,
+        hits: 245000,
+        hitsMax: 250000,
+      };
+      const source = {
+        id: 'rs1' as Id<Source>,
+        pos: {
+          findInRange: vi.fn(() => []),
+        },
+      };
+
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 'rs1') return source;
+        if (id === 'rc1') return container;
+        return undefined;
+      }) as any;
+
+      Memory.rooms['W2N1'] = {
+        sources: [
+          {
+            id: 'rs1' as Id<Source>,
+            x: 5,
+            y: 15,
+            containerId: 'rc1' as Id<StructureContainer>,
+          },
+        ],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 'rs1', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }),
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+
+      miner.run(creep);
+
+      expect(creep.repair).toHaveBeenCalledWith(container);
+      expect(creep.harvest).not.toHaveBeenCalled();
+    });
+
+    it('harvests normally when remote container is at full health', () => {
+      const container = {
+        id: 'rc1' as Id<StructureContainer>,
+        hits: 250000,
+        hitsMax: 250000,
+      };
+      const source = {
+        id: 'rs1' as Id<Source>,
+        pos: {
+          findInRange: vi.fn(() => []),
+        },
+      };
+
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 'rs1') return source;
+        if (id === 'rc1') return container;
+        return undefined;
+      }) as any;
+
+      Memory.rooms['W2N1'] = {
+        sources: [
+          {
+            id: 'rs1' as Id<Source>,
+            x: 5,
+            y: 15,
+            containerId: 'rc1' as Id<StructureContainer>,
+          },
+        ],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 'rs1', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }),
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+
+      miner.run(creep);
+
+      expect(creep.repair).not.toHaveBeenCalled();
+      expect(creep.harvest).toHaveBeenCalledWith(source);
+    });
+
+    it('does not repair container for local miners', () => {
+      const container = {
+        id: 'c1' as Id<StructureContainer>,
+        hits: 245000,
+        hitsMax: 250000,
+      };
+      const source = {
+        id: 's1' as Id<Source>,
+        pos: { findInRange: vi.fn(() => []) },
+      };
+
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 's1') return source;
+        if (id === 'c1') return container;
+        return undefined;
+      }) as any;
+
+      Memory.rooms['W1N1'] = {
+        sources: [
+          { id: 's1' as Id<Source>, x: 10, y: 20, containerId: 'c1' as Id<StructureContainer> },
+        ],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 's1' },
+        room: mockRoom({ name: 'W1N1' }),
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+
+      miner.run(creep);
+
+      expect(creep.repair).not.toHaveBeenCalled();
+      expect(creep.harvest).toHaveBeenCalledWith(source);
+    });
+
+    it('prioritizes building over repairing in remote rooms', () => {
+      const site = {
+        id: 'site1',
+        structureType: STRUCTURE_CONTAINER,
+      };
+      const container = {
+        id: 'rc1' as Id<StructureContainer>,
+        hits: 200000,
+        hitsMax: 250000,
+      };
+      const source = {
+        id: 'rs1' as Id<Source>,
+        pos: {
+          findInRange: vi.fn((type: number) => {
+            if (type === FIND_MY_CONSTRUCTION_SITES) return [site];
+            return [];
+          }),
+        },
+      };
+
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 'rs1') return source;
+        if (id === 'rc1') return container;
+        return undefined;
+      }) as any;
+
+      Memory.rooms['W2N1'] = {
+        sources: [
+          {
+            id: 'rs1' as Id<Source>,
+            x: 5,
+            y: 15,
+            containerId: 'rc1' as Id<StructureContainer>,
+          },
+        ],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 'rs1', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }),
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+
+      miner.run(creep);
+
+      expect(creep.build).toHaveBeenCalledWith(site);
+      expect(creep.repair).not.toHaveBeenCalled();
+    });
+
     it('repositions when container is built in remote room', () => {
       const container = {
         id: 'rc1' as Id<StructureContainer>,

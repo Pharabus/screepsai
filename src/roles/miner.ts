@@ -94,7 +94,10 @@ const states: StateMachineDefinition = {
         return 'POSITION';
       }
 
-      // Build container construction site if one exists nearby
+      const mem = Memory.rooms[creep.room.name];
+      const entry = mem?.sources?.find((s) => s.id === source.id);
+
+      // Remote miners: build container site, then repair container if damaged
       if (creep.memory.targetRoom && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
         const site = source.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 1, {
           filter: (s) => s.structureType === STRUCTURE_CONTAINER,
@@ -103,12 +106,16 @@ const states: StateMachineDefinition = {
           creep.build(site);
           return undefined;
         }
+
+        const container = entry?.containerId ? Game.getObjectById(entry.containerId) : undefined;
+        if (container && container.hits < container.hitsMax) {
+          creep.repair(container);
+          return undefined;
+        }
       }
 
       creep.harvest(source);
 
-      const mem = Memory.rooms[creep.room.name];
-      const entry = mem?.sources?.find((s) => s.id === source.id);
       if (entry?.linkId && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
         const link = Game.getObjectById(entry.linkId);
         if (link && link.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
