@@ -4,6 +4,7 @@ import { markIdle } from '../utils/idle';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
+import { cached } from '../utils/tickCache';
 
 const MINERAL_STORAGE_FLOOR = 5000;
 
@@ -31,28 +32,47 @@ export const hauler: Role = {
   },
 };
 
+function getUrgentResponder(room: Room): string | undefined {
+  return cached(`urgentResponder:${room.name}`, () => {
+    const storage = room.storage;
+    if (!storage || storage.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return undefined;
+
+    const myStructures = room.find(FIND_MY_STRUCTURES);
+    const hasSpawnNeed = myStructures.some(
+      (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    );
+    const hasTowerNeed = myStructures.some(
+      (s) =>
+        s.structureType === STRUCTURE_TOWER &&
+        (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) >
+          (s as StructureTower).store.getCapacity(RESOURCE_ENERGY) * 0.25,
+    );
+    if (!hasSpawnNeed && !hasTowerNeed) return undefined;
+
+    let nearest: string | undefined;
+    let bestDist = Infinity;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.room.name !== room.name || c.memory.role !== 'hauler') continue;
+      if (c.store.getFreeCapacity() === 0) continue;
+      const dist = c.pos.getRangeTo(storage);
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = c.name;
+      }
+    }
+    return nearest;
+  });
+}
+
 function pickup(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
 
-  // Check if structures urgently need energy (spawns/extensions/towers/controller)
-  const myStructures = creep.room.find(FIND_MY_STRUCTURES);
-  const hasSpawnNeed = myStructures.some(
-    (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-  );
-  const hasTowerNeed = myStructures.some(
-    (s) =>
-      s.structureType === STRUCTURE_TOWER &&
-      (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) >
-        (s as StructureTower).store.getCapacity(RESOURCE_ENERGY) * 0.25,
-  );
-  const hasUrgentNeed = hasSpawnNeed || hasTowerNeed;
-
-  // When structures need energy, prefer storage (centrally located) over
-  // trekking to distant source containers or dropped piles.
-  const storage = creep.room.storage;
-  if (hasUrgentNeed && storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+  // Only the hauler nearest to storage responds to urgent structure energy needs;
+  // other haulers continue normal pickup to avoid wasting decaying dropped resources.
+  if (getUrgentResponder(creep.room) === creep.name) {
+    const storage = creep.room.storage!;
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {
         priority: PRIORITY_HAULER,

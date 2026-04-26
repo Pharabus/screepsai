@@ -1,5 +1,6 @@
 import { hauler } from '../../src/roles/hauler';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
+import { resetTickCache } from '../../src/utils/tickCache';
 
 function mockStore(contents: Record<string, number> = {}, capacity = 300): any {
   const store: Record<string, any> = {};
@@ -344,5 +345,149 @@ describe('hauler lab logistics', () => {
     hauler.run(creep);
 
     expect(creep.withdraw).not.toHaveBeenCalledWith(inputLab1, 'H');
+  });
+});
+
+describe('hauler urgent responder', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  function makeSpawn(): any {
+    return {
+      structureType: STRUCTURE_SPAWN,
+      store: {
+        getFreeCapacity: () => 100,
+      },
+    };
+  }
+
+  it('nearest hauler to storage pulls from storage when structures need energy', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [makeSpawn()]),
+    });
+
+    const nearHauler = mockCreep({
+      name: 'hauler_near',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+    const farHauler = mockCreep({
+      name: 'hauler_far',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(40, 40, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_near: nearHauler, hauler_far: farHauler } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(nearHauler);
+
+    expect(nearHauler.withdraw).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('non-nearest hauler skips urgent need and does normal pickup', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [makeSpawn()]),
+    });
+
+    const nearHauler = mockCreep({
+      name: 'hauler_near',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+    const farHauler = mockCreep({
+      name: 'hauler_far',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(40, 40, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_near: nearHauler, hauler_far: farHauler } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(farHauler);
+
+    // Far hauler should NOT withdraw from storage for urgent needs
+    expect(farHauler.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('no hauler responds when structures are full', () => {
+    const fullSpawn = {
+      structureType: STRUCTURE_SPAWN,
+      store: { getFreeCapacity: () => 0 },
+    };
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [fullSpawn]),
+    });
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_1: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    // Should not pull from storage — no urgent need
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('no hauler responds when storage has no energy', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({}, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [makeSpawn()]),
+    });
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_1: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
   });
 });
