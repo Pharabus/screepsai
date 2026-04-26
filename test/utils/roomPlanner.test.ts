@@ -113,7 +113,10 @@ describe('roomPlanner', () => {
     });
 
     it('sets minerEconomy true when a source has a container', () => {
-      const container = { id: 'c1' as Id<StructureContainer> };
+      const container = {
+        id: 'c1' as Id<StructureContainer>,
+        pos: new RoomPosition(10, 21, 'W1N1'),
+      };
       Game.getObjectById = vi.fn((id: string) => {
         if (id === 'c1') return container;
         return undefined;

@@ -57,16 +57,24 @@ export function ensureRoomPlan(room: Room): void {
     }
   }
 
-  // Update link assignments for sources
+  // Update link assignments for sources — link must be within transfer range (1)
+  // of the container the miner stands on, not just near the source.
   for (const entry of mem.sources) {
     if (entry.linkId) {
       const link = Game.getObjectById(entry.linkId);
       if (!link) entry.linkId = undefined;
+      // Validate existing assignment is actually reachable from container
+      if (link && entry.containerId) {
+        const container = Game.getObjectById(entry.containerId);
+        if (container && !container.pos.inRangeTo(link, 1)) {
+          entry.linkId = undefined;
+        }
+      }
     }
-    if (!entry.linkId) {
-      const source = Game.getObjectById(entry.id);
-      if (source) {
-        const links = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+    if (!entry.linkId && entry.containerId) {
+      const container = Game.getObjectById(entry.containerId);
+      if (container) {
+        const links = container.pos.findInRange(FIND_MY_STRUCTURES, 1, {
           filter: (s): s is StructureLink => s.structureType === STRUCTURE_LINK,
         });
         if (links.length > 0) entry.linkId = links[0]!.id;

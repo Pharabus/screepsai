@@ -32,6 +32,36 @@ export const hauler: Role = {
 };
 
 function pickup(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+
+  // Check if structures urgently need energy (spawns/extensions/towers/controller)
+  const myStructures = creep.room.find(FIND_MY_STRUCTURES);
+  const hasSpawnNeed = myStructures.some(
+    (s) =>
+      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+  );
+  const hasTowerNeed = myStructures.some(
+    (s) =>
+      s.structureType === STRUCTURE_TOWER &&
+      (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) >
+        (s as StructureTower).store.getCapacity(RESOURCE_ENERGY) * 0.25,
+  );
+  const hasUrgentNeed = hasSpawnNeed || hasTowerNeed;
+
+  // When structures need energy, prefer storage (centrally located) over
+  // trekking to distant source containers or dropped piles.
+  const storage = creep.room.storage;
+  if (hasUrgentNeed && storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, storage, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
+    }
+    return true;
+  }
+
   const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
@@ -45,7 +75,6 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
-  const mem = Memory.rooms[creep.room.name];
   if (mem?.storageLinkId) {
     const storageLink = Game.getObjectById(mem.storageLinkId);
     if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
@@ -100,38 +129,6 @@ function pickup(creep: Creep): boolean {
         }
         return true;
       }
-    }
-  }
-
-  const storage = creep.room.storage;
-  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-    const myStructures = creep.room.find(FIND_MY_STRUCTURES);
-    const hasSpawnNeed = myStructures.some(
-      (s) =>
-        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    );
-    const hasTowerNeed = myStructures.some(
-      (s) =>
-        s.structureType === STRUCTURE_TOWER &&
-        (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) >
-          (s as StructureTower).store.getCapacity(RESOURCE_ENERGY) * 0.25,
-    );
-    const hasControllerNeed =
-      mem?.controllerContainerId &&
-      (() => {
-        const cc = Game.getObjectById(mem.controllerContainerId!);
-        return cc && cc.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-      })();
-
-    if (hasSpawnNeed || hasTowerNeed || hasControllerNeed) {
-      if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storage, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#ffaa00' },
-        });
-      }
-      return true;
     }
   }
 

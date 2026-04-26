@@ -454,7 +454,14 @@ export function placeLinks(room: Room): void {
         });
         if (nearbyLinks.length > 0 || nearbySites.length > 0) continue;
 
-        const pos = findOpenPosition(room, source.pos, 1, 2);
+        // Place within range 1 of the container (miner position) so the miner
+        // can transfer energy directly. Fall back to range 2 of source if no
+        // container exists yet.
+        const container = entry.containerId
+          ? Game.getObjectById(entry.containerId as Id<StructureContainer>)
+          : undefined;
+        const anchor = container?.pos ?? source.pos;
+        const pos = findOpenPosition(room, anchor, 1, container ? 1 : 2);
         if (pos) {
           room.createConstructionSite(pos, STRUCTURE_LINK);
           return;
