@@ -70,7 +70,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Extend `CreepRoleName` and memory for energy logistics** — Added `miner` and `hauler` to `CreepRoleName`. Extended `CreepMemory` with `targetId`, `working`. Extended `RoomMemory` with `sources[]` (id, containerId, minerName), `controllerContainerId`, `minerEconomy`. Remaining non-energy roles (`depositMiner`, `powerMiner`, `powerHealer`, `powerHauler`) and fields (`resource`, `home`) deferred to later stages.
 - [x] **Per-role body patterns in spawner** — Spawner now uses role-specific patterns: miner `[WORK×5, MOVE]`, hauler `[CARRY×2, MOVE×2]`, upgrader `[WORK×3, CARRY, MOVE×2]`, builder `[WORK×2, CARRY, MOVE×2]` in miner economy. Bootstrap economy retains `[WORK, CARRY, MOVE]` for all roles. `buildBody` util unchanged; patterns passed per-role via the spawn queue.
 - [x] **RCL-gated construction planner extensions (RCL 5-6)** — Added `placeLinks` (RCL 5+: storage link, source links, controller link at RCL 6), `placeExtractor` + `placeMineralContainer` (RCL 6), `placeTerminal` (RCL 6). Remaining: factory (RCL 7), labs cluster (RCL 6+), power spawn + observer (RCL 8).
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — Factory (RCL 7), labs cluster (RCL 6+, expand at 7 and 8), power spawn + observer (RCL 8).
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Stage 4 (factory), Stage 6 (power), and Advanced defense / Offensive sections for detailed plans.
 - [x] **Room memory & planning layer** — `src/utils/roomPlanner.ts` caches source IDs, container assignments, miner assignments, and controller container ID into `RoomMemory`. `ensureRoomPlan(room)` validates each tick (cheap after first scan). Auto-detects miner economy transition when first source container is built.
 
 ##### Stage 1 — Storage + hauler logistics (RCL 4)
@@ -100,7 +100,9 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 - [x] **Lab cluster placement** — `placeLabs(room)` uses a stamp pattern (`LAB_STAMP` in `construction.ts`) anchored +2 tiles from storage. 10 positions where all output labs are within Chebyshev range 2 of both input labs. Places 3 at RCL 6, 6 at RCL 7, 10 at RCL 8. Room planner discovers labs and designates first two as input labs (`inputLabIds` in `RoomMemory`).
 - [x] **Lab manager** — `src/managers/labs.ts` `runLabs()` selects the best viable reaction (most available input materials) from `REACTIONS`, stores as `activeReaction` in `RoomMemory` (re-evaluated every 500 ticks). Runs `outputLab.runReaction(inputLab1, inputLab2)` on all non-input labs each tick. Hauler handles logistics: fills input labs from storage, collects output compounds from output labs, delivers to terminal or storage.
-- [ ] **Boost application (stretch)** — Designate combat/upgrader creeps to be boosted before departing spawn. Out of scope for the first pass.
+- [ ] **Input lab flushing** — When `activeReaction` changes, old minerals may remain in input labs. Add logic to withdraw stale inputs before loading new ones, otherwise labs get stuck with the wrong minerals loaded.
+- [ ] **Reaction chaining** — Current selection is greedy (picks reaction with most raw inputs). Doesn't consider whether the output is useful or feeds a higher-tier reaction. A goal-directed approach would pick a target compound (e.g. GHO2) and work backwards through the reaction chain (OH → GO → GHO2), producing intermediates in order.
+- [ ] **Boost application (stretch)** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders at RCL 8.
 
 ##### Stage 4 — Commodity production (RCL 7)
 
@@ -138,7 +140,60 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Dynamic spawn counts for all roles** - All role counts in `spawner.ts` are now computed per-room per-tick via `*Needed(room)` functions: `buildersNeeded` scales 1–3 by `ceil(constructionSites / 3)`, `repairersNeeded` scales 1–2 when >5 structures below 75% HP, `upgradersNeeded` scales 1–3 by room energy capacity, `haulersNeeded` 2–3 per source container, `minersNeeded` 1 per container without a miner, `defendersNeeded` by threat score. No hardcoded minimums except bootstrap harvesters (2) and emergency miner-economy harvester (1). Idle builders/repairers fall back to upgrading.
 - [x] **Add multi-room support (remote mining)** - Scout role explores adjacent rooms and records source positions, remote planner evaluates/selects up to 2 best rooms (tolerates stale hostile sightings), miners reuse existing role with cross-room PathFinder pathing to stored source positions, remote miners self-build containers at remote sources, dedicated remoteHauler role for cross-room energy transport with full delivery chain (storage/spawns/towers/controller container), builder construction priority (extensions before storage). Expandable to claiming later.
 - [x] ~~**Remote container repair**~~ — Removed. Remote haulers lack WORK parts so repair was never functional (caused a stall bug instead). Miners rebuild containers when they decay.
-- [ ] **Multi-room future: claiming** - `remoteRooms` needs a type field (`remote` | `reserved` | `claimed`). Controller reservation creep (CLAIM body) to double remote source output. `countCreepsByRole()` is global — needs per-room counting when claiming a second room with its own spawner. Remote container placement once reserved. Remote defense policy (flee vs defend). Remote road building for hauler efficiency.
+### Multi-room expansion (claiming & reservation)
+
+Builds on existing remote mining infrastructure (scout, remotePlanner, remote miners/haulers).
+
+#### Phase 1 — Controller reservation (RCL 4+, GCL 1)
+
+Reserving a remote room's controller doubles source capacity (3000/tick → 6000/tick) and halves container decay rate. Low cost, high return.
+
+- [ ] **Add `reserver` role** — `[CLAIM×2, MOVE×2]` body (1300 energy). Paths to the remote room's controller and calls `creep.reserveController()`. Reservation lasts 1 tick per CLAIM part per call (so 2 CLAIM = +2 ticks/tick, net +1 tick/tick of reservation). Needs to arrive before reservation expires. Re-reserve continuously.
+- [ ] **Remote room type field** — Add `type: 'remote' | 'reserved' | 'claimed'` to `RoomMemory` for remote rooms. `selectRemoteRooms()` sets type based on GCL availability and distance. Spawner uses type to decide which roles to queue (reserver only for `reserved`, full colony for `claimed`).
+- [ ] **Spawner integration** — Queue 1 reserver per `reserved` remote room, after remote haulers in priority. Only spawn when room has a controller (some remote rooms are source keeper or highway rooms with no controller).
+- [ ] **Remote road building** — Place roads from home room spawn to remote source positions along the PathFinder route. Hauler throughput increases ~2x on roads (fatigue halved). Build incrementally (1 site/tick like local roads). Only for reserved rooms (worth the investment).
+
+#### Phase 2 — Room claiming (GCL 2+)
+
+Claiming a second room gives a full autonomous colony. Requires GCL 2 (earned by upgrading controllers). Much more complex than reservation.
+
+- [ ] **Add `claimer` role** — `[CLAIM, MOVE×5]` body. Paths to target room's controller and calls `creep.claimController()`. One-shot role — once claimed, the creep can be recycled. Needs 5 MOVE for off-road travel at full speed.
+- [ ] **Per-room creep counting** — `countCreepsByRole()` is currently global. Claimed rooms need their own spawn queues. Refactor to count per `homeRoom`. Each room runs `buildSpawnQueue()` independently.
+- [ ] **Colony bootstrap sequence** — After claiming: (1) send a builder with energy to build the first spawn, (2) once spawn is up, the new room runs the normal bootstrap economy, (3) home room may need to send energy via terminal to accelerate early RCL.
+- [ ] **Target room selection** — Evaluate rooms by: source count (2 preferred), distance from home (linear range ≤ 3), mineral type (complement home room), terrain openness (room for base layout), hostile proximity. Store evaluation in Memory for manual override.
+- [ ] **Inter-room energy transfer** — Terminal `send()` energy from established rooms to new colonies during bootstrap. Add to `terminal.ts` manager: detect claimed rooms below RCL 4 (no storage yet) and send energy if home has surplus.
+- [ ] **Remote defense policy** — Decide per-room: flee (pull creeps home when hostiles appear, for undefended remotes), defend (spawn defenders, for reserved/claimed rooms with investment), or abandon (drop the room from remoteRooms if hostiles are persistent). Add `defensePolicy` to remote room memory.
+
+### Advanced defense
+
+Current defense: tower focus-fire, safe mode, melee defenders. Sufficient for NPC invaders but not player attacks.
+
+#### Towers & walls
+
+- [ ] **Rampart maze / bunker layout** — Design a base layout where all critical structures are behind ramparts, with a maze entrance that forces attackers to walk under multiple towers. Requires rethinking the extension stamp and structure placement to fit within a walled perimeter.
+- [ ] **Active wall repair under siege** — During an attack, prioritize repairing the rampart being targeted over other repair work. Towers already focus-fire; add logic to detect which rampart is taking damage and have multiple towers repair it simultaneously when not shooting.
+
+#### Defender improvements
+
+- [ ] **Ranged defender role** — `[RANGED_ATTACK, MOVE]` body. Kites hostiles from range 3, retreats behind ramparts when damaged. More effective than melee against boosted attackers who can one-shot melee defenders.
+- [ ] **Healer role** — `[HEAL, MOVE]` body. Pairs with defenders to sustain them during extended fights. Stays at range 1 behind the attacker. Useful once we face enemies with HEAL parts.
+- [ ] **Boosted defenders** — At RCL 7+ with lab compounds available, boost defenders with TOUGH (damage reduction) and ATTACK/RANGED_ATTACK compounds before dispatching. Requires boost application infrastructure (see Stage 3 labs todo).
+- [ ] **Defender duo/quad formations** — Coordinated movement of 2-4 creeps as a unit (attacker+healer, or ranged+healer pairs). Requires a formation manager that moves all creeps in lockstep. End-game PvP capability.
+
+#### Intel & strategic
+
+- [ ] **Observer placement and scanning** — Place observer at RCL 8. Scan a queue of rooms each tick (`observer.observeRoom()`). Use for: scouting highway rooms for deposits/power banks, monitoring hostile neighbors, checking remote room status without sending creeps. Add `src/managers/observer.ts` with a scan queue in Memory.
+- [ ] **Threat memory and neighbor tracking** — Record hostile player names, attack patterns, and room ownership in Memory. Use to: avoid placing remotes near aggressive players, preemptively spawn defenders when a known attacker's creeps are spotted in adjacent rooms, prioritize safe mode charges.
+
+### Offensive capabilities
+
+All offensive operations are end-game (RCL 7-8) and require significant economy to sustain.
+
+- [ ] **Nuker placement and targeting** — Place nuker at RCL 8 near storage (needs 300k energy + 5k G to load). Add `src/managers/nuker.ts`: auto-load when resources available, select targets via console command (`nuke(roomName, x, y)`). 50k tick cooldown (~14 hours). Primary use: break walls/ramparts in hostile rooms before sending an attack squad.
+- [ ] **Scout/harass role** — Cheap `[MOVE]` creep sent to hostile rooms to gather intel: layout, tower positions, wall HP, creep composition. Store in Memory for attack planning. Can also be `[MOVE, MOVE, WORK]` to dismantle undefended structures.
+- [ ] **Dismantler role** — `[WORK×N, MOVE×N]` body. Targets hostile walls/ramparts with `creep.dismantle()` (50 HP per WORK per tick, ignores rampart protection). Used after nukes soften walls. Needs healer support to survive tower fire.
+- [ ] **Attack squad manager** — Coordinates multi-creep attacks on hostile rooms. Phases: (1) scout target, (2) nuke walls, (3) send dismantler+healer pairs to breach, (4) send attackers to destroy spawn/storage. Requires formation movement, heal coordination, and retreat logic. Complex — defer until other systems are mature.
+- [ ] **Drain attack** — Send a single boosted `[TOUGH×N, MOVE×N]` creep to sit at a hostile room's edge, tanking tower damage while healing. Towers drain energy faster than the room can refill. Cheap, effective against rooms with limited tower count or poor energy income. Retreat and re-send when HP drops.
 - [x] **Add resource logistics (phase 1)** - Static miner + hauler + container mining economy with automatic transition from bootstrap. Link networks and terminal trading deferred to later stages.
 - [x] **Add a state machine for creeps** - All 8 roles use `src/utils/stateMachine.ts` FSM. Each role defines named states (`GATHER`/`WORK`, `PICKUP`/`DELIVER`, `POSITION`/`HARVEST`, `ATTACK`/`RALLY`) with explicit transitions. State persists in `creep.memory.state` for in-game debugging. `onEnter` hooks handle cleanup on transition.
 - [x] **Add a traffic manager** - `src/utils/trafficManager.ts` collects movement intents from all creeps during `runRooms`, then `resolveTraffic()` resolves conflicts. Priority-based: STATIC (100, miners) > HAULER (50) > WORKER (30) > DEFAULT (10). Handles swap detection, idle creep shoving, and alternative tile selection. CostMatrix cached per room per tick. Replaces the old `ignoreCreeps: true` approach. `moveTo()` wrapper registers intents instead of calling `creep.moveTo()` directly.
