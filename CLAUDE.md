@@ -103,7 +103,7 @@ When a role's `moveTo` target requires standing on a specific tile (e.g. miner o
 
 Remote mining sends creeps to harvest sources in adjacent unowned rooms. Gated by miner economy (containers must be built first). The flow:
 
-1. A `scout` (1 MOVE) explores adjacent rooms and records source count, ownership, hostile presence, and source positions (`scoutedSourceData`) in `RoomMemory`. Re-scouts rooms every 5000 ticks. Idles near storage/spawn when all rooms are scouted.
+1. A `scout` (1 MOVE) explores adjacent rooms and records source count, ownership, hostile presence, and source positions (`scoutedSourceData`) in `RoomMemory`. Re-scouts rooms every 5000 ticks. Only spawned when `findScoutTarget()` finds an unscouted or stale room — no permanent scout is kept alive.
 2. `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) evaluates scouted rooms every 100 ticks — rejects owned/reserved/sourceless rooms and rooms with recent hostile sightings (< 1500 ticks old). Picks up to 2 best by source count, stores in `RoomMemory.remoteRooms`.
 3. `ensureRemoteRoomPlan()` scans sources in remote rooms we have visibility into; bootstraps source data from `scoutedSourceData` when no visibility.
 4. Remote miners (reusing `miner` role with `targetRoom` set) path directly to stored source positions via cross-room PathFinder. They harvest at the source and build their own container (they have 1 CARRY part for this). Once the container is built, the miner also repairs it when damaged (using the same CARRY buffer — home miners use theirs for link transfers instead). Before the container is built, energy drops on the ground for haulers.
