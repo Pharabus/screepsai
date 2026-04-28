@@ -53,10 +53,18 @@ describe('threatScore', () => {
   });
 });
 
+function hostileFind(hostiles: any[], towers: any[] = []) {
+  return vi.fn((type: number) => {
+    if (type === FIND_HOSTILE_CREEPS) return hostiles;
+    if (type === FIND_MY_STRUCTURES) return towers;
+    return [];
+  });
+}
+
 describe('pickPriorityTarget', () => {
   it('returns undefined for room with no hostiles', () => {
     const room = mockRoom({
-      find: vi.fn(() => []),
+      find: hostileFind([]),
     });
     expect(pickPriorityTarget(room)).toBeUndefined();
   });
@@ -73,7 +81,7 @@ describe('pickPriorityTarget', () => {
       hits: 100,
     });
     const room = mockRoom({
-      find: vi.fn(() => [attacker, healer]),
+      find: hostileFind([attacker, healer]),
     });
     expect(pickPriorityTarget(room)).toBe(healer);
   });
@@ -85,7 +93,7 @@ describe('pickPriorityTarget', () => {
       hits: 100,
     });
     const room = mockRoom({
-      find: vi.fn(() => [scout]),
+      find: hostileFind([scout]),
     });
     expect(pickPriorityTarget(room)).toBe(scout);
   });
@@ -102,9 +110,105 @@ describe('pickPriorityTarget', () => {
       hits: 50,
     });
     const room = mockRoom({
-      find: vi.fn(() => [strong, weak]),
+      find: hostileFind([strong, weak]),
     });
     // Same threat score, but weak has lower hits → higher composite score
     expect(pickPriorityTarget(room)).toBe(weak);
+  });
+
+  it('prefers closer hostile when threat scores are equal', () => {
+    const tower = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    };
+    const nearHostile = mockCreep({
+      name: 'near',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(27, 25, 'W1N1'),
+    });
+    const farHostile = mockCreep({
+      name: 'far',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(48, 25, 'W1N1'),
+    });
+    const room = mockRoom({
+      find: hostileFind([farHostile, nearHostile], [tower]),
+    });
+    expect(pickPriorityTarget(room)).toBe(nearHostile);
+  });
+
+  it('high-threat target at long range still beats zero-threat at short range', () => {
+    const tower = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    };
+    const healer = mockCreep({
+      name: 'healer',
+      body: [{ type: HEAL, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(48, 25, 'W1N1'),
+    });
+    const scout = mockCreep({
+      name: 'scout',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+    const room = mockRoom({
+      find: hostileFind([scout, healer], [tower]),
+    });
+    expect(pickPriorityTarget(room)).toBe(healer);
+  });
+
+  it('uses average range across multiple towers', () => {
+    const tower1 = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(20, 25, 'W1N1'),
+    };
+    const tower2 = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(30, 25, 'W1N1'),
+    };
+    // Hostile far from both towers: avg range 20
+    const hostileFar = mockCreep({
+      name: 'far',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(45, 25, 'W1N1'),
+    });
+    // Hostile centered between towers: avg range 5
+    const hostileCentered = mockCreep({
+      name: 'centered',
+      body: [{ type: MOVE, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    const room = mockRoom({
+      find: hostileFind([hostileFar, hostileCentered], [tower1, tower2]),
+    });
+    expect(pickPriorityTarget(room)).toBe(hostileCentered);
+  });
+
+  it('defaults to full effectiveness when no towers exist', () => {
+    const near = mockCreep({
+      name: 'near',
+      body: [{ type: ATTACK, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+    const far = mockCreep({
+      name: 'far',
+      body: [{ type: ATTACK, hits: 100 }],
+      hits: 100,
+      pos: new RoomPosition(48, 25, 'W1N1'),
+    });
+    const room = mockRoom({
+      find: hostileFind([far, near]),
+    });
+    // No towers → effectiveness is 1.0 for both → same score → first one wins
+    // Both have same threat and hits, so the first in the array wins (far)
+    expect(pickPriorityTarget(room)).toBe(far);
   });
 });

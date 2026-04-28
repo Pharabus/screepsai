@@ -27,6 +27,12 @@ export function threatScore(creep: Creep): number {
   return score;
 }
 
+function towerEffectiveness(range: number): number {
+  if (range <= 5) return 1;
+  if (range >= 20) return 0.25;
+  return 1 - (0.75 * (range - 5)) / 15;
+}
+
 /**
  * Pick the single most threatening hostile in the room, for focus-fire.
  * Returns undefined if there are no hostiles.
@@ -35,12 +41,19 @@ export function pickPriorityTarget(room: Room): Creep | undefined {
   const hostiles = room.find(FIND_HOSTILE_CREEPS);
   if (hostiles.length === 0) return undefined;
 
+  const towers = room.find(FIND_MY_STRUCTURES, {
+    filter: (s): s is StructureTower => s.structureType === STRUCTURE_TOWER,
+  });
+
   let best: Creep | undefined;
   let bestScore = -Infinity;
   for (const h of hostiles) {
-    // Break ties on hits ascending (finish the weak ones) then distance to
-    // the first spawn (closer = more dangerous).
-    const score = threatScore(h) * 10_000 - h.hits;
+    let effectiveness = 1;
+    if (towers.length > 0) {
+      const avgRange = towers.reduce((sum, t) => sum + t.pos.getRangeTo(h), 0) / towers.length;
+      effectiveness = towerEffectiveness(avgRange);
+    }
+    const score = threatScore(h) * 10_000 + effectiveness * 1_000 - h.hits;
     if (score > bestScore) {
       bestScore = score;
       best = h;
