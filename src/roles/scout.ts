@@ -5,7 +5,10 @@ import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { markIdle } from '../utils/idle';
 
 function pickScoutTarget(creep: Creep): string | undefined {
-  const homeRoom = creep.memory.homeRoom ?? creep.room.name;
+  return findScoutTarget(creep.memory.homeRoom ?? creep.room.name);
+}
+
+export function findScoutTarget(homeRoom: string): string | undefined {
   const exits = Game.map.describeExits(homeRoom);
   if (!exits) return undefined;
 
@@ -13,14 +16,12 @@ function pickScoutTarget(creep: Creep): string | undefined {
   const mem = Memory.rooms[homeRoom];
   const alreadyRemote = new Set(mem?.remoteRooms ?? []);
 
-  // Prefer rooms we haven't scouted yet (no Memory.rooms entry with scoutedAt)
   for (const roomName of candidates) {
     if (alreadyRemote.has(roomName)) continue;
     const rmem = Memory.rooms[roomName];
     if (!rmem?.scoutedAt) return roomName;
   }
 
-  // Re-scout rooms whose data is older than 5000 ticks
   for (const roomName of candidates) {
     const rmem = Memory.rooms[roomName];
     if (rmem?.scoutedAt && Game.time - rmem.scoutedAt > 5000) return roomName;

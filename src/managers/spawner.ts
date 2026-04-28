@@ -3,6 +3,7 @@ import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
 import { selectRemoteRooms } from '../utils/remotePlanner';
+import { findScoutTarget } from '../roles/scout';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -249,14 +250,16 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
     }
-    // Scout (1 per room, cheap — idles when nothing to explore)
-    queue.push({
-      role: 'scout',
-      pattern: [MOVE],
-      maxRepeats: 1,
-      minCount: 1,
-      memory: { role: 'scout' as CreepRoleName, homeRoom: room.name },
-    });
+    // Scout: only spawn when there's a room to explore
+    if (findScoutTarget(room.name)) {
+      queue.push({
+        role: 'scout',
+        pattern: [MOVE],
+        maxRepeats: 1,
+        minCount: 1,
+        memory: { role: 'scout' as CreepRoleName, homeRoom: room.name },
+      });
+    }
   } else {
     // Bootstrap economy: original patterns
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });

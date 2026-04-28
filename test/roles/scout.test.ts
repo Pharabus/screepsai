@@ -1,5 +1,5 @@
 import { resetGameGlobals, mockCreep, mockRoom } from '../mocks/screeps';
-import { scout } from '../../src/roles/scout';
+import { scout, findScoutTarget } from '../../src/roles/scout';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
@@ -16,6 +16,33 @@ describe('scout', () => {
   beforeEach(() => {
     resetGameGlobals();
     vi.clearAllMocks();
+  });
+
+  describe('findScoutTarget', () => {
+    it('returns unscouted room', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W1N1'] = {};
+      Memory.rooms['W1N2'] = { scoutedAt: 100 } as any;
+
+      expect(findScoutTarget('W1N1')).toBe('W2N1');
+    });
+
+    it('returns undefined when all rooms are freshly scouted', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: Game.time } as any;
+
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
+    it('returns stale room for re-scout', () => {
+      Game.time = 10000;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 4000 } as any;
+
+      expect(findScoutTarget('W1N1')).toBe('W2N1');
+    });
   });
 
   describe('target picking', () => {
