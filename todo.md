@@ -141,6 +141,22 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Dynamic spawn counts for all roles** - All role counts in `spawner.ts` are now computed per-room per-tick via `*Needed(room)` functions: `buildersNeeded` scales 1–3 by `ceil(constructionSites / 3)`, `repairersNeeded` scales 1–2 when >5 structures below 75% HP, `upgradersNeeded` scales 1–3 by room energy capacity, `haulersNeeded` 2–3 per source container, `minersNeeded` 1 per container without a miner, `defendersNeeded` by threat score. No hardcoded minimums except bootstrap harvesters (2) and emergency miner-economy harvester (1). Idle builders/repairers fall back to upgrading.
 - [x] **Add multi-room support (remote mining)** - Scout role explores adjacent rooms and records source positions, remote planner evaluates/selects up to 2 best rooms (tolerates stale hostile sightings), miners reuse existing role with cross-room PathFinder pathing to stored source positions, remote miners self-build containers at remote sources, dedicated remoteHauler role for cross-room energy transport with full delivery chain (storage/spawns/towers/controller container), builder construction priority (extensions before storage). Expandable to claiming later.
 - [x] ~~**Remote container repair**~~ — Removed. Remote haulers lack WORK parts so repair was never functional (caused a stall bug instead). Miners rebuild containers when they decay.
+### Base traffic & layout improvements
+
+Observed in W43N58: spawn area is heavily congested, haulers and remote haulers oscillate back-and-forth trying to path to similar locations. Root causes identified:
+
+#### Roads inside the extension cluster
+
+- [ ] **Place roads along the extension stamp corridors** — The `EXTENSION_STAMP` reserves dx=0 and dy=0 as road corridors, but `placeRoads()` never builds roads there. Add road placement along the spawn's x-column and y-row through the extension diamond. This drops movement cost from 2 (plain) to 1 (road) and gives PathFinder a clear preferred route through the base. Without these roads, creeps weave through extensions on plain terrain at double cost.
+
+#### Hauler delivery target spreading
+
+- [ ] **Spread hauler spawn/extension delivery targets** — `deliverToSpawnOrExtension()` uses `findClosestByRange`, so multiple haulers arriving simultaneously all target the same closest empty extension, funnelling to one tile and causing the synchronized back-and-forth oscillation. Fix: either use `findClosestByPath` (accounts for obstacles but more CPU), or find all empty structures and pick the closest one that no other hauler is already adjacent to / pathing toward. Could also assign a target ID in hauler memory on first selection and stick with it until filled.
+
+#### Future spawn placement
+
+- [ ] **Improve spawn site selection for new rooms** — When claiming new rooms, select a spawn position that has enough open terrain in all directions for the extension diamond + road corridors. Current `findOpenPosition` doesn't account for the full stamp footprint. Evaluate candidate positions by checking that the stamp's cross corridors (dx=0, dy=0) are walkable and that at least ~80% of stamp cells are buildable. Avoids the W43N58 situation where walls compress the layout into a congested corner.
+
 ### Multi-room expansion (claiming & reservation)
 
 Builds on existing remote mining infrastructure (scout, remotePlanner, remote miners/haulers).
