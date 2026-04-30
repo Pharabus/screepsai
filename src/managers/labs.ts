@@ -64,11 +64,39 @@ export function runLabs(): void {
 
     // Periodically re-evaluate which reaction to run
     if (!mem.activeReaction || Game.time % REACTION_CHECK_INTERVAL === 0) {
+      const prev = mem.activeReaction;
       const reaction = selectReaction(room);
       mem.activeReaction = reaction;
+
+      if (
+        reaction &&
+        prev &&
+        (reaction.input1 !== prev.input1 || reaction.input2 !== prev.input2)
+      ) {
+        const lab1Mineral = inputLab1.mineralType;
+        const lab2Mineral = inputLab2.mineralType;
+        if (
+          (lab1Mineral && lab1Mineral !== reaction.input1) ||
+          (lab2Mineral && lab2Mineral !== reaction.input2)
+        ) {
+          mem.labFlushing = true;
+        }
+      }
     }
 
     if (!mem.activeReaction) continue;
+
+    // While flushing, check if input labs are clear of stale minerals
+    if (mem.labFlushing) {
+      const { input1, input2 } = mem.activeReaction;
+      const lab1Clean = !inputLab1.mineralType || inputLab1.mineralType === input1;
+      const lab2Clean = !inputLab2.mineralType || inputLab2.mineralType === input2;
+      if (lab1Clean && lab2Clean) {
+        mem.labFlushing = false;
+      } else {
+        continue;
+      }
+    }
 
     const { input1, input2 } = mem.activeReaction;
 

@@ -33,8 +33,8 @@ The AI is a single `loop` function exported from `src/main.ts`, called once per 
 6. `runRooms` — purges dead-creep memory, then dispatches each creep to its role via the `roles` registry (`src/roles/index.ts`). Roles register movement intents via `moveTo()` during this phase. Per-creep calls are profiled as `role.<roleName>`.
 6b. `resolveTraffic` — processes all movement intents registered during `runRooms`, resolves tile conflicts by priority, and issues `creep.move()` calls.
 7. `runTowers` — every tower in a room focus-fires `pickPriorityTarget(room)` (threat-scored, not closest). Falls back to heal → repair with a 50% combat energy reserve. Wall/rampart repair target scales with storage energy via `wallRepairMax(room)`.
-7b. `runLabs` — selects a reaction from available minerals (re-evaluated every 500 ticks), runs `outputLab.runReaction(inputLab1, inputLab2)` on all output labs each tick when input labs are loaded. Stores the active reaction in `RoomMemory.activeReaction`.
-7c. `runTerminal` — runs every 10 ticks. Stub for future market sell orders; hauler handles the actual storage→terminal mineral transfers.
+7b. `runLabs` — selects a reaction from available minerals (re-evaluated every 500 ticks), runs `outputLab.runReaction(inputLab1, inputLab2)` on all output labs each tick when input labs are loaded. Stores the active reaction in `RoomMemory.activeReaction`. When a reaction change leaves stale minerals in input labs, sets `RoomMemory.labFlushing` — hauler withdraws wrong minerals before loading new inputs, flag auto-clears when labs are clean.
+7c. `runTerminal` — runs every 100 ticks. Logs surplus minerals (above `MINERAL_TERMINAL_CEILING` = 50k) with best buy-order prices from `Game.market`. Read-only for now — no actual selling. Shared thresholds live in `src/utils/thresholds.ts`.
 8. `runConstruction` — runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, labs, roads, ramparts — gated by RCL checks in each `place*` function.
 9. `runVisuals` — opt-in `RoomVisual` overlay, gated by `Memory.visuals`.
 10. `flushSegments` — writes dirty `RawMemory.segments` entries and registers requested segments for next tick.
@@ -111,6 +111,8 @@ Remote mining sends creeps to harvest sources in adjacent unowned rooms. Gated b
 
 `CreepMemory.homeRoom` identifies which room a remote creep belongs to. `CreepMemory.targetRoom` tells it which room to operate in. Local miners have neither field set.
 
+6. A `reserver` (`[CLAIM×2, MOVE×2]`, 1300 energy) continuously calls `reserveController()` on a remote room's controller. 2 CLAIM parts add +2 reservation ticks per call (net +1/tick after decay), doubling source capacity (1500 → 3000 energy/regen) and halving container decay. Spawned 1 per remote room that has a controller (gated by `scoutedHasController`). Scout records controller presence during room scanning.
+
 Future concerns for claiming are tracked in `todo.md`.
 
 ### Idle creep management
@@ -133,7 +135,7 @@ Tests live in `test/` mirroring the `src/` structure. Vitest is the runner, conf
 
 `test/mocks/screeps.ts` is a setup file that injects Screeps constants (`WORK`, `FIND_STRUCTURES`, etc.) and provides `mockCreep()`, `mockRoom()`, and `resetGameGlobals()` factory helpers. Call `resetGameGlobals()` in `beforeEach` when tests mutate `Game` or `Memory`.
 
-**When to write tests:** When adding or modifying utility functions, manager logic, or role state machines, add or update corresponding tests. Pure logic (no Screeps runtime dependency) is highest priority. Functions that need only light mocking (mock creep/room) are also good candidates. Skip tests for code tightly coupled to the Screeps runtime (construction placement, error mapping, the main loop). Well-tested modules: `sources.ts`, `remotePlanner.ts`, `roomPlanner.ts`, `scout.ts`, `miner.ts`, `threat.ts`, `body.ts`, `stateMachine.ts`, `spawner.ts`, `labs.ts`, `hauler.ts`, `remoteHauler.ts`, `construction.ts`.
+**When to write tests:** When adding or modifying utility functions, manager logic, or role state machines, add or update corresponding tests. Pure logic (no Screeps runtime dependency) is highest priority. Functions that need only light mocking (mock creep/room) are also good candidates. Skip tests for code tightly coupled to the Screeps runtime (construction placement, error mapping, the main loop). Well-tested modules: `sources.ts`, `remotePlanner.ts`, `roomPlanner.ts`, `scout.ts`, `miner.ts`, `threat.ts`, `body.ts`, `stateMachine.ts`, `spawner.ts`, `labs.ts`, `hauler.ts`, `remoteHauler.ts`, `construction.ts`, `terminal.ts`, `reserver.ts`.
 
 **To make internal functions testable:** Export them. The spawner's `*Needed()` functions and `buildSpawnQueue()` are exported specifically for testing.
 

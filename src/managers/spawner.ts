@@ -45,6 +45,16 @@ function countRemoteHaulers(remoteRoom: string): number {
   });
 }
 
+function countReservers(remoteRoom: string): number {
+  return cached('spawner:reservers:' + remoteRoom, () => {
+    let count = 0;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role === 'reserver' && c.memory.targetRoom === remoteRoom) count++;
+    }
+    return count;
+  });
+}
+
 /**
  * Count how many sources in a room have containers and still need a miner.
  */
@@ -244,6 +254,21 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
           minCount: totalHaulers + 1,
           memory: {
             role: 'remoteHauler' as CreepRoleName,
+            homeRoom: room.name,
+            targetRoom: remoteRoom,
+          },
+        });
+      }
+
+      // Reserver: 1 per remote room with a controller
+      const hasController = remoteMem?.scoutedHasController ?? !!remoteMem?.scoutedOwner;
+      if (hasController && countReservers(remoteRoom) === 0) {
+        queue.push({
+          role: 'reserver',
+          body: [CLAIM, CLAIM, MOVE, MOVE],
+          minCount: countCreepsByRole('reserver') + 1,
+          memory: {
+            role: 'reserver' as CreepRoleName,
             homeRoom: room.name,
             targetRoom: remoteRoom,
           },
