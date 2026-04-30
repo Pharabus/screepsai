@@ -59,6 +59,7 @@ const states: StateMachineDefinition = {
         rmem.scoutedAt = Game.time;
 
         const controller = creep.room.controller;
+        rmem.scoutedHasController = !!controller;
         if (controller) {
           rmem.scoutedOwner = controller.owner?.username;
           rmem.scoutedReservation = controller.reservation?.username;

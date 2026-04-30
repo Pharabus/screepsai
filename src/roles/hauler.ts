@@ -5,8 +5,7 @@ import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached } from '../utils/tickCache';
-
-const MINERAL_STORAGE_FLOOR = 5000;
+import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -152,6 +151,9 @@ function pickup(creep: Creep): boolean {
     }
   }
 
+  // Lab flush: withdraw stale minerals from input labs before loading new ones
+  if (pickupLabFlush(creep, mem)) return true;
+
   // Lab input: withdraw needed mineral from storage for input lab
   if (pickupLabInput(creep, mem)) return true;
 
@@ -162,6 +164,28 @@ function pickup(creep: Creep): boolean {
   if (pickupForTerminal(creep)) return true;
 
   markIdle(creep);
+  return false;
+}
+
+function pickupLabFlush(creep: Creep, mem: RoomMemory | undefined): boolean {
+  if (!mem?.labFlushing || !mem.activeReaction || !mem.inputLabIds) return false;
+
+  const { input1, input2 } = mem.activeReaction;
+  const labs: [StructureLab | null, ResourceConstant][] = [
+    [Game.getObjectById(mem.inputLabIds[0]), input1],
+    [Game.getObjectById(mem.inputLabIds[1]), input2],
+  ];
+
+  for (const [lab, expectedMineral] of labs) {
+    if (!lab) continue;
+    const mineralType = lab.mineralType;
+    if (!mineralType || mineralType === expectedMineral) continue;
+    if (lab.store.getUsedCapacity(mineralType) === 0) continue;
+    if (creep.withdraw(lab, mineralType) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, lab, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ff6600' } });
+    }
+    return true;
+  }
   return false;
 }
 

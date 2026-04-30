@@ -8,7 +8,8 @@ type CreepRoleName =
   | 'hauler'
   | 'mineralMiner'
   | 'scout'
-  | 'remoteHauler';
+  | 'remoteHauler'
+  | 'reserver';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -59,6 +60,7 @@ interface RoomMemory {
     input2: ResourceConstant;
     output: ResourceConstant;
   };
+  labFlushing?: boolean;
   // Remote mining
   remoteRooms?: string[];
   // Scout data (populated by scouts visiting unowned rooms)
@@ -69,6 +71,7 @@ interface RoomMemory {
   scoutedOwner?: string;
   scoutedReservation?: string;
   scoutedHostiles?: number;
+  scoutedHasController?: boolean;
 }
 
 interface ProfilerSample {

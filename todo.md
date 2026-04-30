@@ -100,7 +100,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 - [x] **Lab cluster placement** — `placeLabs(room)` uses a stamp pattern (`LAB_STAMP` in `construction.ts`) anchored +2 tiles from storage. 10 positions where all output labs are within Chebyshev range 2 of both input labs. Places 3 at RCL 6, 6 at RCL 7, 10 at RCL 8. Room planner discovers labs and designates first two as input labs (`inputLabIds` in `RoomMemory`).
 - [x] **Lab manager** — `src/managers/labs.ts` `runLabs()` selects the best viable reaction (most available input materials) from `REACTIONS`, stores as `activeReaction` in `RoomMemory` (re-evaluated every 500 ticks). Runs `outputLab.runReaction(inputLab1, inputLab2)` on all non-input labs each tick. Hauler handles logistics: fills input labs from storage, collects output compounds from output labs, delivers to terminal or storage.
-- [ ] **Input lab flushing** — When `activeReaction` changes, old minerals may remain in input labs. Add logic to withdraw stale inputs before loading new ones, otherwise labs get stuck with the wrong minerals loaded.
+- [x] **Input lab flushing** — When `activeReaction` changes, `labs.ts` detects stale minerals in input labs and sets `labFlushing` flag. Hauler's `pickupLabFlush()` withdraws wrong minerals before loading new inputs. Flag auto-clears when labs are clean.
 - [ ] **Reaction chaining** — Current selection is greedy (picks reaction with most raw inputs). Doesn't consider whether the output is useful or feeds a higher-tier reaction. A goal-directed approach would pick a target compound (e.g. GHO2) and work backwards through the reaction chain (OH → GO → GHO2), producing intermediates in order.
 - [ ] **Boost application (stretch)** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders at RCL 8.
 
@@ -124,8 +124,9 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 ##### Cross-cutting
 
-- [ ] **Per-resource stockpile thresholds in Memory** — Configurable floors/ceilings for each resource in storage/terminal; managers read these to decide whether to produce, sell, or transfer.
-- [ ] **Market stub** — When terminal has surplus above ceiling, place sell orders (or fulfil existing buy orders) via `Game.market`. Start read-only (logging) and only enable trading when thresholds are stable.
+- [x] **Per-resource stockpile thresholds** — `src/utils/thresholds.ts` provides shared `MINERAL_STORAGE_FLOOR` (5k), `MINERAL_TERMINAL_CEILING` (50k), `ENERGY_TERMINAL_BUFFER` (50k), and `isTerminalSurplus()` helper. Hauler and terminal manager import from here (eliminated duplication).
+- [x] **Market logging** — Terminal manager logs surplus minerals above `MINERAL_TERMINAL_CEILING` with best buy-order prices every 100 ticks. Read-only — no actual selling yet.
+- [ ] **Market selling** — When terminal has surplus above ceiling, place sell orders (or fulfil existing buy orders) via `Game.market`. Enable once thresholds are tuned from logging data.
 - [x] **Unit tests for RCL gating** — 16 tests across 12 describe blocks in `test/managers/construction.test.ts`. Each `place*` function tested for correct RCL gating (e.g. extensions at RCL 2+, towers at RCL 3+, storage at RCL 4+, links at RCL 5+, terminal/extractor/mineral at RCL 6+).
 
 - [x] **Builder/repairer logistics integration** - Both roles now check `minerEconomy` and withdraw from source containers (closest, >100 energy) or storage before falling back to self-harvest. Shared `withdrawFromLogistics()` utility in `src/utils/sources.ts`. Bootstrap mode unchanged.
@@ -148,7 +149,7 @@ Builds on existing remote mining infrastructure (scout, remotePlanner, remote mi
 
 Reserving a remote room's controller doubles source capacity (3000/tick → 6000/tick) and halves container decay rate. Low cost, high return.
 
-- [ ] **Add `reserver` role** — `[CLAIM×2, MOVE×2]` body (1300 energy). Paths to the remote room's controller and calls `creep.reserveController()`. Reservation lasts 1 tick per CLAIM part per call (so 2 CLAIM = +2 ticks/tick, net +1 tick/tick of reservation). Needs to arrive before reservation expires. Re-reserve continuously.
+- [x] **Add `reserver` role** — `[CLAIM×2, MOVE×2]` body (1300 energy). Paths to the remote room's controller and calls `creep.reserveController()`. 2 CLAIM parts = +2 ticks/tick (net +1/tick). Spawned 1 per remote room with a controller. Scout records `scoutedHasController` for gating.
 - [ ] **Remote room type field** — Add `type: 'remote' | 'reserved' | 'claimed'` to `RoomMemory` for remote rooms. `selectRemoteRooms()` sets type based on GCL availability and distance. Spawner uses type to decide which roles to queue (reserver only for `reserved`, full colony for `claimed`).
 - [ ] **Spawner integration** — Queue 1 reserver per `reserved` remote room, after remote haulers in priority. Only spawn when room has a controller (some remote rooms are source keeper or highway rooms with no controller).
 - [ ] **Remote road building** — Place roads from home room spawn to remote source positions along the PathFinder route. Hauler throughput increases ~2x on roads (fatigue halved). Build incrementally (1 site/tick like local roads). Only for reserved rooms (worth the investment).
