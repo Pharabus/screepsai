@@ -335,9 +335,18 @@ export function placeRoads(room: Room): void {
   }
 }
 
+function hasUnbuiltLinkSites(room: Room): boolean {
+  return (
+    room.find(FIND_MY_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    }).length > 0
+  );
+}
+
 export function placeTerminal(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
+  if (hasUnbuiltLinkSites(room)) return;
   if (room.terminal) return;
 
   const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
@@ -355,6 +364,7 @@ export function placeTerminal(room: Room): void {
 export function placeExtractor(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
+  if (hasUnbuiltLinkSites(room)) return;
 
   const minerals = room.find(FIND_MINERALS);
   const mineral = minerals[0];
@@ -374,6 +384,7 @@ export function placeExtractor(room: Room): void {
 export function placeMineralContainer(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
+  if (hasUnbuiltLinkSites(room)) return;
 
   const minerals = room.find(FIND_MINERALS);
   const mineral = minerals[0];
@@ -492,6 +503,7 @@ export function placeLabs(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_LABS[rcl] ?? 0;
   if (max === 0) return;
+  if (hasUnbuiltLinkSites(room)) return;
   const current = countStructuresAndSites(room, STRUCTURE_LAB);
   if (current >= max) return;
   if (!room.storage) return;
@@ -516,6 +528,52 @@ export function placeLabs(room: Room): void {
 
     room.createConstructionSite(pos, STRUCTURE_LAB);
     return;
+  }
+}
+
+export function placeCorridorRoads(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 3) return;
+
+  const roadSites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_ROAD,
+  });
+  if (roadSites.length > 3) return;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  const terrain = room.getTerrain();
+  const maxRing = Math.min(rcl - 1, 4);
+
+  for (let offset = -maxRing; offset <= maxRing; offset++) {
+    if (offset === 0) continue;
+    for (const [x, y] of [
+      [anchor.pos.x, anchor.pos.y + offset],
+      [anchor.pos.x + offset, anchor.pos.y],
+    ] as [number, number][]) {
+      if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+      const structs = room.lookForAt(LOOK_STRUCTURES, x, y);
+      const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
+      const hasRoad =
+        structs.some((s) => s.structureType === STRUCTURE_ROAD) ||
+        sites.some((s) => s.structureType === STRUCTURE_ROAD);
+      if (hasRoad) continue;
+
+      const blocked = structs.some(
+        (s) =>
+          s.structureType !== STRUCTURE_CONTAINER &&
+          s.structureType !== STRUCTURE_RAMPART &&
+          s.structureType !== STRUCTURE_ROAD,
+      );
+      if (blocked) continue;
+
+      room.createConstructionSite(x, y, STRUCTURE_ROAD);
+      return;
+    }
   }
 }
 
@@ -551,17 +609,18 @@ export function runConstruction(): void {
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
 
-    placeExtensions(room);
-    placeTowers(room);
     placeSourceContainers(room);
     placeControllerContainer(room);
     placeStorage(room);
+    placeLinks(room);
+    placeExtensions(room);
+    placeTowers(room);
+    placeRoads(room);
+    placeCorridorRoads(room);
     placeTerminal(room);
     placeExtractor(room);
     placeMineralContainer(room);
-    placeLinks(room);
     placeLabs(room);
-    placeRoads(room);
     placeRamparts(room);
   }
 }

@@ -147,7 +147,16 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 #### Roads inside the extension cluster
 
-- [ ] **Place roads along the extension stamp corridors** — The `EXTENSION_STAMP` reserves dx=0 and dy=0 as road corridors, but `placeRoads()` never builds roads there. Add road placement along the spawn's x-column and y-row through the extension diamond. This drops movement cost from 2 (plain) to 1 (road) and gives PathFinder a clear preferred route through the base. Without these roads, creeps weave through extensions on plain terrain at double cost.
+- [x] **Place roads along the extension stamp corridors** — Added `placeCorridorRoads()` which places roads on dx=0 (vertical) and dy=0 (horizontal) corridors through the extension diamond. Corridor width grows with RCL (`min(rcl - 1, 4)`). Skips tiles occupied by non-road/non-container/non-rampart structures. Called after `placeRoads()` in the construction pipeline.
+
+#### Build order & link-first gating
+
+- [x] **Reorder construction priority** — `runConstruction()` now places energy infrastructure first: source containers → controller container → storage → links → extensions → towers → roads. Terminal, extractor, mineral container, and labs are deferred to after energy infrastructure. This ensures source links get built before terminal/labs at RCL 6.
+- [x] **Gate low-priority structures behind link completion** — `placeTerminal`, `placeExtractor`, `placeMineralContainer`, and `placeLabs` now skip if there are any unbuilt link construction sites. Prevents builders from working on terminal/labs while a source link is still under construction.
+
+#### Unified layout planner (prevents extension/lab collisions)
+
+- [ ] **Pre-compute base layout at room claim** — Create `src/utils/layoutPlanner.ts` that computes all structure positions at once: storage, lab reservation area, extensions, roads, towers, terminal, links. Extensions skip lab-reserved positions. Every extension validated for creep accessibility. Construction manager reads from stored plan instead of independent `place*` functions. Prevents the W43N58 situation where extensions placed at RCL 2-5 block lab positions needed at RCL 6-7.
 
 #### Hauler delivery target spreading
 

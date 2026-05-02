@@ -5,6 +5,7 @@ import {
   placeControllerContainer,
   placeStorage,
   placeRoads,
+  placeCorridorRoads,
   placeRamparts,
   placeLinks,
   placeTerminal,
@@ -240,5 +241,77 @@ describe('construction RCL gating', () => {
       placeLabs(room);
       expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
+  });
+
+  describe('placeCorridorRoads', () => {
+    it('does not place before RCL 3', () => {
+      const room = roomAt(2);
+      placeCorridorRoads(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('places a corridor road at RCL 3', () => {
+      const room = roomAt(3);
+      placeCorridorRoads(room);
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        STRUCTURE_ROAD,
+      );
+    });
+  });
+});
+
+describe('link-first gating', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  function roomWithLinkSite(rcl: number): any {
+    const storagePos = new RoomPosition(25, 25, 'W1N1');
+    (storagePos as any).lookFor = vi.fn(() => []);
+    const mineralPos = new RoomPosition(40, 40, 'W1N1');
+    (mineralPos as any).lookFor = vi.fn(() => []);
+    return roomAt(rcl, {
+      storage: { pos: storagePos },
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+        if (type === FIND_MY_CONSTRUCTION_SITES) {
+          if (opts?.filter) {
+            const site = { structureType: STRUCTURE_LINK };
+            if (opts.filter(site)) return [site];
+            return [];
+          }
+          return [{ structureType: STRUCTURE_LINK }];
+        }
+        if (type === FIND_MY_STRUCTURES) return [];
+        if (type === FIND_MINERALS) return [{ pos: mineralPos, id: 'min1' }];
+        return [];
+      }),
+    });
+  }
+
+  it('placeTerminal skips when link site exists', () => {
+    const room = roomWithLinkSite(6);
+    placeTerminal(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('placeExtractor skips when link site exists', () => {
+    const room = roomWithLinkSite(6);
+    placeExtractor(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('placeMineralContainer skips when link site exists', () => {
+    const room = roomWithLinkSite(6);
+    placeMineralContainer(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('placeLabs skips when link site exists', () => {
+    const room = roomWithLinkSite(6);
+    placeLabs(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
   });
 });
