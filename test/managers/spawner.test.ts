@@ -3,6 +3,7 @@ import {
   minersNeeded,
   haulersNeeded,
   upgradersNeeded,
+  remoteBuilderNeeded,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -285,5 +286,66 @@ describe('upgradersNeeded', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1500 });
     expect(upgradersNeeded(room)).toBe(3);
+  });
+});
+
+describe('remoteBuilderNeeded', () => {
+  it('returns false when room is not visible', () => {
+    (Game as any).rooms = {};
+    expect(remoteBuilderNeeded('W2N1')).toBe(false);
+  });
+
+  it('returns true when room has construction sites', () => {
+    (Game as any).rooms = {
+      W2N1: { find: vi.fn((type: number) => (type === FIND_CONSTRUCTION_SITES ? [{}] : [])) },
+    };
+    (Game as any).creeps = {};
+    expect(remoteBuilderNeeded('W2N1')).toBe(true);
+  });
+
+  it('returns false when a remote builder already exists for the room', () => {
+    (Game as any).rooms = {
+      W2N1: { find: vi.fn(() => [{}]) },
+    };
+    (Game as any).creeps = {
+      rb1: { memory: { role: 'remoteBuilder', targetRoom: 'W2N1' } },
+    };
+    expect(remoteBuilderNeeded('W2N1')).toBe(false);
+  });
+
+  it('returns true when roads are heavily damaged', () => {
+    const damagedRoad = { structureType: STRUCTURE_ROAD, hits: 1000, hitsMax: 5000 };
+    (Game as any).rooms = {
+      W2N1: {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_CONSTRUCTION_SITES) return [];
+          if (type === FIND_STRUCTURES) {
+            const structs = [damagedRoad];
+            return opts?.filter ? structs.filter(opts.filter) : structs;
+          }
+          return [];
+        }),
+      },
+    };
+    (Game as any).creeps = {};
+    expect(remoteBuilderNeeded('W2N1')).toBe(true);
+  });
+
+  it('returns false when roads are healthy and no sites', () => {
+    const healthyRoad = { structureType: STRUCTURE_ROAD, hits: 4000, hitsMax: 5000 };
+    (Game as any).rooms = {
+      W2N1: {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_CONSTRUCTION_SITES) return [];
+          if (type === FIND_STRUCTURES) {
+            const structs = [healthyRoad];
+            return opts?.filter ? structs.filter(opts.filter) : structs;
+          }
+          return [];
+        }),
+      },
+    };
+    (Game as any).creeps = {};
+    expect(remoteBuilderNeeded('W2N1')).toBe(false);
   });
 });

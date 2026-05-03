@@ -9,7 +9,8 @@ type CreepRoleName =
   | 'mineralMiner'
   | 'scout'
   | 'remoteHauler'
-  | 'reserver';
+  | 'reserver'
+  | 'remoteBuilder';
 
 interface CreepMemory {
   role: CreepRoleName;

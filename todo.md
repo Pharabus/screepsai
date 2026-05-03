@@ -156,7 +156,7 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 #### Unified layout planner (prevents extension/lab collisions)
 
-- [ ] **Pre-compute base layout at room claim** — Create `src/utils/layoutPlanner.ts` that computes all structure positions at once: storage, lab reservation area, extensions, roads, towers, terminal, links. Extensions skip lab-reserved positions. Every extension validated for creep accessibility. Construction manager reads from stored plan instead of independent `place*` functions. Prevents the W43N58 situation where extensions placed at RCL 2-5 block lab positions needed at RCL 6-7.
+- [ ] **Pre-compute base layout at room claim** — Create `src/utils/layoutPlanner.ts` that computes all structure positions at once: storage, lab reservation area, extensions, roads, towers, terminal, links. Storage position must be chosen deliberately (it anchors the lab stamp at storage+(2,2)), not via first-open-tile scan. Extensions skip lab-reserved positions — currently 6/10 lab stamp positions collide with extensions placed at RCL 2-5. Tower placement should also be planned (currently random via `findOpenPosition` at range 3-6). Every extension validated for creep accessibility. Construction manager reads from stored plan instead of independent `place*` functions. Prevents the W43N58 situation where extensions placed at RCL 2-5 block lab positions needed at RCL 6-7.
 
 #### Hauler delivery target spreading
 
@@ -177,7 +177,7 @@ Reserving a remote room's controller doubles source capacity (3000/tick → 6000
 - [x] **Add `reserver` role** — `[CLAIM×2, MOVE×2]` body (1300 energy). Paths to the remote room's controller and calls `creep.reserveController()`. 2 CLAIM parts = +2 ticks/tick (net +1/tick). Spawned 1 per remote room with a controller. Scout records `scoutedHasController` for gating.
 - [ ] **Remote room type field** — Add `type: 'remote' | 'reserved' | 'claimed'` to `RoomMemory` for remote rooms. `selectRemoteRooms()` sets type based on GCL availability and distance. Spawner uses type to decide which roles to queue (reserver only for `reserved`, full colony for `claimed`).
 - [ ] **Spawner integration** — Queue 1 reserver per `reserved` remote room, after remote haulers in priority. Only spawn when room has a controller (some remote rooms are source keeper or highway rooms with no controller).
-- [ ] **Remote road building** — Place roads from home room spawn to remote source positions along the PathFinder route. Hauler throughput increases ~2x on roads (fatigue halved). Build incrementally (1 site/tick like local roads). Only for reserved rooms (worth the investment).
+- [x] **Remote road building** — Place roads from home room spawn to remote source positions along the PathFinder route. Hauler throughput increases ~2x on roads (fatigue halved). Build incrementally (1 site/tick like local roads). Only for reserved rooms (worth the investment).
 
 #### Phase 2 — Room claiming (GCL 2+)
 

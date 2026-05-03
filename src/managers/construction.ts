@@ -603,6 +603,75 @@ export function placeRamparts(room: Room): void {
   }
 }
 
+export function placeRemoteRoads(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 4) return;
+
+  const mem = Memory.rooms[room.name];
+  const remoteRooms = mem?.remoteRooms;
+  if (!remoteRooms || remoteRooms.length === 0) return;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return;
+
+  // Only build roads to rooms with an active reserver
+  for (const remoteRoomName of remoteRooms) {
+    const remoteMem = Memory.rooms[remoteRoomName];
+    if (!remoteMem?.scoutedHasController) continue;
+    const hasReserver = Object.values(Game.creeps).some(
+      (c) => c.memory.role === 'reserver' && c.memory.targetRoom === remoteRoomName,
+    );
+    if (!hasReserver) continue;
+
+    const sources = remoteMem.sources ?? remoteMem.scoutedSourceData;
+    if (!sources) continue;
+
+    for (const source of sources) {
+      const targetPos = new RoomPosition(source.x, source.y, remoteRoomName);
+      const result = PathFinder.search(
+        anchor.pos,
+        { pos: targetPos, range: 1 },
+        {
+          plainCost: 2,
+          swampCost: 10,
+          roomCallback(roomName) {
+            const r = Game.rooms[roomName];
+            if (!r) return false;
+            const costs = new PathFinder.CostMatrix();
+            for (const struct of r.find(FIND_STRUCTURES)) {
+              if (struct.structureType === STRUCTURE_ROAD) {
+                costs.set(struct.pos.x, struct.pos.y, 1);
+              } else if (
+                struct.structureType !== STRUCTURE_CONTAINER &&
+                struct.structureType !== STRUCTURE_RAMPART
+              ) {
+                costs.set(struct.pos.x, struct.pos.y, 255);
+              }
+            }
+            return costs;
+          },
+        },
+      );
+      if (result.incomplete) continue;
+
+      for (const step of result.path) {
+        const stepRoom = Game.rooms[step.roomName];
+        if (!stepRoom) continue;
+        const structures = stepRoom.lookForAt(LOOK_STRUCTURES, step.x, step.y);
+        const sites = stepRoom.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
+        const hasRoad =
+          structures.some((s) => s.structureType === STRUCTURE_ROAD) ||
+          sites.some((s) => s.structureType === STRUCTURE_ROAD);
+        if (!hasRoad) {
+          stepRoom.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+          return;
+        }
+      }
+    }
+  }
+}
+
 export function runConstruction(): void {
   if (Game.time % 5 !== 0) return;
 
@@ -617,6 +686,7 @@ export function runConstruction(): void {
     placeTowers(room);
     placeRoads(room);
     placeCorridorRoads(room);
+    placeRemoteRoads(room);
     placeTerminal(room);
     placeExtractor(room);
     placeMineralContainer(room);

@@ -10,6 +10,7 @@ import { mineralMiner } from './mineralMiner';
 import { scout } from './scout';
 import { remoteHauler } from './remoteHauler';
 import { reserver } from './reserver';
+import { remoteBuilder } from './remoteBuilder';
 
 export type { Role };
 
@@ -25,4 +26,5 @@ export const roles: Record<CreepRoleName, Role> = {
   scout,
   remoteHauler,
   reserver,
+  remoteBuilder,
 };

@@ -55,6 +55,20 @@ function countReservers(remoteRoom: string): number {
   });
 }
 
+export function remoteBuilderNeeded(remoteRoom: string): boolean {
+  const room = Game.rooms[remoteRoom];
+  if (!room) return false;
+  for (const c of Object.values(Game.creeps)) {
+    if (c.memory.role === 'remoteBuilder' && c.memory.targetRoom === remoteRoom) return false;
+  }
+  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  if (sites.length > 0) return true;
+  const damagedRoads = room.find(FIND_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_ROAD && s.hits < s.hitsMax * 0.5,
+  });
+  return damagedRoads.length > 0;
+}
+
 /**
  * Count how many sources in a room have containers and still need a miner.
  */
@@ -279,6 +293,21 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
           minCount: countCreepsByRole('reserver') + 1,
           memory: {
             role: 'reserver' as CreepRoleName,
+            homeRoom: room.name,
+            targetRoom: remoteRoom,
+          },
+        });
+      }
+
+      // Remote builder: 1 per remote room with construction sites
+      if (remoteBuilderNeeded(remoteRoom)) {
+        queue.push({
+          role: 'remoteBuilder',
+          pattern: [WORK, CARRY, MOVE, MOVE],
+          maxRepeats: 4,
+          minCount: countCreepsByRole('remoteBuilder') + 1,
+          memory: {
+            role: 'remoteBuilder' as CreepRoleName,
             homeRoom: room.name,
             targetRoom: remoteRoom,
           },

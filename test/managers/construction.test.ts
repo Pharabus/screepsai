@@ -12,6 +12,7 @@ import {
   placeExtractor,
   placeMineralContainer,
   placeLabs,
+  placeRemoteRoads,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -313,5 +314,96 @@ describe('link-first gating', () => {
     const room = roomWithLinkSite(6);
     placeLabs(room);
     expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+});
+
+describe('placeRemoteRoads', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('does nothing below RCL 4', () => {
+    const room = roomAt(3);
+    Memory.rooms = { W1N1: { remoteRooms: ['W2N1'] } };
+    placeRemoteRoads(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('does nothing without remote rooms', () => {
+    const room = roomAt(4);
+    Memory.rooms = { W1N1: {} };
+    placeRemoteRoads(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('does nothing without an active reserver', () => {
+    const room = roomAt(4);
+    Memory.rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { scoutedHasController: true, sources: [{ id: 's1' as any, x: 25, y: 25 }] },
+    };
+    (Game as any).creeps = {};
+    placeRemoteRoads(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('places a road on the first unroaded path step', () => {
+    const remoteRoom = mockRoom({
+      name: 'W2N1',
+      controller: undefined,
+      find: vi.fn(() => []),
+      lookForAt: vi.fn(() => []),
+      createConstructionSite: vi.fn(() => 0),
+    });
+    const room = roomAt(4);
+    Memory.rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { scoutedHasController: true, sources: [{ id: 's1' as any, x: 25, y: 25 }] },
+    };
+    (Game as any).creeps = {
+      res1: { memory: { role: 'reserver', targetRoom: 'W2N1' } },
+    };
+    (Game as any).rooms = { W1N1: room, W2N1: remoteRoom };
+
+    const pathStep = new RoomPosition(3, 3, 'W2N1');
+    (PathFinder as any).search = vi.fn(() => ({
+      path: [pathStep],
+      incomplete: false,
+    }));
+
+    placeRemoteRoads(room);
+
+    expect(remoteRoom.createConstructionSite).toHaveBeenCalledWith(3, 3, STRUCTURE_ROAD);
+  });
+
+  it('skips steps that already have roads', () => {
+    const room = roomAt(4);
+    const remoteRoom = mockRoom({
+      name: 'W2N1',
+      controller: undefined,
+      find: vi.fn(() => []),
+      lookForAt: vi.fn((type: string, _x: number, _y: number) => {
+        if (type === LOOK_STRUCTURES) return [{ structureType: STRUCTURE_ROAD }];
+        return [];
+      }),
+      createConstructionSite: vi.fn(() => 0),
+    });
+    Memory.rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { scoutedHasController: true, sources: [{ id: 's1' as any, x: 25, y: 25 }] },
+    };
+    (Game as any).creeps = {
+      res1: { memory: { role: 'reserver', targetRoom: 'W2N1' } },
+    };
+    (Game as any).rooms = { W1N1: room, W2N1: remoteRoom };
+
+    (PathFinder as any).search = vi.fn(() => ({
+      path: [new RoomPosition(3, 3, 'W2N1')],
+      incomplete: false,
+    }));
+
+    placeRemoteRoads(room);
+
+    expect(remoteRoom.createConstructionSite).not.toHaveBeenCalled();
   });
 });

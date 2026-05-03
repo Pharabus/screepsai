@@ -15,6 +15,7 @@
 (globalThis as any).FIND_HOSTILE_CREEPS = 114;
 (globalThis as any).FIND_STRUCTURES = 107;
 (globalThis as any).FIND_MY_STRUCTURES = 108;
+(globalThis as any).FIND_CONSTRUCTION_SITES = 130;
 (globalThis as any).FIND_MY_CONSTRUCTION_SITES = 111;
 (globalThis as any).FIND_MY_SPAWNS = 112;
 (globalThis as any).FIND_DROPPED_RESOURCES = 113;
