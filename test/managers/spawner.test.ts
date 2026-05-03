@@ -51,6 +51,89 @@ describe('buildSpawnQueue', () => {
     expect(roles).toContain('repairer');
   });
 
+  it('requests 0 builders when all sources linked and storage below floor', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          {
+            id: 'src1' as any,
+            x: 10,
+            y: 10,
+            containerId: 'cnt1' as any,
+            linkId: 'link1' as any,
+            minerName: 'miner_1',
+          },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const builderEntry = queue.find((r) => r.role === 'builder');
+
+    expect(builderEntry?.minCount).toBe(0);
+  });
+
+  it('requests builders when sources are unlinked even if storage below floor', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const builderEntry = queue.find((r) => r.role === 'builder');
+
+    expect(builderEntry?.minCount).toBeGreaterThan(0);
+  });
+
+  it('requests builders when all sources linked and storage above floor', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          {
+            id: 'src1' as any,
+            x: 10,
+            y: 10,
+            containerId: 'cnt1' as any,
+            linkId: 'link1' as any,
+            minerName: 'miner_1',
+          },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 15000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const builderEntry = queue.find((r) => r.role === 'builder');
+
+    expect(builderEntry?.minCount).toBeGreaterThan(0);
+  });
+
   it('includes miner when source needs one', () => {
     (Memory as any).rooms = {
       W1N1: {

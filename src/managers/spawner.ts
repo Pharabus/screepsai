@@ -4,6 +4,7 @@ import { defendersNeeded } from './defense';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
 import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
+import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -136,6 +137,18 @@ export function upgradersNeeded(room: Room): number {
  * back to upgrading when idle), up to 3 when there's heavy construction.
  */
 function buildersNeeded(room: Room): number {
+  const storage = room.storage;
+  const mem = Memory.rooms[room.name];
+  const sources = mem?.sources;
+  const allSourcesLinked =
+    sources !== undefined && sources.length > 0 && sources.every((s) => s.linkId);
+  if (
+    storage &&
+    allSourcesLinked &&
+    storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR
+  )
+    return 0;
+
   const sites = cached(
     'spawner:sites:' + room.name,
     () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
