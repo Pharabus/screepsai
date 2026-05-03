@@ -20,12 +20,23 @@ export function deliverToSpawnOrExtension(creep: Creep): boolean {
     delete creep.memory.targetId;
   }
 
-  const target = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
+  const targets = creep.room.find(FIND_MY_STRUCTURES, {
     filter: (s) =>
       (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
       s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
   });
-  if (!target) return false;
+  if (targets.length === 0) return false;
+
+  const claimed = new Set<string>();
+  for (const c of Object.values(Game.creeps)) {
+    if (c.name === creep.name) continue;
+    if (c.memory.role !== 'hauler' && c.memory.role !== 'remoteHauler') continue;
+    if (c.memory.state !== 'DELIVER' || !c.memory.targetId) continue;
+    claimed.add(c.memory.targetId);
+  }
+
+  targets.sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
+  const target = targets.find((t) => !claimed.has(t.id)) ?? targets[0]!;
   creep.memory.targetId = target.id as Id<StructureSpawn>;
   if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
     moveTo(creep, target, {

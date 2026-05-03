@@ -160,7 +160,7 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 #### Hauler delivery target spreading
 
-- [ ] **Spread hauler spawn/extension delivery targets** — `deliverToSpawnOrExtension()` uses `findClosestByRange`, so multiple haulers arriving simultaneously all target the same closest empty extension, funnelling to one tile and causing the synchronized back-and-forth oscillation. Fix: either use `findClosestByPath` (accounts for obstacles but more CPU), or find all empty structures and pick the closest one that no other hauler is already adjacent to / pathing toward. Could also assign a target ID in hauler memory on first selection and stick with it until filled.
+- [x] **Spread hauler spawn/extension delivery targets** — `deliverToSpawnOrExtension()` now finds all empty spawns/extensions, builds a set of targetIds claimed by other haulers/remoteHaulers in DELIVER state, sorts by range, and picks the closest unclaimed target. Falls back to closest overall if all are claimed. Eliminates the convergence where multiple haulers targeted the same nearest extension and oscillated.
 
 #### Future spawn placement
 
