@@ -9,6 +9,9 @@ import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
 
 const states: StateMachineDefinition = {
   PICKUP: {
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
     run(creep) {
       if (creep.store.getFreeCapacity() === 0) return 'DELIVER';
       const found = pickup(creep);
@@ -17,6 +20,9 @@ const states: StateMachineDefinition = {
     },
   },
   DELIVER: {
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
     run(creep) {
       if (creep.store.getUsedCapacity() === 0) return 'PICKUP';
       deliver(creep);
@@ -107,6 +113,24 @@ function pickup(creep: Creep): boolean {
     }
   }
 
+  if (creep.memory.targetId) {
+    const cachedContainer = Game.getObjectById(creep.memory.targetId as Id<StructureContainer>);
+    if (
+      cachedContainer &&
+      cachedContainer.structureType === STRUCTURE_CONTAINER &&
+      cachedContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    ) {
+      if (creep.withdraw(cachedContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, cachedContainer, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+      }
+      return true;
+    }
+    delete creep.memory.targetId;
+  }
+
   const containers = creep.room.find(FIND_STRUCTURES, {
     filter: (s): s is StructureContainer =>
       s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
@@ -119,6 +143,7 @@ function pickup(creep: Creep): boolean {
   )[0];
 
   if (target) {
+    creep.memory.targetId = target.id;
     if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, target, {
         priority: PRIORITY_HAULER,

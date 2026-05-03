@@ -85,9 +85,9 @@ export function haulersNeeded(room: Room): number {
   ).length;
   const unlinked = withContainers.length - linked;
 
-  // Linked sources need 1 hauler (storage link emptying + overflow);
-  // unlinked sources need full hauler complement
-  return unlinked * perUnlinked + Math.min(linked, 1);
+  // Linked sources need fewer haulers but still require distribution to
+  // spawns/extensions/towers; unlinked sources need full hauler complement
+  return Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
 }
 
 /**

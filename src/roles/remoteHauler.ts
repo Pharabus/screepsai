@@ -18,6 +18,9 @@ function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
 
 const states: StateMachineDefinition = {
   PICKUP: {
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
     run(creep) {
       if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return 'DELIVER';
 
@@ -79,6 +82,9 @@ const states: StateMachineDefinition = {
     },
   },
   DELIVER: {
+    onEnter(creep) {
+      delete creep.memory.targetId;
+    },
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'PICKUP';
 

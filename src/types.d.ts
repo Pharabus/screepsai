@@ -14,7 +14,17 @@ type CreepRoleName =
 interface CreepMemory {
   role: CreepRoleName;
   /** ID of the assigned target (source, container, controller, mineral, etc.) */
-  targetId?: Id<Source | Mineral | StructureContainer | StructureStorage | StructureController>;
+  targetId?: Id<
+    | Source
+    | Mineral
+    | StructureContainer
+    | StructureStorage
+    | StructureController
+    | StructureSpawn
+    | StructureExtension
+    | StructureTower
+    | StructureLink
+  >;
   /** FSM state name */
   state?: string;
   /** Room the creep was spawned in / belongs to (set for remote roles) */
