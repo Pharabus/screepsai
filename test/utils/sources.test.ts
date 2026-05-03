@@ -267,6 +267,81 @@ describe('sources', () => {
       expect(creep.memory.targetId).toBeUndefined();
     });
 
+    it('prefers storage over containers when both have energy', () => {
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const container = {
+        id: 'c1' as Id<StructureContainer>,
+        structureType: STRUCTURE_CONTAINER,
+        store: { getUsedCapacity: () => 500 },
+      };
+      const storage = {
+        id: 'stor1' as Id<StructureStorage>,
+        structureType: STRUCTURE_STORAGE,
+        store: { getUsedCapacity: () => STORAGE_ENERGY_FLOOR + 1 },
+      };
+
+      const room = mockRoom({
+        find: vi.fn((_type: number, opts?: any) => {
+          const all = [container];
+          return opts?.filter ? all.filter(opts.filter) : all;
+        }),
+        storage,
+      });
+
+      Memory.rooms['W1N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        withdraw: vi.fn(() => OK),
+      });
+
+      withdrawFromLogistics(creep);
+
+      expect(creep.memory.targetId).toBe('stor1');
+    });
+
+    it('skips linked source containers', () => {
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const linkedContainer = {
+        id: 'cLinked' as Id<StructureContainer>,
+        structureType: STRUCTURE_CONTAINER,
+        store: { getUsedCapacity: () => 500 },
+      };
+      const unlinkedContainer = {
+        id: 'cUnlinked' as Id<StructureContainer>,
+        structureType: STRUCTURE_CONTAINER,
+        store: { getUsedCapacity: () => 300 },
+      };
+
+      const room = mockRoom({
+        find: vi.fn((_type: number, opts?: any) => {
+          const all = [linkedContainer, unlinkedContainer];
+          return opts?.filter ? all.filter(opts.filter) : all;
+        }),
+        storage: undefined,
+      });
+
+      Memory.rooms['W1N1'] = {
+        sources: [
+          { id: 's1' as any, x: 10, y: 10, containerId: 'cLinked', linkId: 'link1' },
+          { id: 's2' as any, x: 20, y: 20, containerId: 'cUnlinked' },
+        ],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        withdraw: vi.fn(() => OK),
+      });
+
+      withdrawFromLogistics(creep);
+
+      expect(creep.memory.targetId).toBe('cUnlinked');
+    });
+
     it('still withdraws from cached container regardless of floor', () => {
       const container = {
         id: 'c1' as Id<StructureContainer>,

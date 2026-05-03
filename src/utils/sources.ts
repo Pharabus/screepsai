@@ -32,11 +32,27 @@ export function withdrawFromLogistics(creep: Creep): boolean {
     }
   }
 
+  // Prefer storage when it exists and has energy — it's centrally located
+  // and actively fed by links, making it the primary logistics hub.
+  const storage = creep.room.storage;
+  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > STORAGE_ENERGY_FLOOR) {
+    creep.memory.targetId = storage.id;
+    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return true;
+  }
+
+  // Fall back to source containers (pre-link economy or storage depleted)
+  const linkedSources = new Set(
+    mem?.sources?.filter((s) => s.linkId).map((s) => s.containerId) ?? [],
+  );
   const containers = creep.room
     .find(FIND_STRUCTURES, {
       filter: (s): s is StructureContainer =>
         s.structureType === STRUCTURE_CONTAINER &&
         s.id !== controllerContainerId &&
+        !linkedSources.has(s.id) &&
         s.store.getUsedCapacity(RESOURCE_ENERGY) > 100,
     })
     .sort(
@@ -48,15 +64,6 @@ export function withdrawFromLogistics(creep: Creep): boolean {
     creep.memory.targetId = container.id;
     if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, container, { visualizePathStyle: { stroke: '#ffaa00' } });
-    }
-    return true;
-  }
-
-  const storage = creep.room.storage;
-  if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > STORAGE_ENERGY_FLOOR) {
-    creep.memory.targetId = storage.id;
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, storage, { visualizePathStyle: { stroke: '#ffaa00' } });
     }
     return true;
   }
