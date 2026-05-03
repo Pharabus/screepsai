@@ -225,16 +225,48 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(2);
   });
 
-  it('scales base with capacity in miner economy', () => {
+  it('returns 1 when storage exists but is low', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      storage: { store: { getUsedCapacity: () => 5_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('returns 2 when storage is moderate', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      storage: { store: { getUsedCapacity: () => 30_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(2);
+  });
+
+  it('scales base with capacity when storage is healthy', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
 
-    const lowCap = mockRoom({ name: 'W1N1', energyCapacityAvailable: 500 });
+    const lowCap = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 500,
+      storage: { store: { getUsedCapacity: () => 60_000 } },
+    });
     expect(upgradersNeeded(lowCap)).toBe(1);
 
-    const midCap = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    const midCap = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      storage: { store: { getUsedCapacity: () => 60_000 } },
+    });
     expect(upgradersNeeded(midCap)).toBe(2);
 
-    const highCap = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1500 });
+    const highCap = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      storage: { store: { getUsedCapacity: () => 60_000 } },
+    });
     expect(upgradersNeeded(highCap)).toBe(3);
   });
 
@@ -247,5 +279,11 @@ describe('upgradersNeeded', () => {
     });
     // base 2 + bonus 2 (>200k)
     expect(upgradersNeeded(room)).toBe(4);
+  });
+
+  it('uses capacity-based formula when no storage exists', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1500 });
+    expect(upgradersNeeded(room)).toBe(3);
   });
 });

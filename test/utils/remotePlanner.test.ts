@@ -25,13 +25,24 @@ describe('remotePlanner', () => {
       expect(evaluateRemoteRoom('W2N1')).toBe(-1);
     });
 
-    it('returns -1 for reserved rooms', () => {
+    it('returns -1 for rooms reserved by other players', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
       Memory.rooms['W2N1'] = {
         scoutedAt: 100,
         scoutedReservation: 'SomePlayer',
         scoutedSources: 1,
       } as any;
       expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+    });
+
+    it('accepts rooms reserved by own player', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedReservation: 'Me',
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(2);
     });
 
     it('returns -1 for rooms with recent hostiles', () => {

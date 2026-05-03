@@ -7,9 +7,10 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   const rmem = Memory.rooms[targetRoomName];
   if (!rmem?.scoutedAt) return -1;
 
-  // Reject owned or reserved rooms
+  // Reject owned rooms or rooms reserved by other players
   if (rmem.scoutedOwner) return -1;
-  if (rmem.scoutedReservation) return -1;
+  const myUsername = Object.values(Game.spawns)[0]?.owner.username;
+  if (rmem.scoutedReservation && rmem.scoutedReservation !== myUsername) return -1;
 
   // Reject rooms with recent hostile presence (stale sightings are likely transient invaders)
   const hostiles = rmem.scoutedHostiles ?? 0;

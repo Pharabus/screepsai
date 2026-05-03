@@ -91,24 +91,28 @@ export function haulersNeeded(room: Room): number {
 }
 
 /**
- * Upgrader count. In miner economy, scale to available energy surplus.
+ * Upgrader count. In miner economy, scale to storage energy reserves.
+ * When storage is low, run fewer upgraders to let the economy build surplus.
  * In bootstrap, keep 2 minimum.
  */
 export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
 
-  const capacity = room.energyCapacityAvailable;
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+
+  if (room.storage && stored < 10_000) return 1;
+  if (room.storage && stored < 50_000) return 2;
+
   let base: number;
-  if (capacity >= 1500) base = 3;
-  else if (capacity >= 800) base = 2;
+  if (room.energyCapacityAvailable >= 1500) base = 3;
+  else if (room.energyCapacityAvailable >= 800) base = 2;
   else base = 1;
 
-  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   let bonus = 0;
   if (stored > 500_000) bonus = 3;
   else if (stored > 200_000) bonus = 2;
-  else if (stored > 50_000) bonus = 1;
+  else if (stored > 100_000) bonus = 1;
 
   return base + bonus;
 }
@@ -183,10 +187,11 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     queue.push({
       role: 'hauler',
       pattern: [CARRY, CARRY, MOVE, MOVE],
+      maxRepeats: 8,
       minCount: haulersNeeded(room),
     });
     // Keep 1 harvester as emergency bootstrap in case all miners die
-    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 1 });
+    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], maxRepeats: 4, minCount: 1 });
     queue.push({
       role: 'upgrader',
       body: buildUpgraderBody(room.energyCapacityAvailable),
@@ -200,7 +205,12 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       maxRepeats: 4,
       minCount: buildersNeeded(room),
     });
-    queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
+    queue.push({
+      role: 'repairer',
+      pattern: [WORK, CARRY, MOVE],
+      maxRepeats: 4,
+      minCount: repairersNeeded(room),
+    });
     const mineralMiners = mineralMinersNeeded(room);
     if (mineralMiners > 0) {
       queue.push({
