@@ -19,6 +19,8 @@ describe('runTerminal', () => {
     (globalThis as any).ORDER_BUY = 'buy';
     (Game as any).market = {
       getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
     };
   });
 
@@ -27,7 +29,7 @@ describe('runTerminal', () => {
     const room = mockRoom({
       name: 'W1N1',
       controller: { my: true, level: 6 },
-      terminal: { store: mockTerminalStore({}) },
+      terminal: { store: mockTerminalStore({}), cooldown: 0 },
     });
     (Game as any).rooms = { W1N1: room };
 
@@ -57,15 +59,16 @@ describe('runTerminal', () => {
       name: 'W1N1',
       controller: { my: true, level: 6 },
       terminal: {
-        store: mockTerminalStore({ H: 60000, energy: 10000 }),
+        store: mockTerminalStore({ H: 60000, energy: 100000 }),
+        cooldown: 0,
       },
     });
     (Game as any).rooms = { W1N1: room };
 
     (Game as any).market.getAllOrders = vi.fn(() => [
-      { id: 'order1', price: 0.5, remainingAmount: 1000 },
-      { id: 'order2', price: 0.8, remainingAmount: 500 },
-      { id: 'order3', price: 0.9, remainingAmount: 0 },
+      { id: 'order1', price: 0.5, remainingAmount: 1000, roomName: 'W2N2' },
+      { id: 'order2', price: 0.8, remainingAmount: 500, roomName: 'W3N3' },
+      { id: 'order3', price: 0.9, remainingAmount: 0, roomName: 'W4N4' },
     ]);
 
     runTerminal();
@@ -74,8 +77,9 @@ describe('runTerminal', () => {
       type: 'buy',
       resourceType: 'H',
     });
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('surplus=10000'));
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('bestBuy=0.800'));
+    expect(Game.market.deal).toHaveBeenCalledWith('order2', 500, 'W1N1');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 500 H'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('0.800'));
 
     consoleSpy.mockRestore();
   });
@@ -89,6 +93,7 @@ describe('runTerminal', () => {
       controller: { my: true, level: 6 },
       terminal: {
         store: mockTerminalStore({ O: 75000, energy: 5000 }),
+        cooldown: 0,
       },
     });
     (Game as any).rooms = { W1N1: room };
@@ -97,7 +102,7 @@ describe('runTerminal', () => {
 
     runTerminal();
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no buy orders'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no viable buy orders'));
 
     consoleSpy.mockRestore();
   });
@@ -111,6 +116,7 @@ describe('runTerminal', () => {
       controller: { my: true, level: 6 },
       terminal: {
         store: mockTerminalStore({ energy: 100000 }),
+        cooldown: 0,
       },
     });
     (Game as any).rooms = { W1N1: room };
