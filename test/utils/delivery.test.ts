@@ -26,8 +26,8 @@ describe('deliverToSpawnOrExtension', () => {
   });
 
   it('picks the closest unclaimed extension when another hauler already targets the nearest', () => {
-    const ext1 = mockExtension('ext1', 26, 25, 50); // range 1 from creep
-    const ext2 = mockExtension('ext2', 28, 25, 50); // range 3 from creep
+    const ext1 = mockExtension('ext1', 27, 25, 50); // range 2 from creep
+    const ext2 = mockExtension('ext2', 29, 25, 50); // range 4 from creep
 
     const room = mockRoom({
       find: vi.fn(() => [ext1, ext2]),
@@ -58,8 +58,8 @@ describe('deliverToSpawnOrExtension', () => {
   });
 
   it('falls back to closest when all extensions are claimed', () => {
-    const ext1 = mockExtension('ext1', 26, 25, 50);
-    const ext2 = mockExtension('ext2', 28, 25, 50);
+    const ext1 = mockExtension('ext1', 27, 25, 50);
+    const ext2 = mockExtension('ext2', 29, 25, 50);
 
     const room = mockRoom({
       find: vi.fn(() => [ext1, ext2]),
@@ -93,7 +93,7 @@ describe('deliverToSpawnOrExtension', () => {
   });
 
   it('uses cached target when it still has capacity', () => {
-    const ext1 = mockExtension('ext1', 26, 25, 50);
+    const ext1 = mockExtension('ext1', 27, 25, 50);
 
     Game.getObjectById = vi.fn(() => ext1);
 
@@ -117,7 +117,7 @@ describe('deliverToSpawnOrExtension', () => {
   });
 
   it('ignores non-hauler creeps when building claimed set', () => {
-    const ext1 = mockExtension('ext1', 26, 25, 50);
+    const ext1 = mockExtension('ext1', 27, 25, 50);
 
     const room = mockRoom({
       find: vi.fn(() => [ext1]),
@@ -147,8 +147,8 @@ describe('deliverToSpawnOrExtension', () => {
   });
 
   it('considers remoteHauler targets as claimed', () => {
-    const ext1 = mockExtension('ext1', 26, 25, 50);
-    const ext2 = mockExtension('ext2', 28, 25, 50);
+    const ext1 = mockExtension('ext1', 27, 25, 50);
+    const ext2 = mockExtension('ext2', 29, 25, 50);
 
     const room = mockRoom({
       find: vi.fn(() => [ext1, ext2]),

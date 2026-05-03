@@ -63,7 +63,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` in the registry means forge
 ### Shared utilities for roles
 
 - **`gatherEnergy(creep)`** (`src/utils/sources.ts`) — shared GATHER state logic used by builder and repairer. Withdraws from logistics in miner economy, self-harvests in bootstrap. Returns `true` when store is full. Storage withdrawals are guarded by `STORAGE_ENERGY_FLOOR` (10k) to preserve reserves for spawning.
-- **`deliverToSpawnOrExtension(creep)`** / **`deliverToControllerContainer(creep)`** (`src/utils/delivery.ts`) — shared delivery helpers used by hauler and remoteHauler. Return `true` if a target was found.
+- **`deliverToSpawnOrExtension(creep)`** / **`deliverToControllerContainer(creep)`** (`src/utils/delivery.ts`) — shared delivery helpers used by hauler and remoteHauler. Return `true` if a target was found. `deliverToSpawnOrExtension` opportunistically fills any adjacent (range 1) spawn/extension before pathing, then caches a movement target across ticks. Multiple haulers spread across unclaimed targets to avoid convergence oscillation.
 
 ### Body scaling
 

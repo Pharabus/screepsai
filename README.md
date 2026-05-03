@@ -120,7 +120,7 @@ Each of steps 3–9 is wrapped in `profile(...)` so per-manager CPU cost surface
 
 ## Roles
 
-All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Builder and repairer roles refill via the shared `gatherEnergy()` helper (`src/utils/sources.ts`), which withdraws from logistics infrastructure (containers/storage) in miner economy or self-harvests from the best source in bootstrap economy. Delivery logic shared between hauler and remoteHauler is extracted into `src/utils/delivery.ts`.
+All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Builder and repairer roles refill via the shared `gatherEnergy()` helper (`src/utils/sources.ts`), which withdraws from logistics infrastructure (containers/storage) in miner economy or self-harvests from the best source in bootstrap economy. Delivery logic shared between hauler and remoteHauler is extracted into `src/utils/delivery.ts` — haulers opportunistically fill adjacent spawns/extensions, cache movement targets across ticks, and spread across unclaimed targets to avoid convergence oscillation.
 
 | Role           | Minimum | Body pattern        | Behavior |
 |----------------|---------|---------------------|----------|
