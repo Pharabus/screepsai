@@ -116,7 +116,7 @@ export function upgradersNeeded(room: Room): number {
 
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
-  if (room.storage && stored < 10_000) return 1;
+  if (room.storage && stored < 15_000) return 1;
   if (room.storage && stored < 50_000) return 2;
 
   let base: number;
@@ -287,7 +287,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         queue.push({
           role: 'remoteHauler',
           pattern: [CARRY, CARRY, MOVE, MOVE],
-          maxRepeats: 4,
+          maxRepeats: 8,
           minCount: totalHaulers + 1,
           memory: {
             role: 'remoteHauler' as CreepRoleName,

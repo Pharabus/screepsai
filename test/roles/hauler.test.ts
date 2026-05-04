@@ -491,3 +491,129 @@ describe('hauler urgent responder', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
   });
 });
+
+describe('hauler source container priority', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('picks up from full source container before storage link', () => {
+    const fullContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 1500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        const all = [fullContainer];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(fullContainer, RESOURCE_ENERGY);
+  });
+
+  it('skips source containers below threshold', () => {
+    const lowContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        const all = [lowContainer];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+});
+
+describe('hauler delivery priority', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('delivers to storage before controller container when storage is below floor', () => {
+    const storage = {
+      id: 'stor1',
+      pos: new RoomPosition(16, 29, 'W1N1'),
+      store: mockStore({ energy: 5000 }, 1000000),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: { controllerContainerId: 'cCtrl' },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 800 }),
+      pos: new RoomPosition(16, 28, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+});

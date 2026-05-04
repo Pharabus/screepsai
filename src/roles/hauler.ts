@@ -6,6 +6,7 @@ import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached } from '../utils/tickCache';
 import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
+import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -93,6 +94,20 @@ function pickup(creep: Creep): boolean {
   if (dropped) {
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
       moveTo(creep, dropped, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
+    }
+    return true;
+  }
+
+  // Drain full source containers before they overflow — prioritize over storage link
+  // when containers have significant energy (link network backed up or legacy energy)
+  const fullSourceContainer = findFullSourceContainer(creep.room, mem);
+  if (fullSourceContainer) {
+    creep.memory.targetId = fullSourceContainer.id;
+    if (creep.withdraw(fullSourceContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, fullSourceContainer, {
         priority: PRIORITY_HAULER,
         visualizePathStyle: { stroke: '#ffaa00' },
       });
@@ -285,6 +300,27 @@ function pickupForTerminal(creep: Creep): boolean {
   return false;
 }
 
+const SOURCE_CONTAINER_FULL_THRESHOLD = 1000;
+
+function findFullSourceContainer(
+  room: Room,
+  mem: RoomMemory | undefined,
+): StructureContainer | undefined {
+  const controllerContainerId = mem?.controllerContainerId;
+  const mineralContainerId = mem?.mineralContainerId;
+  const containers = room.find(FIND_STRUCTURES, {
+    filter: (s): s is StructureContainer =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      s.id !== controllerContainerId &&
+      s.id !== mineralContainerId &&
+      s.store.getUsedCapacity(RESOURCE_ENERGY) >= SOURCE_CONTAINER_FULL_THRESHOLD,
+  });
+  if (containers.length === 0) return undefined;
+  return containers.sort(
+    (a, b) => b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),
+  )[0];
+}
+
 function deliver(creep: Creep): void {
   // Non-energy resources: deliver to lab input, terminal, or storage
   if (creep.store.getUsedCapacity() > creep.store.getUsedCapacity(RESOURCE_ENERGY)) {
@@ -309,9 +345,12 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  if (deliverToControllerContainer(creep)) return;
-
+  // When storage is below floor, prioritize filling it over feeding the upgrader
   const storage = creep.room.storage;
+  const storageLow =
+    storage !== undefined && storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR;
+  if (!storageLow && deliverToControllerContainer(creep)) return;
+
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {

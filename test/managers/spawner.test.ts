@@ -319,6 +319,16 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(1);
   });
 
+  it('returns 1 when storage is between builder and upgrader thresholds', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      storage: { store: { getUsedCapacity: () => 12_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
   it('returns 2 when storage is moderate', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
