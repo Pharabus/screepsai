@@ -302,33 +302,114 @@ describe('sources', () => {
       expect(creep.memory.targetId).toBe('stor1');
     });
 
-    it('skips linked source containers', () => {
+    it('withdraws from storage link when storage is below floor', () => {
+      const storageLink = {
+        id: 'sLink1' as Id<StructureLink>,
+        store: { getUsedCapacity: () => 400 },
+      };
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 'sLink1') return storageLink;
+        return undefined;
+      }) as any;
+
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        storage: {
+          id: 'stor1' as Id<StructureStorage>,
+          store: { getUsedCapacity: () => 5000 },
+        },
+      });
+
+      Memory.rooms['W1N1'] = { storageLinkId: 'sLink1' } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        withdraw: vi.fn(() => OK),
+      });
+
+      const result = withdrawFromLogistics(creep);
+
+      expect(result).toBe(true);
+      expect(creep.memory.targetId).toBe('sLink1');
+      expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    });
+
+    it('prefers storage over storage link when storage is above floor', () => {
+      const storage = {
+        id: 'stor1' as Id<StructureStorage>,
+        store: { getUsedCapacity: () => STORAGE_ENERGY_FLOOR + 1 },
+      };
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        storage,
+      });
+
+      Memory.rooms['W1N1'] = { storageLinkId: 'sLink1' } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        withdraw: vi.fn(() => OK),
+      });
+
+      const result = withdrawFromLogistics(creep);
+
+      expect(result).toBe(true);
+      expect(creep.memory.targetId).toBe('stor1');
+    });
+
+    it('skips storage link when it has no energy', () => {
+      const storageLink = {
+        id: 'sLink1' as Id<StructureLink>,
+        store: { getUsedCapacity: () => 0 },
+      };
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 'sLink1') return storageLink;
+        return undefined;
+      }) as any;
+
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        storage: {
+          id: 'stor1' as Id<StructureStorage>,
+          store: { getUsedCapacity: () => 5000 },
+        },
+      });
+
+      Memory.rooms['W1N1'] = { storageLinkId: 'sLink1' } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+      });
+
+      const result = withdrawFromLogistics(creep);
+
+      expect(result).toBe(false);
+    });
+
+    it('withdraws from linked source containers with overflow energy', () => {
       Game.getObjectById = vi.fn(() => undefined) as any;
 
       const linkedContainer = {
         id: 'cLinked' as Id<StructureContainer>,
         structureType: STRUCTURE_CONTAINER,
-        store: { getUsedCapacity: () => 500 },
-      };
-      const unlinkedContainer = {
-        id: 'cUnlinked' as Id<StructureContainer>,
-        structureType: STRUCTURE_CONTAINER,
-        store: { getUsedCapacity: () => 300 },
+        store: { getUsedCapacity: () => 1500 },
       };
 
       const room = mockRoom({
         find: vi.fn((_type: number, opts?: any) => {
-          const all = [linkedContainer, unlinkedContainer];
+          const all = [linkedContainer];
           return opts?.filter ? all.filter(opts.filter) : all;
         }),
         storage: undefined,
       });
 
       Memory.rooms['W1N1'] = {
-        sources: [
-          { id: 's1' as any, x: 10, y: 10, containerId: 'cLinked', linkId: 'link1' },
-          { id: 's2' as any, x: 20, y: 20, containerId: 'cUnlinked' },
-        ],
+        sources: [{ id: 's1' as any, x: 10, y: 10, containerId: 'cLinked', linkId: 'link1' }],
       } as any;
 
       const creep = mockCreep({
@@ -339,7 +420,70 @@ describe('sources', () => {
 
       withdrawFromLogistics(creep);
 
-      expect(creep.memory.targetId).toBe('cUnlinked');
+      expect(creep.memory.targetId).toBe('cLinked');
+    });
+
+    it('picks up dropped energy before checking containers', () => {
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const droppedEnergy = {
+        id: 'd1' as Id<Resource>,
+        resourceType: RESOURCE_ENERGY,
+        amount: 200,
+      };
+
+      const container = {
+        id: 'c1' as Id<StructureContainer>,
+        structureType: STRUCTURE_CONTAINER,
+        store: { getUsedCapacity: () => 500 },
+      };
+
+      const pos = new RoomPosition(25, 25, 'W1N1');
+      pos.findClosestByRange = vi.fn(() => droppedEnergy) as any;
+
+      const room = mockRoom({
+        find: vi.fn((_type: number, opts?: any) => {
+          const all = [container];
+          return opts?.filter ? all.filter(opts.filter) : all;
+        }),
+        storage: undefined,
+      });
+
+      Memory.rooms['W1N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        pos,
+        pickup: vi.fn(() => OK),
+      });
+
+      const result = withdrawFromLogistics(creep);
+
+      expect(result).toBe(true);
+      expect(creep.pickup).toHaveBeenCalledWith(droppedEnergy);
+    });
+
+    it('skips dropped energy below threshold', () => {
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const pos = new RoomPosition(25, 25, 'W1N1');
+      pos.findClosestByRange = vi.fn(() => null) as any;
+
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        storage: undefined,
+      });
+
+      Memory.rooms['W1N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'builder' },
+        room,
+        pos,
+      });
+
+      expect(withdrawFromLogistics(creep)).toBe(false);
     });
 
     it('still withdraws from cached container regardless of floor', () => {

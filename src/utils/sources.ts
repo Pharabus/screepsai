@@ -43,16 +43,35 @@ export function withdrawFromLogistics(creep: Creep): boolean {
     return true;
   }
 
-  // Fall back to source containers (pre-link economy or storage depleted)
-  const linkedSources = new Set(
-    mem?.sources?.filter((s) => s.linkId).map((s) => s.containerId) ?? [],
-  );
+  // Storage link: actively fed by source links, drain it to keep the link network flowing
+  if (mem?.storageLinkId) {
+    const storageLink = Game.getObjectById(mem.storageLinkId);
+    if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      creep.memory.targetId = storageLink.id;
+      if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storageLink, { visualizePathStyle: { stroke: '#ffaa00' } });
+      }
+      return true;
+    }
+  }
+
+  // Pick up dropped energy before it decays
+  const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+    filter: (r: Resource) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+  });
+  if (dropped) {
+    if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, dropped, { visualizePathStyle: { stroke: '#ffaa00' } });
+    }
+    return true;
+  }
+
+  // Fall back to source containers (including linked ones with overflow energy)
   const containers = creep.room
     .find(FIND_STRUCTURES, {
       filter: (s): s is StructureContainer =>
         s.structureType === STRUCTURE_CONTAINER &&
         s.id !== controllerContainerId &&
-        !linkedSources.has(s.id) &&
         s.store.getUsedCapacity(RESOURCE_ENERGY) > 100,
     })
     .sort(

@@ -204,8 +204,8 @@ In miner economy:
 - Static **miners** (WORK+CARRY+MOVE) sit on source containers and harvest continuously. With CARRY parts, they can transfer energy directly to adjacent links.
 - **Haulers** (CARRY + MOVE) empty the storage link (priority), then source containers, delivering to spawn/extensions/towers/controller container/storage.
 - **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently. Count scales with storage surplus.
-- **Builders** and **repairers** gather energy via the shared `gatherEnergy()` helper, which withdraws from logistics infrastructure in miner economy or self-harvests in bootstrap.
-- All three roles (builder, repairer, upgrader) respect `STORAGE_ENERGY_FLOOR` (10k) — they won't withdraw from storage below this level, falling back to self-harvesting to preserve reserves for spawning and hauler redistribution.
+- **Builders** and **repairers** gather energy via the shared `gatherEnergy()` helper, which withdraws from logistics infrastructure in miner economy or self-harvests in bootstrap. `withdrawFromLogistics` priority: storage (above floor) → storage link → dropped energy → any source container with >100 energy → gives up (falls back to self-harvest).
+- All three roles (builder, repairer, upgrader) respect `STORAGE_ENERGY_FLOOR` (10k) — they won't withdraw from storage below this level. When storage is below floor, creeps drain the storage link (unblocking the link network), pick up dropped energy, or withdraw from source containers (including at linked sources where overflow accumulates).
 - One **harvester** is kept as an emergency bootstrap in case all miners die simultaneously.
 
 ### Typical progression
