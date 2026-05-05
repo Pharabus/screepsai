@@ -300,6 +300,40 @@ describe('haulersNeeded', () => {
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(2);
   });
+
+  it('adds extra hauler when mineral container exists', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+        mineralContainerId: 'mcnt1' as any,
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(3);
+  });
+
+  it('adds extra hauler when labs exist', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+        labIds: ['lab1', 'lab2', 'lab3'],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(3);
+  });
+
+  it('only adds one extra hauler even with both minerals and labs', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+        mineralContainerId: 'mcnt1' as any,
+        labIds: ['lab1', 'lab2', 'lab3'],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(3);
+  });
 });
 
 describe('upgradersNeeded', () => {

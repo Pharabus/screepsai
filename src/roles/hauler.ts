@@ -88,6 +88,21 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
+  // Drain storage link first — it's the bottleneck of the link pipeline.
+  // Keeping it empty lets source links transfer, preventing container/drop overflow.
+  if (mem?.storageLinkId) {
+    const storageLink = Game.getObjectById(mem.storageLinkId);
+    if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+      if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storageLink, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+      }
+      return true;
+    }
+  }
+
   const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
@@ -101,8 +116,6 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
-  // Drain full source containers before they overflow — prioritize over storage link
-  // when containers have significant energy (link network backed up or legacy energy)
   const fullSourceContainer = findFullSourceContainer(creep.room, mem);
   if (fullSourceContainer) {
     creep.memory.targetId = fullSourceContainer.id;
@@ -113,19 +126,6 @@ function pickup(creep: Creep): boolean {
       });
     }
     return true;
-  }
-
-  if (mem?.storageLinkId) {
-    const storageLink = Game.getObjectById(mem.storageLinkId);
-    if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-      if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storageLink, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#ffaa00' },
-        });
-      }
-      return true;
-    }
   }
 
   if (creep.memory.targetId) {

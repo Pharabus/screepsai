@@ -102,7 +102,14 @@ export function haulersNeeded(room: Room): number {
 
   // Linked sources need fewer haulers but still require distribution to
   // spawns/extensions/towers; unlinked sources need full hauler complement
-  return Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
+  let count = Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
+
+  // Extra hauler for mineral/lab logistics when infrastructure is present
+  if (mem.mineralContainerId || (mem.labIds && mem.labIds.length > 0)) {
+    count += 1;
+  }
+
+  return count;
 }
 
 /**
