@@ -656,6 +656,7 @@ export function placeRemoteRoads(room: Room): void {
       if (result.incomplete) continue;
 
       for (const step of result.path) {
+        if (step.x === 0 || step.x === 49 || step.y === 0 || step.y === 49) continue;
         const stepRoom = Game.rooms[step.roomName];
         if (!stepRoom) continue;
         const structures = stepRoom.lookForAt(LOOK_STRUCTURES, step.x, step.y);
