@@ -1,5 +1,5 @@
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
-import { deliverToSpawnOrExtension } from '../../src/utils/delivery';
+import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../../src/utils/delivery';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
@@ -175,5 +175,59 @@ describe('deliverToSpawnOrExtension', () => {
     deliverToSpawnOrExtension(creep);
 
     expect(creep.memory.targetId).toBe('ext2');
+  });
+});
+
+describe('deliverToControllerContainer', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('returns false when controller container has less than 200 free capacity', () => {
+    const cc = {
+      id: 'cc1',
+      store: {
+        getFreeCapacity: (r?: string) => (r === RESOURCE_ENERGY ? 150 : 0),
+      },
+      pos: new RoomPosition(30, 30, 'W1N1'),
+    };
+
+    Game.getObjectById = vi.fn(() => cc) as any;
+    (Memory as any).rooms = { W1N1: { controllerContainerId: 'cc1' } };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: { getUsedCapacity: () => 800 },
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    const result = deliverToControllerContainer(creep);
+    expect(result).toBe(false);
+  });
+
+  it('returns true when controller container has 200+ free capacity', () => {
+    const cc = {
+      id: 'cc1',
+      store: {
+        getFreeCapacity: (r?: string) => (r === RESOURCE_ENERGY ? 500 : 0),
+      },
+      pos: new RoomPosition(30, 30, 'W1N1'),
+    };
+
+    Game.getObjectById = vi.fn(() => cc) as any;
+    (Memory as any).rooms = { W1N1: { controllerContainerId: 'cc1' } };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: { getUsedCapacity: () => 800 },
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    const result = deliverToControllerContainer(creep);
+    expect(result).toBe(true);
   });
 });

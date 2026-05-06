@@ -8,6 +8,8 @@ import { cached } from '../utils/tickCache';
 import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 
+const STORAGE_LINK_DRAIN_THRESHOLD = 200;
+
 const states: StateMachineDefinition = {
   PICKUP: {
     onEnter(creep) {
@@ -72,27 +74,114 @@ function getUrgentResponder(room: Room): string | undefined {
   });
 }
 
-function pickup(creep: Creep): boolean {
-  const mem = Memory.rooms[creep.room.name];
+function continueCommittedPickup(creep: Creep): boolean {
+  if (!creep.memory.targetId) return false;
 
-  // Only the hauler nearest to storage responds to urgent structure energy needs;
-  // other haulers continue normal pickup to avoid wasting decaying dropped resources.
-  if (getUrgentResponder(creep.room) === creep.name) {
-    const storage = creep.room.storage!;
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      moveTo(creep, storage, {
+  const target = Game.getObjectById(creep.memory.targetId);
+  if (!target) {
+    delete creep.memory.targetId;
+    return false;
+  }
+
+  // Dropped resource
+  if ('amount' in target) {
+    const drop = target as Resource;
+    if (drop.amount === 0) {
+      delete creep.memory.targetId;
+      return false;
+    }
+    if (creep.pickup(drop) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, drop, {
         priority: PRIORITY_HAULER,
-        visualizePathStyle: { stroke: '#ffaa00' },
+        visualizePathStyle: {
+          stroke: drop.resourceType === RESOURCE_ENERGY ? '#ffaa00' : '#cc66ff',
+        },
       });
     }
     return true;
   }
 
-  // Drain storage link first — it's the bottleneck of the link pipeline.
-  // Keeping it empty lets source links transfer, preventing container/drop overflow.
+  // Structure with a store
+  if ('store' in target) {
+    const structure = target as AnyStoreStructure;
+    if (structure.store.getUsedCapacity() === 0) {
+      delete creep.memory.targetId;
+      return false;
+    }
+    const resource = pickWithdrawResource(structure);
+    if (!resource) {
+      delete creep.memory.targetId;
+      return false;
+    }
+    if (creep.withdraw(structure, resource) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, structure, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: resource === RESOURCE_ENERGY ? '#ffaa00' : '#cc66ff' },
+      });
+    }
+    return true;
+  }
+
+  delete creep.memory.targetId;
+  return false;
+}
+
+function pickWithdrawResource(structure: AnyStoreStructure): ResourceConstant | undefined {
+  const isMineral =
+    structure.structureType === STRUCTURE_CONTAINER &&
+    Memory.rooms[structure.room?.name ?? '']?.mineralContainerId === structure.id;
+
+  if (isMineral) {
+    const mineralTypes = Object.keys(structure.store) as ResourceConstant[];
+    return mineralTypes.find(
+      (r) => r !== RESOURCE_ENERGY && structure.store.getUsedCapacity(r) > 0,
+    );
+  }
+
+  if (structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    return RESOURCE_ENERGY;
+  }
+
+  const allTypes = Object.keys(structure.store) as ResourceConstant[];
+  return allTypes.find((r) => (structure.store.getUsedCapacity(r) ?? 0) > 0);
+}
+
+function pickup(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+
+  // Urgent responder: only preempts if creep is not close to finishing current task
+  if (getUrgentResponder(creep.room) === creep.name) {
+    const hasNearbyCommitment =
+      creep.memory.targetId &&
+      Game.getObjectById(creep.memory.targetId) &&
+      creep.pos.getRangeTo(Game.getObjectById(creep.memory.targetId)!) <= 3;
+
+    if (!hasNearbyCommitment) {
+      const storage = creep.room.storage!;
+      creep.memory.targetId = storage.id;
+      if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storage, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+      }
+      return true;
+    }
+  }
+
+  // Continue committed pickup task if still valid
+  if (continueCommittedPickup(creep)) return true;
+
+  // --- Priority chain for selecting a NEW pickup target ---
+
+  // Drain storage link — bottleneck of the link pipeline
   if (mem?.storageLinkId) {
     const storageLink = Game.getObjectById(mem.storageLinkId);
-    if (storageLink && storageLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    if (
+      storageLink &&
+      storageLink.store.getUsedCapacity(RESOURCE_ENERGY) >= STORAGE_LINK_DRAIN_THRESHOLD
+    ) {
+      creep.memory.targetId = storageLink.id;
       if (creep.withdraw(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storageLink, {
           priority: PRIORITY_HAULER,
@@ -103,10 +192,12 @@ function pickup(creep: Creep): boolean {
     }
   }
 
+  // Dropped energy — decay-sensitive
   const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
   if (dropped) {
+    creep.memory.targetId = dropped.id;
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
       moveTo(creep, dropped, {
         priority: PRIORITY_HAULER,
@@ -116,6 +207,22 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
+  // Dropped minerals (non-energy) — decay-sensitive
+  const droppedMineral = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+    filter: (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
+  });
+  if (droppedMineral) {
+    creep.memory.targetId = droppedMineral.id;
+    if (creep.pickup(droppedMineral) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, droppedMineral, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#cc66ff' },
+      });
+    }
+    return true;
+  }
+
+  // Full source containers (>= 1000 energy)
   const fullSourceContainer = findFullSourceContainer(creep.room, mem);
   if (fullSourceContainer) {
     creep.memory.targetId = fullSourceContainer.id;
@@ -128,31 +235,42 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
-  if (creep.memory.targetId) {
-    const cachedContainer = Game.getObjectById(creep.memory.targetId as Id<StructureContainer>);
+  // Mineral container — elevated above partially-full source containers
+  if (mem?.mineralContainerId) {
+    const mineralContainer = Game.getObjectById(mem.mineralContainerId);
     if (
-      cachedContainer &&
-      cachedContainer.structureType === STRUCTURE_CONTAINER &&
-      cachedContainer.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      mineralContainer &&
+      mineralContainer.store.getUsedCapacity() >
+        mineralContainer.store.getUsedCapacity(RESOURCE_ENERGY)
     ) {
-      if (creep.withdraw(cachedContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, cachedContainer, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#ffaa00' },
-        });
+      const mineralTypes = Object.keys(mineralContainer.store) as ResourceConstant[];
+      const mineralType = mineralTypes.find(
+        (r) => r !== RESOURCE_ENERGY && mineralContainer.store.getUsedCapacity(r) > 0,
+      );
+      if (mineralType) {
+        creep.memory.targetId = mineralContainer.id;
+        if (creep.withdraw(mineralContainer, mineralType) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, mineralContainer, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#cc66ff' },
+          });
+        }
+        return true;
       }
-      return true;
     }
-    delete creep.memory.targetId;
   }
 
+  // Any source container with energy
   const containers = creep.room.find(FIND_STRUCTURES, {
     filter: (s): s is StructureContainer =>
       s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
   });
 
   const controllerContainerId = mem?.controllerContainerId;
-  const sourceContainers = containers.filter((c) => c.id !== controllerContainerId);
+  const mineralContainerId = mem?.mineralContainerId;
+  const sourceContainers = containers.filter(
+    (c) => c.id !== controllerContainerId && c.id !== mineralContainerId,
+  );
   const target = sourceContainers.sort(
     (a, b) => b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),
   )[0];
@@ -166,29 +284,6 @@ function pickup(creep: Creep): boolean {
       });
     }
     return true;
-  }
-
-  if (mem?.mineralContainerId) {
-    const mineralContainer = Game.getObjectById(mem.mineralContainerId);
-    if (
-      mineralContainer &&
-      mineralContainer.store.getUsedCapacity() >
-        mineralContainer.store.getUsedCapacity(RESOURCE_ENERGY)
-    ) {
-      const mineralTypes = Object.keys(mineralContainer.store) as ResourceConstant[];
-      const mineralType = mineralTypes.find(
-        (r) => r !== RESOURCE_ENERGY && mineralContainer.store.getUsedCapacity(r) > 0,
-      );
-      if (mineralType) {
-        if (creep.withdraw(mineralContainer, mineralType) === ERR_NOT_IN_RANGE) {
-          moveTo(creep, mineralContainer, {
-            priority: PRIORITY_HAULER,
-            visualizePathStyle: { stroke: '#cc66ff' },
-          });
-        }
-        return true;
-      }
-    }
   }
 
   // Lab flush: withdraw stale minerals from input labs before loading new ones
@@ -221,6 +316,7 @@ function pickupLabFlush(creep: Creep, mem: RoomMemory | undefined): boolean {
     const mineralType = lab.mineralType;
     if (!mineralType || mineralType === expectedMineral) continue;
     if (lab.store.getUsedCapacity(mineralType) === 0) continue;
+    creep.memory.targetId = lab.id as Id<StructureLab>;
     if (creep.withdraw(lab, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, lab, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#ff6600' } });
     }
@@ -240,6 +336,7 @@ function pickupLabInput(creep: Creep, mem: RoomMemory | undefined): boolean {
 
   if (lab1 && (lab1.store.getFreeCapacity(input1) ?? 0) >= LAB_REACTION_AMOUNT) {
     if (storage.store.getUsedCapacity(input1) > 0) {
+      creep.memory.targetId = storage.id;
       if (creep.withdraw(storage, input1) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
           priority: PRIORITY_HAULER,
@@ -251,6 +348,7 @@ function pickupLabInput(creep: Creep, mem: RoomMemory | undefined): boolean {
   }
   if (lab2 && (lab2.store.getFreeCapacity(input2) ?? 0) >= LAB_REACTION_AMOUNT) {
     if (storage.store.getUsedCapacity(input2) > 0) {
+      creep.memory.targetId = storage.id;
       if (creep.withdraw(storage, input2) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
           priority: PRIORITY_HAULER,
@@ -272,6 +370,7 @@ function pickupLabOutput(creep: Creep, mem: RoomMemory | undefined): boolean {
     if (!lab) continue;
     const mineralType = lab.mineralType;
     if (!mineralType || lab.store.getUsedCapacity(mineralType) === 0) continue;
+    creep.memory.targetId = lab.id as Id<StructureLab>;
     if (creep.withdraw(lab, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, lab, { priority: PRIORITY_HAULER, visualizePathStyle: { stroke: '#00ff88' } });
     }
@@ -288,6 +387,7 @@ function pickupForTerminal(creep: Creep): boolean {
   for (const resource of Object.keys(storage.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
     if (storage.store.getUsedCapacity(resource) > MINERAL_STORAGE_FLOOR) {
+      creep.memory.targetId = storage.id;
       if (creep.withdraw(storage, resource) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
           priority: PRIORITY_HAULER,

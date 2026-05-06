@@ -631,6 +631,342 @@ describe('hauler pickup priority', () => {
 
     expect(creep.pickup).toHaveBeenCalledWith(drop);
   });
+
+  it('ignores storage link below drain threshold', () => {
+    const fullContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 1500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 100 }, 800),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        const all = [fullContainer];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(creep.withdraw).toHaveBeenCalledWith(fullContainer, RESOURCE_ENERGY);
+  });
+
+  it('picks up dropped minerals', () => {
+    const mineralDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: 'H',
+      amount: 100,
+      pos: new RoomPosition(10, 10, 'W1N1'),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn(() => null) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    // First call returns null (no energy drops), second returns mineralDrop
+    creep.pos.findClosestByRange = vi.fn((_type: number, opts?: any) => {
+      if (opts?.filter) {
+        const drops = [mineralDrop];
+        const filtered = drops.filter(opts.filter);
+        return filtered[0] ?? null;
+      }
+      return null;
+    }) as any;
+
+    hauler.run(creep);
+
+    expect(creep.pickup).toHaveBeenCalledWith(mineralDrop);
+  });
+
+  it('picks mineral container before partially-full source containers', () => {
+    const lowSourceContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const mineralContainer = {
+      id: 'cMin' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ H: 200 }, 2000),
+      pos: new RoomPosition(30, 30, 'W1N1'),
+      room: { name: 'W1N1' },
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        const all = [lowSourceContainer, mineralContainer];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'cMin') return mineralContainer;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { mineralContainerId: 'cMin' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn(() => null) as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(mineralContainer, 'H');
+  });
+});
+
+describe('hauler task commitment', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('continues committed pickup instead of re-evaluating priorities', () => {
+    const mineralContainer = {
+      id: 'cMin' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ H: 200 }, 2000),
+      room: { name: 'W1N1' },
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'cMin') return mineralContainer;
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = {
+      W1N1: { storageLinkId: 'sLink', mineralContainerId: 'cMin' },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'cMin' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Should continue to mineral container, NOT switch to storage link
+    expect(creep.withdraw).toHaveBeenCalledWith(mineralContainer, 'H');
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('clears commitment when target is empty', () => {
+    const emptyContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({}, 2000),
+      room: { name: 'W1N1' },
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'cSrc') return emptyContainer;
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'cSrc' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Target was empty, should fall through to storage link
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('urgent responder preempts commitment when creep is far from target', () => {
+    const spawn = {
+      structureType: STRUCTURE_SPAWN,
+      store: { getFreeCapacity: () => 100 },
+    };
+    const container = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 500 }, 2000),
+      pos: new RoomPosition(40, 40, 'W1N1'),
+      room: { name: 'W1N1' },
+    };
+    const storage = {
+      id: 'stor1' as Id<StructureStorage>,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [spawn]),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'cSrc') return container;
+      return null;
+    }) as any;
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'cSrc' },
+      store: mockStore({}),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    // Should preempt — creep is range 1 from storage but range ~20 from container
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('urgent responder does NOT preempt when creep is close to committed target', () => {
+    const spawn = {
+      structureType: STRUCTURE_SPAWN,
+      store: { getFreeCapacity: () => 100 },
+    };
+    const container = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 500 }, 2000),
+      pos: new RoomPosition(27, 25, 'W1N1'),
+      room: { name: 'W1N1' },
+    };
+    const storage = {
+      id: 'stor1' as Id<StructureStorage>,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [spawn]),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'cSrc') return container;
+      return null;
+    }) as any;
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'cSrc' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    // Should NOT preempt — creep is range 2 from committed target
+    expect(creep.withdraw).toHaveBeenCalledWith(container, RESOURCE_ENERGY);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('continues committed pickup for dropped resources', () => {
+    const drop = {
+      id: 'drop1' as Id<Resource>,
+      amount: 75,
+      resourceType: RESOURCE_ENERGY,
+      pos: new RoomPosition(10, 10, 'W1N1'),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'drop1') return drop;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'drop1' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.pickup).toHaveBeenCalledWith(drop);
+  });
 });
 
 describe('hauler delivery priority', () => {

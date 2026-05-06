@@ -18,6 +18,7 @@ interface CreepMemory {
   targetId?: Id<
     | Source
     | Mineral
+    | Resource
     | StructureContainer
     | StructureStorage
     | StructureController
@@ -25,6 +26,7 @@ interface CreepMemory {
     | StructureExtension
     | StructureTower
     | StructureLink
+    | StructureLab
   >;
   /** FSM state name */
   state?: string;

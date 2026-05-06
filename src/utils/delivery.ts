@@ -62,7 +62,9 @@ export function deliverToControllerContainer(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.controllerContainerId) return false;
   const cc = Game.getObjectById(mem.controllerContainerId);
-  if (!cc || cc.store.getFreeCapacity(RESOURCE_ENERGY) <= 0) return false;
+  const CONTROLLER_CONTAINER_MIN_FREE = 200;
+  if (!cc || cc.store.getFreeCapacity(RESOURCE_ENERGY) < CONTROLLER_CONTAINER_MIN_FREE)
+    return false;
   if (creep.transfer(cc, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
     moveTo(creep, cc, {
       priority: PRIORITY_HAULER,
