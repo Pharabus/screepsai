@@ -107,8 +107,8 @@ export function haulersNeeded(room: Room): number {
 
 /**
  * Upgrader count. In miner economy, scale to storage energy reserves.
- * When storage is low, run fewer upgraders to let the economy build surplus.
- * In bootstrap, keep 2 minimum.
+ * Deliberately conservative below 100k to let the economy build surplus
+ * before adding upgrade drain. In bootstrap, keep 2 minimum.
  */
 export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
@@ -116,20 +116,12 @@ export function upgradersNeeded(room: Room): number {
 
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
-  if (room.storage && stored < 15_000) return 1;
-  if (room.storage && stored < 50_000) return 2;
+  if (stored < 50_000) return 1;
+  if (stored < 100_000) return 2;
 
-  let base: number;
-  if (room.energyCapacityAvailable >= 1500) base = 3;
-  else if (room.energyCapacityAvailable >= 800) base = 2;
-  else base = 1;
-
-  let bonus = 0;
-  if (stored > 500_000) bonus = 3;
-  else if (stored > 200_000) bonus = 2;
-  else if (stored > 100_000) bonus = 1;
-
-  return base + bonus;
+  if (stored > 500_000) return 5;
+  if (stored > 200_000) return 4;
+  return 3;
 }
 
 /**

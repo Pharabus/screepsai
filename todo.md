@@ -167,6 +167,15 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 - [ ] **Improve spawn site selection for new rooms** — When claiming new rooms, select a spawn position that has enough open terrain in all directions for the extension diamond + road corridors. Current `findOpenPosition` doesn't account for the full stamp footprint. Evaluate candidate positions by checking that the stamp's cross corridors (dx=0, dy=0) are walkable and that at least ~80% of stamp cells are buildable. Avoids the W43N58 situation where walls compress the layout into a congested corner.
 
+### Economy rebalancing (Tier 2)
+
+Energy starvation analysis (May 2026) surfaced structural issues that need a second pass once Tier 1 changes stabilise (monitor for ~5000 ticks after deploy):
+
+- [ ] **Remote miner WORK cap for reserved sources** — `body.ts` caps remote miners at 5 WORK (10 e/t). A reserved source has 3000 capacity requiring 10 WORK for full saturation. Either raise cap to 10 gated on `scoutedReservation === 'Pharabus'`, or spawn 2 miners per remote source in reserved rooms.
+- [ ] **Distance-aware remote hauler count** — `spawner.ts:285` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2.
+- [ ] **Stop spawning idle builders/repairers** — `buildersNeeded` returns 1 even with zero construction sites (controller-upgrade fallback). `repairersNeeded` always returns at least 1. Return 0 when no sites exist and all structures are healthy — these roles become hidden upgraders that consume spawn slots without accounting for the extra controller drain.
+- [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
+
 ### Multi-room expansion (claiming & reservation)
 
 Builds on existing remote mining infrastructure (scout, remotePlanner, remote miners/haulers).

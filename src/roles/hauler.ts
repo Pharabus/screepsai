@@ -6,7 +6,6 @@ import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached } from '../utils/tickCache';
 import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
-import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 
@@ -445,11 +444,9 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // When storage is below floor, prioritize filling it over feeding the upgrader
+  if (deliverToControllerContainer(creep)) return;
+
   const storage = creep.room.storage;
-  const storageLow =
-    storage !== undefined && storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR;
-  if (!storageLow && deliverToControllerContainer(creep)) return;
 
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {

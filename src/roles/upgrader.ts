@@ -11,6 +11,19 @@ const states: StateMachineDefinition = {
 
       const mem = Memory.rooms[creep.room.name];
       if (mem?.minerEconomy) {
+        // Controller link: highest-throughput source, avoids hauler middleman
+        if (mem.controllerLinkId) {
+          const controllerLink = Game.getObjectById(mem.controllerLinkId);
+          if (controllerLink && controllerLink.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+            if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+              moveTo(creep, controllerLink, {
+                priority: PRIORITY_WORKER,
+                visualizePathStyle: { stroke: '#ffaa00' },
+              });
+            }
+            return undefined;
+          }
+        }
         if (mem.controllerContainerId) {
           const container = Game.getObjectById(mem.controllerContainerId);
           if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
