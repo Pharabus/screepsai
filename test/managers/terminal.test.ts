@@ -16,7 +16,6 @@ function mockTerminalStore(resources: Record<string, number>): any {
 describe('runTerminal', () => {
   beforeEach(() => {
     resetGameGlobals();
-    (globalThis as any).ORDER_BUY = 'buy';
     (Game as any).market = {
       getAllOrders: vi.fn(() => []),
       calcTransactionCost: vi.fn(() => 100),
@@ -127,5 +126,170 @@ describe('runTerminal', () => {
     expect(consoleSpy).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
+  });
+});
+
+describe('runTerminal — lab buying', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+  });
+
+  function makeTerminalStore(resources: Record<string, number>): any {
+    const s = mockTerminalStore(resources);
+    // Ensure getFreeCapacity is present for terminal checks
+    s.getFreeCapacity = vi.fn(() => 300000);
+    return s;
+  }
+
+  it('buys a missing lab input when labs are configured and energy is sufficient', () => {
+    (Game as any).time = 500; // BUY_INTERVAL tick
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 200000 }),
+        cooldown: 0,
+      },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => (r === 'Z' ? 5000 : 0)),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // Labs configured with active Z+H→ZH reaction, but no H available
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 0.1, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('sell1', expect.any(Number), 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('does not buy when terminal energy is below minimum', () => {
+    (Game as any).time = 500;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 10000 }), // below MIN_BUY_ENERGY
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('skips buying when we already have enough of the mineral', () => {
+    (Game as any).time = 500;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 200000, H: 4000 }), // H >= BUY_BATCH_SIZE (3000)
+        cooldown: 0,
+      },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => (r === 'H' ? 0 : 0)),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    runTerminal();
+
+    // H is already above BUY_BATCH_SIZE so no buy should be placed
+    const buyCalls = (Game.market.deal as any).mock.calls;
+    expect(buyCalls).toHaveLength(0);
+    consoleSpy.mockRestore();
+  });
+
+  it('does not buy when no labs are configured', () => {
+    (Game as any).time = 500;
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 200000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} }; // no labIds
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+  });
+
+  it('does not run buying logic on non-BUY_INTERVAL ticks', () => {
+    (Game as any).time = 100; // sell tick, not buy tick
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 200000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    runTerminal();
+
+    // Only sell-side orders should be queried (for surplus minerals), not buy orders
+    const allOrdersCalls = (Game.market.getAllOrders as any).mock.calls;
+    const buyCalls = allOrdersCalls.filter((c: any) => c[0]?.type === ORDER_SELL);
+    expect(buyCalls).toHaveLength(0);
   });
 });

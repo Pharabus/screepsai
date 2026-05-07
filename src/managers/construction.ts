@@ -1,3 +1,5 @@
+import { EXTENSION_STAMP, LAB_STAMP } from '../utils/layoutPlanner';
+
 // Max extensions per RCL level (from Screeps docs)
 const MAX_EXTENSIONS: Record<number, number> = {
   0: 0,
@@ -35,22 +37,6 @@ const MAX_LABS: Record<number, number> = {
   7: 6,
   8: 10,
 };
-
-// Lab stamp: [dx, dy] offsets from anchor (storage).
-// Positions 0-1 are designated input labs; 2-9 are output labs.
-// All output positions are within Chebyshev range 2 of both input positions.
-const LAB_STAMP: [number, number][] = [
-  [0, 0], // input 1
-  [1, 1], // input 2
-  [0, 1], // output (RCL 6: 3 labs)
-  [1, 0], // output (RCL 7: +3)
-  [2, 1],
-  [1, 2],
-  [2, 0], // output (RCL 8: +4)
-  [0, 2],
-  [2, 2],
-  [-1, 1],
-];
 
 function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
   const built = room.find(FIND_MY_STRUCTURES, {
@@ -91,110 +77,46 @@ function findOpenPosition(
   return undefined;
 }
 
-// Compact extension stamp: [dx, dy] offsets from spawn, ordered by distance.
-// Leaves a cross-shaped road corridor (dx=0 and dy=0 rows) through the center.
-// Layout fills four quadrants in a checkerboard, closest positions first.
-const EXTENSION_STAMP: [number, number][] = [
-  // Quadrant fills, ring 1 (distance ~2): RCL 2 (5 extensions)
-  [-1, -2],
-  [1, -2],
-  [-2, -1],
-  [2, -1],
-  [-2, 1],
-  // Ring 2 (distance ~2-3): RCL 3 (10 total)
-  [2, 1],
-  [-1, 2],
-  [1, 2],
-  [-2, -2],
-  [2, -2],
-  // Ring 3 (distance ~3): RCL 4 (20 total)
-  [-2, 2],
-  [2, 2],
-  [-1, -3],
-  [1, -3],
-  [-3, -1],
-  [3, -1],
-  [-3, 1],
-  [3, 1],
-  [-1, 3],
-  [1, 3],
-  // Ring 4 (distance ~3-4): RCL 5 (30 total)
-  [-3, -2],
-  [3, -2],
-  [-3, 2],
-  [3, 2],
-  [-2, -3],
-  [2, -3],
-  [-2, 3],
-  [2, 3],
-  [-3, -3],
-  [3, -3],
-  // Ring 5 (distance ~4): RCL 6 (40 total)
-  [-3, 3],
-  [3, 3],
-  [-1, -4],
-  [1, -4],
-  [-4, -1],
-  [4, -1],
-  [-4, 1],
-  [4, 1],
-  [-1, 4],
-  [1, 4],
-  // Ring 6 (distance ~4-5): RCL 7 (50 total)
-  [-4, -2],
-  [4, -2],
-  [-4, 2],
-  [4, 2],
-  [-2, -4],
-  [2, -4],
-  [-2, 4],
-  [2, 4],
-  [-4, -3],
-  [4, -3],
-  // Ring 7 (distance ~5): RCL 8 (60 total)
-  [-4, 3],
-  [4, 3],
-  [-3, -4],
-  [3, -4],
-  [-3, 4],
-  [3, 4],
-  [-4, -4],
-  [4, -4],
-  [-4, 4],
-  [4, 4],
-];
-
 export function placeExtensions(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_EXTENSIONS[rcl] ?? 0;
   const current = countStructuresAndSites(room, STRUCTURE_EXTENSION);
   if (current >= max) return;
 
-  const spawns = room.find(FIND_MY_SPAWNS);
-  const anchor = spawns[0];
-  if (!anchor) return;
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
 
+  if (plan) {
+    for (const { x, y } of plan.extensionPositions) {
+      const pos = new RoomPosition(x, y, room.name);
+      const blocked =
+        pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      if (!blocked) {
+        room.createConstructionSite(pos, STRUCTURE_EXTENSION);
+        return;
+      }
+    }
+    return;
+  }
+
+  // Fallback: stamp relative to spawn (no layout plan yet)
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
   const terrain = room.getTerrain();
   for (const [dx, dy] of EXTENSION_STAMP) {
-    const x = anchor.pos.x + dx;
-    const y = anchor.pos.y + dy;
+    const x = spawn.pos.x + dx;
+    const y = spawn.pos.y + dy;
     if (x < 2 || x > 47 || y < 2 || y > 47) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-
     const pos = new RoomPosition(x, y, room.name);
     const blocked =
       pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
     if (blocked) continue;
-
     room.createConstructionSite(pos, STRUCTURE_EXTENSION);
     return;
   }
-
-  // Fallback if all stamp positions are terrain-blocked
-  const pos = findOpenPosition(room, anchor.pos);
-  if (pos) {
-    room.createConstructionSite(pos, STRUCTURE_EXTENSION);
-  }
+  const pos = findOpenPosition(room, spawn.pos);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_EXTENSION);
 }
 
 export function placeTowers(room: Room): void {
@@ -203,14 +125,27 @@ export function placeTowers(room: Room): void {
   const current = countStructuresAndSites(room, STRUCTURE_TOWER);
   if (current >= max) return;
 
-  const spawns = room.find(FIND_MY_SPAWNS);
-  const anchor = spawns[0];
-  if (!anchor) return;
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
 
-  const pos = findOpenPosition(room, anchor.pos, 3, 6);
-  if (pos) {
-    room.createConstructionSite(pos, STRUCTURE_TOWER);
+  if (plan) {
+    for (const { x, y } of plan.towerPositions) {
+      const pos = new RoomPosition(x, y, room.name);
+      const blocked =
+        pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      if (!blocked) {
+        room.createConstructionSite(pos, STRUCTURE_TOWER);
+        return;
+      }
+    }
+    return;
   }
+
+  // Fallback: first open position near spawn
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
+  const pos = findOpenPosition(room, spawn.pos, 3, 6);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_TOWER);
 }
 
 export function placeSourceContainers(room: Room): void {
@@ -277,22 +212,30 @@ export function placeControllerContainer(room: Room): void {
 export function placeStorage(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 4) return;
-
-  // Only one storage per room allowed by the game
   if (room.storage) return;
+
   const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
     filter: (s) => s.structureType === STRUCTURE_STORAGE,
   });
   if (sites.length > 0) return;
 
-  const spawns = room.find(FIND_MY_SPAWNS);
-  const anchor = spawns[0];
-  if (!anchor) return;
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
 
-  const pos = findOpenPosition(room, anchor.pos, 2, 4);
-  if (pos) {
-    room.createConstructionSite(pos, STRUCTURE_STORAGE);
+  if (plan) {
+    const { x, y } = plan.storagePos;
+    const pos = new RoomPosition(x, y, room.name);
+    const blocked =
+      pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    if (!blocked) room.createConstructionSite(pos, STRUCTURE_STORAGE);
+    return;
   }
+
+  // Fallback
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
+  const pos = findOpenPosition(room, spawn.pos, 2, 4);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_STORAGE);
 }
 
 export function placeRoads(room: Room): void {
@@ -355,10 +298,20 @@ export function placeTerminal(room: Room): void {
   if (sites.length > 0) return;
   if (!room.storage) return;
 
-  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
-  if (pos) {
-    room.createConstructionSite(pos, STRUCTURE_TERMINAL);
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
+
+  if (plan) {
+    const { x, y } = plan.terminalPos;
+    const pos = new RoomPosition(x, y, room.name);
+    const blocked =
+      pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    if (!blocked) room.createConstructionSite(pos, STRUCTURE_TERMINAL);
+    return;
   }
+
+  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_TERMINAL);
 }
 
 export function placeExtractor(room: Room): void {
@@ -508,24 +461,35 @@ export function placeLabs(room: Room): void {
   if (current >= max) return;
   if (!room.storage) return;
 
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
+
+  if (plan) {
+    for (const { x, y } of plan.labPositions) {
+      const pos = new RoomPosition(x, y, room.name);
+      const blocked =
+        pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      if (!blocked) {
+        room.createConstructionSite(pos, STRUCTURE_LAB);
+        return;
+      }
+    }
+    return;
+  }
+
+  // Fallback: stamp relative to storage
   const terrain = room.getTerrain();
-  const anchor = room.storage.pos;
-
-  // Offset the stamp so labs sit adjacent to storage rather than on top of it
-  const ox = anchor.x + 2;
-  const oy = anchor.y + 2;
-
+  const ox = room.storage.pos.x + 2;
+  const oy = room.storage.pos.y + 2;
   for (const [dx, dy] of LAB_STAMP) {
     const x = ox + dx;
     const y = oy + dy;
     if (x < 2 || x > 47 || y < 2 || y > 47) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-
     const pos = new RoomPosition(x, y, room.name);
     const blocked =
       pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
     if (blocked) continue;
-
     room.createConstructionSite(pos, STRUCTURE_LAB);
     return;
   }

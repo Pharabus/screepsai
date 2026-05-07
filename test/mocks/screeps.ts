@@ -48,15 +48,57 @@
 (globalThis as any).LAB_REACTION_AMOUNT = 5;
 (globalThis as any).LAB_COOLDOWN = 10;
 
-// Reactions (subset for testing)
+// Reactions (tier 1-3 subset for testing)
 (globalThis as any).REACTIONS = {
-  H: { O: 'OH', L: 'LH', K: 'KH', U: 'UH', Z: 'ZH', G: 'GH' },
-  O: { H: 'OH', L: 'LO', K: 'KO', U: 'UO', Z: 'ZO', G: 'GO' },
+  // Tier 1: base mineral pairs
+  H: {
+    O: 'OH',
+    L: 'LH',
+    K: 'KH',
+    U: 'UH',
+    Z: 'ZH',
+    G: 'GH',
+    // Tier 3: tier2 + H → tier3 boost
+    ZHO2: 'XZHO2',
+    LHO2: 'XLHO2',
+    GHO2: 'XGHO2',
+    KHO2: 'XKHO2',
+    UHO2: 'XUHO2',
+  },
+  O: {
+    H: 'OH',
+    L: 'LO',
+    K: 'KO',
+    U: 'UO',
+    Z: 'ZO',
+    G: 'GO',
+    // Tier 2: compound + O → tier2
+    ZH: 'ZHO2',
+    LH: 'LHO2',
+    GH: 'GHO2',
+    KH: 'KHO2',
+    UH: 'UHO2',
+    // Tier 3: tier2 + O (some)
+    GH2O: 'GHO2',
+  },
   Z: { K: 'ZK', H: 'ZH', O: 'ZO' },
-  L: { H: 'LH', O: 'LO' },
+  L: { H: 'LH', O: 'LO', U: 'UL' },
   K: { H: 'KH', O: 'KO', Z: 'ZK' },
   U: { H: 'UH', O: 'UO', L: 'UL' },
   G: { H: 'GH', O: 'GO' },
+  // Tier 2 compounds as keys (react with H or O to produce tier3)
+  ZH: { O: 'ZHO2' },
+  LH: { O: 'LHO2' },
+  GH: { O: 'GHO2' },
+  KH: { O: 'KHO2' },
+  UH: { O: 'UHO2' },
+  OH: { ZH: 'ZH2O', LH: 'LH2O', GH: 'GH2O', KH: 'KH2O', UH: 'UH2O' },
+  // Tier 2 hydrides (compound + OH)
+  ZH2O: { O: 'ZHO2' },
+  LH2O: { O: 'LHO2' },
+  GH2O: { O: 'GHO2' },
+  KH2O: { O: 'KHO2' },
+  UH2O: { O: 'UHO2' },
 };
 
 // Return codes
@@ -65,6 +107,10 @@
 (globalThis as any).ERR_NOT_ENOUGH_ENERGY = -6;
 (globalThis as any).ERR_NO_PATH = -2;
 (globalThis as any).ERR_INVALID_ARGS = -10;
+
+// Market order types
+(globalThis as any).ORDER_BUY = 'buy';
+(globalThis as any).ORDER_SELL = 'sell';
 
 // Terrain
 (globalThis as any).TERRAIN_MASK_WALL = 1;
