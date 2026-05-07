@@ -301,7 +301,7 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(2);
   });
 
-  it('adds extra hauler when mineral container exists', () => {
+  it('does not add extra hauler for mineral container (task commitment handles it)', () => {
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
@@ -309,10 +309,10 @@ describe('haulersNeeded', () => {
       },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
-    expect(haulersNeeded(room)).toBe(3);
+    expect(haulersNeeded(room)).toBe(2);
   });
 
-  it('adds extra hauler when labs exist', () => {
+  it('does not add extra hauler for labs (task commitment handles it)', () => {
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
@@ -320,10 +320,10 @@ describe('haulersNeeded', () => {
       },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
-    expect(haulersNeeded(room)).toBe(3);
+    expect(haulersNeeded(room)).toBe(2);
   });
 
-  it('only adds one extra hauler even with both minerals and labs', () => {
+  it('returns 2 with both mineral container and labs', () => {
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
@@ -332,7 +332,7 @@ describe('haulersNeeded', () => {
       },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
-    expect(haulersNeeded(room)).toBe(3);
+    expect(haulersNeeded(room)).toBe(2);
   });
 });
 

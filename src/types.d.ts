@@ -74,6 +74,14 @@ interface RoomMemory {
     output: ResourceConstant;
   };
   labFlushing?: boolean;
+  // Pre-computed base layout (src/utils/layoutPlanner.ts)
+  layoutPlan?: {
+    storagePos: { x: number; y: number };
+    terminalPos: { x: number; y: number };
+    towerPositions: { x: number; y: number }[];
+    labPositions: { x: number; y: number }[];
+    extensionPositions: { x: number; y: number }[];
+  };
   // Remote mining
   remoteRooms?: string[];
   // Scout data (populated by scouts visiting unowned rooms)

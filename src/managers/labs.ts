@@ -1,27 +1,51 @@
+import {
+  buildReactionChain,
+  chainMissingInputs,
+  findNextChainStep,
+  REACTION_GOALS,
+} from '../utils/reactions';
+import type { ReactionStep } from '../utils/reactions';
+
 const REACTION_CHECK_INTERVAL = 500;
 const MIN_INPUT_AMOUNT = 100;
 
-function selectReaction(
-  room: Room,
-): { input1: ResourceConstant; input2: ResourceConstant; output: ResourceConstant } | undefined {
-  const storage = room.storage;
-  if (!storage) return undefined;
+function buildAvailableMap(room: Room): Map<ResourceConstant, number> {
+  const available = new Map<ResourceConstant, number>();
+  const add = (resource: ResourceConstant, amount: number) => {
+    available.set(resource, (available.get(resource) ?? 0) + amount);
+  };
 
-  const available: Partial<Record<ResourceConstant, number>> = {};
-  for (const [resource, amount] of Object.entries(storage.store) as [ResourceConstant, number][]) {
-    if (resource === RESOURCE_ENERGY) continue;
-    available[resource] = (available[resource] ?? 0) + amount;
-  }
-  if (room.terminal) {
-    for (const [resource, amount] of Object.entries(room.terminal.store) as [
-      ResourceConstant,
-      number,
-    ][]) {
-      if (resource === RESOURCE_ENERGY) continue;
-      available[resource] = (available[resource] ?? 0) + amount;
+  const storage = room.storage;
+  if (storage) {
+    for (const [r, amt] of Object.entries(storage.store) as [ResourceConstant, number][]) {
+      if (r !== RESOURCE_ENERGY) add(r, amt);
     }
   }
+  if (room.terminal) {
+    for (const [r, amt] of Object.entries(room.terminal.store) as [ResourceConstant, number][]) {
+      if (r !== RESOURCE_ENERGY) add(r, amt);
+    }
+  }
+  return available;
+}
 
+/**
+ * Goal-directed chain selection: try each REACTION_GOAL in priority order,
+ * build its production chain, and return the highest viable step.
+ * Falls back to greedy if no goal chain is achievable.
+ */
+function selectReaction(room: Room): ReactionStep | undefined {
+  const available = buildAvailableMap(room);
+
+  // Try each goal in priority order
+  for (const goal of REACTION_GOALS) {
+    const chain = buildReactionChain(goal);
+    if (chain.length === 0) continue;
+    const step = findNextChainStep(chain, available);
+    if (step) return step;
+  }
+
+  // Fallback: greedy — pick reaction with most available inputs
   let best:
     | {
         input1: ResourceConstant;
@@ -32,10 +56,10 @@ function selectReaction(
     | undefined;
 
   for (const [r1, reactions] of Object.entries(REACTIONS)) {
-    const amt1 = available[r1 as ResourceConstant];
+    const amt1 = available.get(r1 as ResourceConstant);
     if (!amt1 || amt1 < MIN_INPUT_AMOUNT) continue;
     for (const [r2, product] of Object.entries(reactions as Record<string, string>)) {
-      const amt2 = available[r2 as ResourceConstant];
+      const amt2 = available.get(r2 as ResourceConstant);
       if (!amt2 || amt2 < MIN_INPUT_AMOUNT) continue;
       const score = Math.min(amt1, amt2);
       if (!best || score > best.score) {
@@ -49,7 +73,26 @@ function selectReaction(
     }
   }
 
-  return best ? { input1: best.input1, input2: best.input2, output: best.output } : undefined;
+  return best;
+}
+
+/**
+ * Return which inputs the current reaction chain needs that we are missing.
+ * Used by the terminal to decide what to buy.
+ */
+export function getChainBuyNeeds(room: Room): ResourceConstant[] {
+  const available = buildAvailableMap(room);
+  for (const goal of REACTION_GOALS) {
+    const chain = buildReactionChain(goal);
+    if (chain.length === 0) continue;
+    const needs = chainMissingInputs(chain, available);
+    if (needs.length > 0) return needs;
+    // If this goal has no missing inputs at any step, check next goal only if
+    // this one is fully produced. Otherwise stick with this goal's needs.
+    const nextStep = findNextChainStep(chain, available);
+    if (nextStep) return []; // currently producing, nothing to buy
+  }
+  return [];
 }
 
 export function runLabs(): void {

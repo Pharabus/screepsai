@@ -15,6 +15,7 @@ import { resetIdle } from './utils/idle';
 import { cleanStuckTracker } from './utils/movement';
 import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
+import { computeLayout } from './utils/layoutPlanner';
 
 // Console-callable exports.
 export const stats = () => formatStats();
@@ -40,10 +41,27 @@ export const status = () => {
   return lines.join('\n') || 'no owned rooms';
 };
 
+export const replanLayout = (roomName: string): string => {
+  const room = Game.rooms[roomName];
+  if (!room) return `Room ${roomName} not visible`;
+  const mem = (Memory.rooms[roomName] ??= {});
+  delete mem.layoutPlan;
+  const plan = computeLayout(room);
+  if (!plan) return `Could not compute layout for ${roomName} (no spawn?)`;
+  mem.layoutPlan = plan;
+  return (
+    `Layout planned for ${roomName}: ` +
+    `${plan.extensionPositions.length} extensions, ` +
+    `${plan.labPositions.length} labs, ` +
+    `${plan.towerPositions.length} towers`
+  );
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
 global.status = status;
+global.replanLayout = replanLayout;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

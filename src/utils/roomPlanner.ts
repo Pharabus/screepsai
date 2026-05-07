@@ -1,3 +1,5 @@
+import { computeLayout } from './layoutPlanner';
+
 /**
  * Room planning layer.
  *
@@ -174,6 +176,12 @@ export function ensureRoomPlan(room: Room): void {
   // Determine if we've transitioned to miner economy (at least one source has
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
+
+  // Compute base layout plan once — drives construction manager placement
+  if (!mem.layoutPlan) {
+    const plan = computeLayout(room);
+    if (plan) mem.layoutPlan = plan;
+  }
 
   // Validate miner assignments (clear dead/reassigned miners, restore orphaned ones)
   for (const entry of mem.sources) {
