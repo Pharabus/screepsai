@@ -40,5 +40,5 @@ export function selectRemoteRooms(homeRoom: Room): void {
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
   // Pick up to 2 best remote rooms
-  mem.remoteRooms = scored.slice(0, 2).map((r) => r.name);
+  mem.remoteRooms = scored.slice(0, 1).map((r) => r.name);
 }

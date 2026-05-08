@@ -372,37 +372,37 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('returns 2 when storage is between 50k and 100k', () => {
+  it('returns 1 when storage is between 50k and 100k', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
       storage: { store: { getUsedCapacity: () => 60_000 } },
     });
-    expect(upgradersNeeded(room)).toBe(2);
+    expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('returns 3 when storage is above 100k', () => {
+  it('returns 2 when storage is above 100k', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
       storage: { store: { getUsedCapacity: () => 120_000 } },
     });
-    expect(upgradersNeeded(room)).toBe(3);
+    expect(upgradersNeeded(room)).toBe(2);
   });
 
-  it('returns 4 at 200k and 5 at 500k storage', () => {
+  it('returns 3 at 200k and 4 at 500k storage', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const at200k = mockRoom({
       name: 'W1N1',
       storage: { store: { getUsedCapacity: () => 250_000 } },
     });
-    expect(upgradersNeeded(at200k)).toBe(4);
+    expect(upgradersNeeded(at200k)).toBe(3);
 
     const at500k = mockRoom({
       name: 'W1N1',
       storage: { store: { getUsedCapacity: () => 600_000 } },
     });
-    expect(upgradersNeeded(at500k)).toBe(5);
+    expect(upgradersNeeded(at500k)).toBe(4);
   });
 
   it('returns 1 when no storage exists in miner economy', () => {

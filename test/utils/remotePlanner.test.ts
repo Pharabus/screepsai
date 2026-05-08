@@ -105,7 +105,7 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteRooms).toBeUndefined();
     });
 
-    it('picks the best rooms sorted by score', () => {
+    it('picks the best room sorted by score', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2', '5': 'W0N1' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
       Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 2 } as any;
@@ -116,11 +116,11 @@ describe('remotePlanner', () => {
       selectRemoteRooms(room);
 
       const result = Memory.rooms['W1N1'].remoteRooms!;
-      expect(result).toHaveLength(2);
+      expect(result).toHaveLength(1);
       expect(result[0]).toBe('W1N2');
     });
 
-    it('limits to 2 remote rooms', () => {
+    it('limits to 1 remote room', () => {
       Game.map.describeExits = () =>
         ({ '1': 'W2N1', '3': 'W1N2', '5': 'W0N1', '7': 'W1N0' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
@@ -132,7 +132,7 @@ describe('remotePlanner', () => {
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
-      expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(2);
+      expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(1);
     });
 
     it('sets empty array when no valid rooms exist', () => {

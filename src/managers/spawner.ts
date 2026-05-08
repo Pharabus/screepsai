@@ -124,12 +124,10 @@ export function upgradersNeeded(room: Room): number {
 
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
-  if (stored < 50_000) return 1;
-  if (stored < 100_000) return 2;
-
-  if (stored > 500_000) return 5;
-  if (stored > 200_000) return 4;
-  return 3;
+  if (stored < 100_000) return 1;
+  if (stored < 200_000) return 2;
+  if (stored < 500_000) return 3;
+  return 4;
 }
 
 /**
@@ -186,6 +184,10 @@ function mineralMinersNeeded(room: Room): number {
       filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
     }).length > 0;
   if (!hasExtractor) return 0;
+  // Don't mine minerals until energy reserves are healthy and labs are running
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  const mem = Memory.rooms[room.name];
+  if (stored < 100_000 || !mem?.activeReaction) return 0;
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
@@ -219,9 +221,12 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     });
     // Keep 1 harvester as emergency bootstrap in case all miners die
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], maxRepeats: 4, minCount: 1 });
+    // Cap upgrader body at 5 WORK while storage is very low to limit per-tick drain
+    const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    const upgraderEnergyCap = storedEnergy < 50_000 ? 600 : room.energyCapacityAvailable;
     queue.push({
       role: 'upgrader',
-      body: buildUpgraderBody(room.energyCapacityAvailable),
+      body: buildUpgraderBody(upgraderEnergyCap),
       minCount: upgradersNeeded(room),
     });
     // Builder: [WORK, CARRY, MOVE, MOVE] × up to 4 = max 4W 4C 8M (800 energy)

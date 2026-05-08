@@ -71,6 +71,8 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   // Gate: need at least 3 labs and an active or pending reaction
   const mem = Memory.rooms[room.name];
   if (!mem?.labIds || mem.labIds.length < 3) return;
+  // Don't spend credits on lab inputs until we have an energy surplus
+  if (Game.market.credits < 50) return;
 
   const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
   if (terminalEnergy < MIN_BUY_ENERGY) return;
