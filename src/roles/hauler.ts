@@ -5,7 +5,7 @@ import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached } from '../utils/tickCache';
-import { MINERAL_STORAGE_FLOOR } from '../utils/thresholds';
+import { MINERAL_STORAGE_FLOOR, TERMINAL_ENERGY_FLOOR } from '../utils/thresholds';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 
@@ -446,6 +446,8 @@ function deliver(creep: Creep): void {
 
   if (deliverToControllerContainer(creep)) return;
 
+  if (deliverToTerminalEnergy(creep)) return;
+
   const storage = creep.room.storage;
 
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
@@ -459,6 +461,20 @@ function deliver(creep: Creep): void {
   }
 
   markIdle(creep);
+}
+
+function deliverToTerminalEnergy(creep: Creep): boolean {
+  const terminal = creep.room.terminal;
+  if (!terminal) return false;
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= TERMINAL_ENERGY_FLOOR) return false;
+  if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
+  if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, terminal, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ffff00' },
+    });
+  }
+  return true;
 }
 
 function deliverToLabInput(creep: Creep): boolean {

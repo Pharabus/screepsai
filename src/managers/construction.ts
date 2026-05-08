@@ -550,8 +550,13 @@ export function placeRamparts(room: Room): void {
     ...room.find(FIND_MY_STRUCTURES, {
       filter: (s) => s.structureType === STRUCTURE_TOWER,
     }),
+    ...room.find(FIND_MY_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_LAB,
+    }),
   ];
   if (room.storage) critical.push(room.storage);
+  if (room.terminal) critical.push(room.terminal);
+  if (room.controller) critical.push(room.controller);
 
   for (const structure of critical) {
     const hasRampart = structure.pos
@@ -639,6 +644,7 @@ export function placeRemoteRoads(room: Room): void {
 
 export function runConstruction(): void {
   if (Game.time % 5 !== 0) return;
+  if (Object.keys(Game.constructionSites).length >= 90) return;
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
