@@ -102,7 +102,15 @@ export function haulersNeeded(room: Room): number {
 
   // Linked sources need fewer haulers but still require distribution to
   // spawns/extensions/towers; unlinked sources need full hauler complement
-  return Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
+  let count = Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
+
+  // +1 when mineral mining is active so the mineral container doesn't overflow
+  if (mem.mineralId && mem.mineralContainerId) {
+    const mineral = Game.getObjectById(mem.mineralId as Id<Mineral>);
+    if (mineral && mineral.mineralAmount > 0) count += 1;
+  }
+
+  return count;
 }
 
 /**
