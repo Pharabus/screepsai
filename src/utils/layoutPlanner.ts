@@ -295,3 +295,98 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
 
   return { storagePos, terminalPos, towerPositions, labPositions, extensionPositions };
 }
+
+/**
+ * Score a hypothetical spawn position using terrain only (no existing structures).
+ * Used for new room claim planning. Returns -1 if the position is unviable.
+ *
+ * Score = labCount*10 + extensionCount + corridorOpenness*2
+ * Minimum viability: labCount >= 3 and extensionCount >= 50.
+ */
+export function scoreSpawnCandidate(spawnX: number, spawnY: number, terrain: RoomTerrain): number {
+  if (!inBounds(spawnX, spawnY)) return -1;
+  if (terrain.get(spawnX, spawnY) === TERRAIN_MASK_WALL) return -1;
+
+  // Find best storage position and how many labs it supports
+  let bestLabCount = 0;
+  let bestStorage: { x: number; y: number } | undefined;
+  for (let range = 2; range <= 4; range++) {
+    for (let dx = -range; dx <= range; dx++) {
+      for (let dy = -range; dy <= range; dy++) {
+        if (Math.abs(dx) !== range && Math.abs(dy) !== range) continue;
+        const sx = spawnX + dx;
+        const sy = spawnY + dy;
+        if (!inBounds(sx, sy)) continue;
+        if (terrain.get(sx, sy) === TERRAIN_MASK_WALL) continue;
+        const labCount = countBuildableLabPositions(sx, sy, terrain);
+        if (labCount > bestLabCount) {
+          bestLabCount = labCount;
+          bestStorage = { x: sx, y: sy };
+        }
+      }
+    }
+  }
+
+  if (!bestStorage || bestLabCount < 3) return -1;
+
+  // Count viable extension positions from the stamp
+  const reserved = new Set<string>([`${bestStorage.x},${bestStorage.y}`, `${spawnX},${spawnY}`]);
+  let extCount = 0;
+  for (const [dx, dy] of EXTENSION_STAMP) {
+    const x = spawnX + dx;
+    const y = spawnY + dy;
+    if (!inBounds(x, y)) continue;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+    if (reserved.has(`${x},${y}`)) continue;
+    extCount++;
+  }
+
+  if (extCount < 50) return -1;
+
+  // Count corridor openness: both axes up to range 4 from spawn
+  let corridorOpen = 0;
+  for (let i = 1; i <= 4; i++) {
+    if (inBounds(spawnX, spawnY + i) && terrain.get(spawnX, spawnY + i) !== TERRAIN_MASK_WALL)
+      corridorOpen++;
+    if (inBounds(spawnX, spawnY - i) && terrain.get(spawnX, spawnY - i) !== TERRAIN_MASK_WALL)
+      corridorOpen++;
+    if (inBounds(spawnX + i, spawnY) && terrain.get(spawnX + i, spawnY) !== TERRAIN_MASK_WALL)
+      corridorOpen++;
+    if (inBounds(spawnX - i, spawnY) && terrain.get(spawnX - i, spawnY) !== TERRAIN_MASK_WALL)
+      corridorOpen++;
+  }
+
+  return bestLabCount * 10 + extCount + corridorOpen * 2;
+}
+
+/**
+ * Find the best spawn position for a room not yet claimed.
+ * Uses stride-2 sampling for speed (still covers all viable spots).
+ * Stores the result in RoomMemory.suggestedSpawnPos.
+ */
+export function findBestSpawnPosition(
+  roomName: string,
+): { x: number; y: number; score: number } | undefined {
+  const terrain = Game.map.getRoomTerrain(roomName);
+
+  let bestScore = -1;
+  let bestPos: { x: number; y: number; score: number } | undefined;
+
+  // Stride 2 — fine enough for a stamp footprint that spans 8+ tiles
+  for (let x = 5; x <= 44; x += 2) {
+    for (let y = 5; y <= 44; y += 2) {
+      const score = scoreSpawnCandidate(x, y, terrain);
+      if (score > bestScore) {
+        bestScore = score;
+        bestPos = { x, y, score };
+      }
+    }
+  }
+
+  if (bestPos) {
+    const mem = (Memory.rooms[roomName] ??= {});
+    mem.suggestedSpawnPos = bestPos;
+  }
+
+  return bestPos;
+}

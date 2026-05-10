@@ -13,6 +13,7 @@
  */
 
 import { threatScore } from '../utils/threat';
+import { recordHostile, requestNeighborSegment } from '../utils/neighbors';
 
 // Hostile is treated as inside the base perimeter when within this range of
 // a spawn, storage, or the controller.
@@ -27,12 +28,6 @@ const THREAT_MEMORY_TICKS = 50;
 const THREAT_PER_DEFENDER = 200;
 
 const MAX_DEFENDERS_PER_ROOM = 4;
-
-function roomThreatTotal(room: Room): number {
-  let total = 0;
-  for (const h of room.find(FIND_HOSTILE_CREEPS)) total += threatScore(h);
-  return total;
-}
 
 function hostileNearCriticalStructure(room: Room): boolean {
   const hostiles = room.find(FIND_HOSTILE_CREEPS, {
@@ -76,12 +71,18 @@ export function runDefense(): void {
 
     const mem = (Memory.rooms[room.name] ??= {});
 
-    const threat = roomThreatTotal(room);
-    if (threat > 0 || room.find(FIND_HOSTILE_CREEPS).length > 0) {
+    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const threat = hostiles.reduce((sum, h) => sum + threatScore(h), 0);
+    if (threat > 0 || hostiles.length > 0) {
       mem.threatLastSeen = Game.time;
       mem.lastThreatScore = threat;
     }
 
+    for (const h of hostiles) {
+      if (h.owner?.username) recordHostile(h, room);
+    }
+
+    requestNeighborSegment();
     tryActivateSafeMode(room);
   }
 }

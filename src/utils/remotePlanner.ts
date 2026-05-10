@@ -3,6 +3,8 @@
  * Called periodically to update Memory.rooms[homeRoom].remoteRooms.
  */
 
+import { hostilesSeen } from './neighbors';
+
 export function evaluateRemoteRoom(targetRoomName: string): number {
   const rmem = Memory.rooms[targetRoomName];
   if (!rmem?.scoutedAt) return -1;
@@ -17,11 +19,22 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
   if (hostiles > 0 && scoutAge < 1500) return -1;
 
+  // Reject rooms where we've seen aggressive players recently
+  const aggressiveInRoom = hostilesSeen(targetRoomName, 20_000).length > 0;
+  if (aggressiveInRoom) return -1;
+
   // Reject rooms with no sources
   if ((rmem.scoutedSources ?? 0) === 0) return -1;
 
   // Score: more sources = better
   return rmem.scoutedSources ?? 0;
+}
+
+function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' {
+  const rmem = Memory.rooms[targetRoomName];
+  // Rooms with a controller are worth reserving (doubles source capacity)
+  if (rmem?.scoutedHasController) return 'reserved';
+  return 'remote';
 }
 
 export function selectRemoteRooms(homeRoom: Room): void {
@@ -37,8 +50,17 @@ export function selectRemoteRooms(homeRoom: Room): void {
   }
 
   scored.sort((a, b) => b.score - a.score);
+  const selected = scored.slice(0, 2);
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Pick up to 2 best remote rooms
-  mem.remoteRooms = scored.slice(0, 2).map((r) => r.name);
+  mem.remoteRooms = selected.map((r) => r.name);
+
+  // Classify each selected remote room and set default defense policy
+  for (const { name } of selected) {
+    const rmem = (Memory.rooms[name] ??= {});
+    rmem.remoteType = classifyRemoteType(name);
+    if (!rmem.defensePolicy) {
+      rmem.defensePolicy = rmem.remoteType === 'reserved' ? 'defend' : 'flee';
+    }
+  }
 }

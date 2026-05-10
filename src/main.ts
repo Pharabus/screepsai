@@ -15,7 +15,8 @@ import { resetIdle } from './utils/idle';
 import { cleanStuckTracker } from './utils/movement';
 import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
-import { computeLayout } from './utils/layoutPlanner';
+import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
+import { summarizeNeighbors } from './utils/neighbors';
 
 // Console-callable exports.
 export const stats = () => formatStats();
@@ -57,11 +58,21 @@ export const replanLayout = (roomName: string): string => {
   );
 };
 
+export const neighbors = () => summarizeNeighbors();
+
+export const suggestSpawn = (roomName: string): string => {
+  const result = findBestSpawnPosition(roomName);
+  if (!result) return `No viable spawn position found in ${roomName}`;
+  return `Best spawn for ${roomName}: (${result.x}, ${result.y}) score=${result.score}`;
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
+global.neighbors = neighbors;
+global.suggestSpawn = suggestSpawn;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

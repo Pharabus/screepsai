@@ -4,7 +4,7 @@ import {
   MAX_BUY_PRICE,
   BUY_BATCH_SIZE,
   BUY_INTERVAL,
-  MIN_BUY_ENERGY,
+  MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
 import { getChainBuyNeeds } from './labs';
 
@@ -73,7 +73,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   if (!mem?.labIds || mem.labIds.length < 3) return;
 
   const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
-  if (terminalEnergy < MIN_BUY_ENERGY) return;
+  if (terminalEnergy < MIN_BUY_ENERGY_BASE) return;
 
   const storage = room.storage;
   const ownMineral = mem.mineralId

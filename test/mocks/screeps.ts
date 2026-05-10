@@ -259,4 +259,8 @@ export function resetGameGlobals(): void {
     creeps: {},
     rooms: {},
   };
+  (globalThis as any).RawMemory = {
+    segments: {} as Record<number, string>,
+    setActiveSegments: vi.fn(),
+  };
 }

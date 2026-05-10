@@ -1,6 +1,7 @@
 import { buildBody, buildMinerBody, buildRemoteMinerBody, buildUpgraderBody } from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
+import { threatScore } from '../utils/threat';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
 import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
@@ -15,10 +16,20 @@ interface SpawnRequest {
   memory?: CreepMemory;
 }
 
-function countCreepsByRole(role: CreepRoleName): number {
-  const counts = cached('spawner:countsByRole', () => {
+function resolveHomeRoom(c: Creep): string {
+  if (c.memory.homeRoom) return c.memory.homeRoom;
+  // Remote creeps without homeRoom set cannot be reliably assigned — skip
+  if (c.memory.targetRoom) return '';
+  // Local creep: fall back to current room (safe access for tests without room set)
+  return c.room?.name ?? '';
+}
+
+function countCreepsByRole(role: CreepRoleName, homeRoom: string): number {
+  const counts = cached('spawner:countsByHome:' + homeRoom, () => {
     const totals: Partial<Record<CreepRoleName, number>> = {};
     for (const c of Object.values(Game.creeps)) {
+      const home = resolveHomeRoom(c);
+      if (home !== homeRoom) continue;
       totals[c.memory.role] = (totals[c.memory.role] ?? 0) + 1;
     }
     return totals;
@@ -189,15 +200,73 @@ function mineralMinersNeeded(room: Room): number {
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
+export interface DefenderComposition {
+  melee: number;
+  ranged: number;
+  healer: number;
+}
+
+export function defenderComposition(room: Room): DefenderComposition {
+  const needed = defendersNeeded(room);
+  if (needed === 0) return { melee: 0, ranged: 0, healer: 0 };
+
+  const hostiles = room.find(FIND_HOSTILE_CREEPS);
+  const totalThreat = hostiles.reduce((sum, h) => sum + threatScore(h), 0);
+  const hasHealer = hostiles.some((h) => h.body.some((p) => p.type === HEAL && p.hits > 0));
+
+  let melee: number, ranged: number, healer: number;
+
+  if (totalThreat <= 200) {
+    melee = 1;
+    ranged = 0;
+    healer = 0;
+  } else if (totalThreat <= 600) {
+    melee = 1;
+    ranged = 1;
+    healer = 0;
+  } else {
+    melee = 1;
+    ranged = 2;
+    healer = 1;
+  }
+
+  // Bump ranged count when enemy has healers — kiting is more effective than melee
+  if (hasHealer && ranged < 2) ranged++;
+
+  // Cap total at MAX_DEFENDERS_PER_ROOM (4)
+  const total = melee + ranged + healer;
+  if (total > 4) {
+    healer = Math.max(0, 4 - melee - ranged);
+  }
+
+  return { melee, ranged, healer };
+}
+
 export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
   const isMinerEconomy = mem?.minerEconomy ?? false;
 
   // Priority 0: Defenders (dynamic, only when threat active)
-  const defenders = defendersNeeded(room);
-  if (defenders > 0) {
-    queue.push({ role: 'defender', pattern: [ATTACK, MOVE], minCount: defenders });
+  const comp = defenderComposition(room);
+  if (comp.melee > 0) {
+    queue.push({ role: 'defender', pattern: [ATTACK, MOVE], minCount: comp.melee });
+  }
+  if (comp.ranged > 0) {
+    queue.push({
+      role: 'rangedDefender',
+      pattern: [RANGED_ATTACK, MOVE],
+      maxRepeats: 5,
+      minCount: comp.ranged,
+    });
+  }
+  if (comp.healer > 0) {
+    queue.push({
+      role: 'healer',
+      pattern: [HEAL, MOVE],
+      maxRepeats: 4,
+      minCount: comp.healer,
+    });
   }
 
   if (isMinerEconomy) {
@@ -208,7 +277,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       queue.push({
         role: 'miner',
         body: buildMinerBody(room.energyCapacityAvailable),
-        minCount: miners + countCreepsByRole('miner'),
+        minCount: miners + countCreepsByRole('miner', room.name),
       });
     }
     queue.push({
@@ -258,8 +327,8 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 
       const existingRemoteMiners = countRemoteMiners(remoteRoom);
       const existingRemoteHaulers = countRemoteHaulers(remoteRoom);
-      const totalMiners = countCreepsByRole('miner');
-      const totalHaulers = countCreepsByRole('remoteHauler');
+      const totalMiners = countCreepsByRole('miner', room.name);
+      const totalHaulers = countCreepsByRole('remoteHauler', room.name);
 
       // Spawn remote miners: 1 per source, using source assignments when available
       if (remoteMem?.sources) {
@@ -297,13 +366,13 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      // Reserver: 1 per remote room with a controller
-      const hasController = remoteMem?.scoutedHasController ?? !!remoteMem?.scoutedOwner;
-      if (hasController && countReservers(remoteRoom) === 0) {
+      // Reserver: 1 per reserved room (has a controller and we intend to keep it reserved)
+      const remoteType = remoteMem?.remoteType ?? 'remote';
+      if (remoteType === 'reserved' && countReservers(remoteRoom) === 0) {
         queue.push({
           role: 'reserver',
           body: [CLAIM, CLAIM, MOVE, MOVE],
-          minCount: countCreepsByRole('reserver') + 1,
+          minCount: countCreepsByRole('reserver', room.name) + 1,
           memory: {
             role: 'reserver' as CreepRoleName,
             homeRoom: room.name,
@@ -312,13 +381,13 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      // Remote builder: 1 per remote room with construction sites
-      if (remoteBuilderNeeded(remoteRoom)) {
+      // Remote builder: only for reserved rooms (highway/remote rooms don't get road investment)
+      if (remoteType === 'reserved' && remoteBuilderNeeded(remoteRoom)) {
         queue.push({
           role: 'remoteBuilder',
           pattern: [WORK, CARRY, MOVE, MOVE],
           maxRepeats: 4,
-          minCount: countCreepsByRole('remoteBuilder') + 1,
+          minCount: countCreepsByRole('remoteBuilder', room.name) + 1,
           memory: {
             role: 'remoteBuilder' as CreepRoleName,
             homeRoom: room.name,
@@ -372,11 +441,12 @@ export function runSpawner(): void {
     // extensions can't be filled so energyAvailable stays at spawn-only levels.
     // Build bodies from energyAvailable instead of capacity to break the deadlock.
     const mem = Memory.rooms[room.name];
-    const hasDistributor = countCreepsByRole('hauler') > 0 || countCreepsByRole('harvester') > 0;
+    const hasDistributor =
+      countCreepsByRole('hauler', room.name) > 0 || countCreepsByRole('harvester', room.name) > 0;
     const emergency = (mem?.minerEconomy ?? false) && !hasDistributor;
 
     for (const request of queue) {
-      if (countCreepsByRole(request.role) >= request.minCount) continue;
+      if (countCreepsByRole(request.role, room.name) >= request.minCount) continue;
 
       const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
       if (!spawn) break;
@@ -387,7 +457,7 @@ export function runSpawner(): void {
 
       const name = `${request.role}_${Game.time}`;
       const result = spawn.spawnCreep(body, name, {
-        memory: request.memory ?? { role: request.role },
+        memory: request.memory ?? { role: request.role, homeRoom: room.name },
       });
 
       if (result === OK) {

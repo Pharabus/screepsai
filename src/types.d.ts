@@ -4,6 +4,8 @@ type CreepRoleName =
   | 'builder'
   | 'repairer'
   | 'defender'
+  | 'rangedDefender'
+  | 'healer'
   | 'miner'
   | 'hauler'
   | 'mineralMiner'
@@ -36,6 +38,8 @@ interface CreepMemory {
   targetRoom?: string;
   /** Tick when scout started pathing to current target (stuck detection) */
   _scoutTick?: number;
+  /** Name of a friendly combat creep this healer is paired with */
+  partnerName?: string;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
@@ -82,8 +86,12 @@ interface RoomMemory {
     labPositions: { x: number; y: number }[];
     extensionPositions: { x: number; y: number }[];
   };
+  // Best spawn position suggestion for a not-yet-claimed room
+  suggestedSpawnPos?: { x: number; y: number; score: number };
   // Remote mining
   remoteRooms?: string[];
+  remoteType?: 'remote' | 'reserved' | 'claimed';
+  defensePolicy?: 'flee' | 'defend' | 'abandon';
   // Scout data (populated by scouts visiting unowned rooms)
   scoutedAt?: number;
   scoutedSources?: number;
