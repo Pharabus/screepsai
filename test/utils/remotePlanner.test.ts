@@ -1,6 +1,10 @@
 import { resetGameGlobals, mockRoom } from '../mocks/screeps';
 import { evaluateRemoteRoom, selectRemoteRooms } from '../../src/utils/remotePlanner';
 
+function mockStorage(stored: number): any {
+  return { store: { getUsedCapacity: () => stored } };
+}
+
 describe('remotePlanner', () => {
   beforeEach(() => {
     resetGameGlobals();
@@ -111,7 +115,7 @@ describe('remotePlanner', () => {
       Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 2 } as any;
       Memory.rooms['W0N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -120,7 +124,7 @@ describe('remotePlanner', () => {
       expect(result[0]).toBe('W1N2');
     });
 
-    it('limits to 1 remote room', () => {
+    it('limits to 1 remote room when storage is below 100k', () => {
       Game.map.describeExits = () =>
         ({ '1': 'W2N1', '3': 'W1N2', '5': 'W0N1', '7': 'W1N0' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
@@ -128,7 +132,34 @@ describe('remotePlanner', () => {
       Memory.rooms['W0N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
       Memory.rooms['W1N0'] = { scoutedAt: 100, scoutedSources: 1 } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(99_999) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(1);
+    });
+
+    it('scales to 2 remote rooms once storage reaches 100k', () => {
+      Game.map.describeExits = () =>
+        ({ '1': 'W2N1', '3': 'W1N2', '5': 'W0N1', '7': 'W1N0' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W0N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N0'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(2);
+    });
+
+    it('treats missing storage as 0 (cap stays at 1)', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+
+      const room = mockRoom({ name: 'W1N1' }); // no storage
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -140,7 +171,7 @@ describe('remotePlanner', () => {
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedOwner: 'Enemy' } as any;
       Memory.rooms['W1N2'] = {} as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -152,7 +183,7 @@ describe('remotePlanner', () => {
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
       Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedOwner: 'Enemy', scoutedSources: 2 } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -163,7 +194,7 @@ describe('remotePlanner', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       selectRemoteRooms(room);
 
       expect(Memory.rooms['W1N1']).toBeDefined();

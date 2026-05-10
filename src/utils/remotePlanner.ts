@@ -24,6 +24,8 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   return rmem.scoutedSources ?? 0;
 }
 
+export const REMOTE_ROOM_SCALE_THRESHOLD = 100_000;
+
 export function selectRemoteRooms(homeRoom: Room): void {
   const exits = Game.map.describeExits(homeRoom.name);
   if (!exits) return;
@@ -39,9 +41,10 @@ export function selectRemoteRooms(homeRoom: Room): void {
   scored.sort((a, b) => b.score - a.score);
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Cap at 1 remote while energy economy is still consolidating.
-  // Raise to 2 once storage comfortably exceeds 100k — a second remote adds
-  // ~5 e/t of spawn cost plus bootstrap drain, which can stall storage growth
-  // below that threshold even though steady-state net is positive.
-  mem.remoteRooms = scored.slice(0, 1).map((r) => r.name);
+  // Auto-scale: 1 remote while storage is below 100k (a second remote adds
+  // ~5 e/t spawn cost plus bootstrap drain, which can stall storage growth
+  // before surplus is established), 2 remotes once storage clears that bar.
+  const stored = homeRoom.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  const cap = stored >= REMOTE_ROOM_SCALE_THRESHOLD ? 2 : 1;
+  mem.remoteRooms = scored.slice(0, cap).map((r) => r.name);
 }

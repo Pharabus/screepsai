@@ -13,7 +13,7 @@ A TypeScript Screeps AI focused on automated room management from RCL 1 through 
 - **Load-balanced harvesting** that spreads creeps across available sources.
 - **Memory optimisations** — lazy `RawMemory` segment wrapper, per-tick cache, and one-shot Memory shape init to keep the per-tick JSON parse cheap as persistent data grows.
 - **CPU profiler** with exponential-moving-average samples per manager and per role, exposed via console globals `stats()` / `resetStats()`.
-- **Remote mining** — Scouts explore adjacent rooms; remote planner selects the best room (currently capped at 1 while energy economy consolidates; raise to 2 once storage exceeds 100k); remote miners and haulers harvest energy from unowned rooms and deliver it home.
+- **Remote mining** — Scouts explore adjacent rooms; remote planner picks the best room(s), auto-scaling the cap with home storage (1 remote below 100k, 2 above); remote miners and haulers harvest energy from unowned rooms and deliver it home.
 - **Lab reactions** (RCL 6+) — Stamp-based lab placement (3/6/10 labs at RCL 6/7/8), automatic reaction selection from available minerals, hauler-managed input/output logistics.
 - **Terminal policy** (RCL 6+) — Haulers deliver minerals to terminal preferentially; excess minerals above a 5k storage floor are moved from storage to terminal for future market orders.
 - **Soft traffic manager** — CostMatrix-based pathing avoids creep clusters (cost 15) and hard-blocks stationary miners (cost 255). Each creep paths and moves independently; the Screeps engine handles 2-way swaps natively. Stuck detection fallback after 3 ticks. Cross-room pathing uses `maxRooms: 2`.
