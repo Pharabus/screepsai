@@ -40,6 +40,10 @@ interface CreepMemory {
   _scoutTick?: number;
   /** Name of a friendly combat creep this healer is paired with */
   partnerName?: string;
+  /** Game tick when the current idle streak began (used by idle.ts for recycle thresholds) */
+  idleSince?: number;
+  /** Last tick markIdle was called — detects streak breaks without touching role code */
+  _idleLastTick?: number;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data

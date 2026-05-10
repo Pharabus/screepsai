@@ -120,7 +120,11 @@ Future concerns for claiming are tracked in `todo.md`.
 
 ### Idle creep management
 
-`src/utils/idle.ts` provides `markIdle(creep)` for roles that have no work to do. It registers the creep as idle (for visual indicators), and rallies the creep toward storage or spawn (range 3) so it doesn't block traffic near busy areas. Roles that can go idle: hauler (nothing to pick up or deliver), harvester (all delivery targets full), defender (no hostiles). Builders, repairers, and upgraders always fall back to upgrading the controller so they never idle. When `Memory.visuals` is enabled, idle creeps are marked with a grey circle overlay. The indicator auto-clears when the creep gets work (since `markIdle` is only called on idle ticks).
+`src/utils/idle.ts` provides `markIdle(creep)` for roles that have no work to do. It registers the creep as idle (for visual indicators), parks idle creeps away from the spawn cluster, and recycles chronically idle creeps. Roles that can go idle: hauler (nothing to pick up or deliver), harvester (all delivery targets full), defender/rangedDefender/healer (no hostiles). Builders, repairers, and upgraders always fall back to upgrading the controller so they never idle. When `Memory.visuals` is enabled, idle creeps are marked with a grey circle overlay.
+
+**Parking**: if the room's controller is ≥8 tiles from the spawn, idle creeps rally to the controller position (far from the extension/lab/spawn cluster). Each creep gets a deterministic tile offset based on a hash of its name (`SPREAD_OFFSETS`, 2-tile spacing) so they don't pile up. Falls back to range 5 of storage or spawn (was range 3) when the controller is too close.
+
+**Recycle**: `idleSince` + `_idleLastTick` in `CreepMemory` track consecutive idle ticks (streak resets on any gap where the creep wasn't idle). Thresholds: hauler 50 ticks → moved to nearest spawn for `recycleCreep`; defender/rangedDefender/healer 100 ticks → recycled only if no threat seen within 200 ticks (keeps combat roles alive during active fights). Recovering ~50% of body cost as spawn energy when recycled.
 
 ### Deployment
 
