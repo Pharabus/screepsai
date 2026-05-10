@@ -39,6 +39,9 @@ export function selectRemoteRooms(homeRoom: Room): void {
   scored.sort((a, b) => b.score - a.score);
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Pick up to 2 best remote rooms
+  // Cap at 1 remote while energy economy is still consolidating.
+  // Raise to 2 once storage comfortably exceeds 100k — a second remote adds
+  // ~5 e/t of spawn cost plus bootstrap drain, which can stall storage growth
+  // below that threshold even though steady-state net is positive.
   mem.remoteRooms = scored.slice(0, 1).map((r) => r.name);
 }
