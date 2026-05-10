@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__screeps-mcp__get_console",
+      "mcp__screeps-mcp__get_memory",
+      "mcp__screeps-mcp__get_room_objects",
+      "mcp__screeps-mcp__get_room_status",
+      "mcp__screeps-mcp__check_for_errors",
+      "mcp__screeps-mcp__get_game_time",
+      "mcp__screeps-mcp__get_room_terrain",
+      "mcp__screeps-mcp__analyze_performance",
+      "Bash(npm test *)",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(npm run lint *)",
+      "Bash(npx vitest run *)"
+    ]
+  }
+}

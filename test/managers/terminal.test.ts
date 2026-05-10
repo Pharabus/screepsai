@@ -196,7 +196,7 @@ describe('runTerminal — lab buying', () => {
       name: 'W1N1',
       controller: { my: true, level: 6 },
       terminal: {
-        store: makeTerminalStore({ energy: 10000 }), // below MIN_BUY_ENERGY
+        store: makeTerminalStore({ energy: 10000 }), // below MIN_BUY_ENERGY_BASE (30k)
         cooldown: 0,
       },
     });

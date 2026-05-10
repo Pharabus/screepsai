@@ -4,6 +4,7 @@ import {
   haulersNeeded,
   upgradersNeeded,
   remoteBuilderNeeded,
+  defenderComposition,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -470,5 +471,106 @@ describe('remoteBuilderNeeded', () => {
     };
     (Game as any).creeps = {};
     expect(remoteBuilderNeeded('W2N1')).toBe(false);
+  });
+});
+
+describe('defenderComposition', () => {
+  function makeHostile(parts: { type: BodyPartConstant; hits?: number }[]) {
+    return {
+      body: parts.map((p) => ({ type: p.type, hits: p.hits ?? 100 })),
+    };
+  }
+
+  it('returns zero composition when no threat', () => {
+    (Memory as any).rooms = { W1N1: {} };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+    const comp = defenderComposition(room);
+    expect(comp).toEqual({ melee: 0, ranged: 0, healer: 0 });
+  });
+
+  it('returns melee only for low threat (<=200)', () => {
+    (Memory as any).rooms = {
+      W1N1: { threatLastSeen: 1, lastThreatScore: 80 },
+    };
+    const hostile = makeHostile([{ type: ATTACK }]);
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_HOSTILE_CREEPS) return [hostile];
+        return [];
+      }),
+    });
+    (Game as any).time = 1;
+    const comp = defenderComposition(room);
+    expect(comp.melee).toBe(1);
+    expect(comp.ranged).toBe(0);
+    expect(comp.healer).toBe(0);
+  });
+
+  it('returns melee + ranged for moderate threat (200-600)', () => {
+    (Memory as any).rooms = {
+      W1N1: { threatLastSeen: 1, lastThreatScore: 400 },
+    };
+    const hostile = makeHostile([{ type: ATTACK }, { type: RANGED_ATTACK }, { type: MOVE }]);
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_HOSTILE_CREEPS) return [hostile];
+        return [];
+      }),
+    });
+    (Game as any).time = 1;
+    const comp = defenderComposition(room);
+    expect(comp.melee).toBe(1);
+    expect(comp.ranged).toBeGreaterThanOrEqual(1);
+    expect(comp.healer).toBe(0);
+  });
+
+  it('returns melee + ranged + healer for high threat (>600)', () => {
+    (Memory as any).rooms = {
+      W1N1: { threatLastSeen: 1, lastThreatScore: 700 },
+    };
+    // HEAL(250) + HEAL(250) + RANGED_ATTACK(150) = 650
+    const hostile = makeHostile([
+      { type: HEAL },
+      { type: HEAL },
+      { type: RANGED_ATTACK },
+      { type: MOVE },
+    ]);
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_HOSTILE_CREEPS) return [hostile];
+        return [];
+      }),
+    });
+    (Game as any).time = 1;
+    const comp = defenderComposition(room);
+    expect(comp.melee).toBeGreaterThanOrEqual(1);
+    expect(comp.ranged).toBeGreaterThanOrEqual(1);
+    expect(comp.healer).toBeGreaterThanOrEqual(1);
+    // Total should not exceed 4
+    expect(comp.melee + comp.ranged + comp.healer).toBeLessThanOrEqual(4);
+  });
+
+  it('bumps ranged when hostiles have HEAL parts', () => {
+    (Memory as any).rooms = {
+      W1N1: { threatLastSeen: 1, lastThreatScore: 330 },
+    };
+    // ATTACK(80) + HEAL(250) = 330 — moderate threat band with healer
+    const hostile = makeHostile([{ type: ATTACK }, { type: HEAL }, { type: MOVE }]);
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_HOSTILE_CREEPS) return [hostile];
+        return [];
+      }),
+    });
+    (Game as any).time = 1;
+    const comp = defenderComposition(room);
+    expect(comp.ranged).toBeGreaterThanOrEqual(1);
   });
 });

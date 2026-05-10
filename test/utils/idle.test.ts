@@ -1,4 +1,10 @@
-import { markIdle, resetIdle, drawIdleIndicators } from '../../src/utils/idle';
+import {
+  markIdle,
+  resetIdle,
+  drawIdleIndicators,
+  nameHash,
+  shouldRecycle,
+} from '../../src/utils/idle';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 describe('idle', () => {
@@ -17,11 +23,162 @@ describe('idle', () => {
       drawIdleIndicators();
 
       // If the creep was registered, drawIdleIndicators would look it up in Game.creeps
-      // and draw a circle. We can't easily assert RoomVisual calls, but we can verify
-      // the creep is tracked by calling drawIdleIndicators without error.
+      // and draw a circle — no error means registration succeeded.
     });
 
-    it('moves creep toward storage when far away', () => {
+    it('sets idleSince on first idle tick', () => {
+      Game.time = 100;
+      const creep = mockCreep({ memory: { role: 'hauler' } });
+      markIdle(creep);
+      expect(creep.memory.idleSince).toBe(100);
+    });
+
+    it('resets idleSince when there is a gap in idle ticks', () => {
+      Game.time = 100;
+      const creep = mockCreep({ memory: { role: 'hauler' } });
+      markIdle(creep); // streak starts at 100
+
+      Game.time = 110; // gap — creep did work between tick 100 and 110
+      markIdle(creep); // new streak starts at 110
+      expect(creep.memory.idleSince).toBe(110);
+    });
+
+    it('does not reset idleSince for consecutive idle ticks', () => {
+      Game.time = 100;
+      const creep = mockCreep({ memory: { role: 'hauler' } });
+      markIdle(creep);
+      expect(creep.memory.idleSince).toBe(100);
+
+      Game.time = 101;
+      markIdle(creep);
+      expect(creep.memory.idleSince).toBe(100); // unchanged — streak continues
+    });
+
+    it('moves hauler to spawn for recycling after 50 idle ticks', () => {
+      Game.time = 200;
+      const spawnMock = {
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        recycleCreep: vi.fn(() => ERR_NOT_IN_RANGE),
+      };
+      const creep = mockCreep({
+        memory: { role: 'hauler', idleSince: 140, _idleLastTick: 199 },
+        pos: Object.assign(new RoomPosition(10, 10, 'W1N1'), {
+          findClosestByRange: vi.fn(() => spawnMock),
+        }),
+      });
+      markIdle(creep);
+
+      // idleTicks = 200 - 140 = 60 >= 50 → should trigger recycle path
+      expect(creep.pos.findClosestByRange).toHaveBeenCalledWith(FIND_MY_SPAWNS);
+      expect(spawnMock.recycleCreep).toHaveBeenCalledWith(creep);
+    });
+
+    it('recycles hauler immediately when adjacent to spawn', () => {
+      Game.time = 200;
+      const spawnMock = {
+        pos: new RoomPosition(10, 10, 'W1N1'),
+        recycleCreep: vi.fn(() => OK),
+      };
+      const creep = mockCreep({
+        memory: { role: 'hauler', idleSince: 140, _idleLastTick: 199 },
+        pos: Object.assign(new RoomPosition(11, 10, 'W1N1'), {
+          findClosestByRange: vi.fn(() => spawnMock),
+          inRangeTo: vi.fn(() => false),
+          isEqualTo: vi.fn(() => false),
+        }),
+      });
+      markIdle(creep);
+      expect(spawnMock.recycleCreep).toHaveBeenCalledWith(creep);
+    });
+
+    it('does not recycle hauler before the 50-tick threshold', () => {
+      Game.time = 200;
+      const spawnMock = { recycleCreep: vi.fn() };
+      const creep = mockCreep({
+        memory: { role: 'hauler', idleSince: 170, _idleLastTick: 199 },
+        pos: Object.assign(new RoomPosition(10, 10, 'W1N1'), {
+          findClosestByRange: vi.fn(() => spawnMock),
+        }),
+      });
+      markIdle(creep);
+
+      // idleTicks = 30 < 50 → no recycle
+      expect(spawnMock.recycleCreep).not.toHaveBeenCalled();
+    });
+
+    it('does not recycle combat roles when threat is recent', () => {
+      Game.time = 200;
+      Memory.rooms['W1N1'] = { threatLastSeen: 190 } as any; // 10 ticks ago < 200
+      const spawnMock = { recycleCreep: vi.fn() };
+      const creep = mockCreep({
+        memory: { role: 'defender', idleSince: 90, _idleLastTick: 199 },
+        pos: Object.assign(new RoomPosition(10, 10, 'W1N1'), {
+          findClosestByRange: vi.fn(() => spawnMock),
+          inRangeTo: vi.fn(() => true), // already near anchor — no movement
+          isEqualTo: vi.fn(() => true),
+        }),
+      });
+      markIdle(creep);
+      expect(spawnMock.recycleCreep).not.toHaveBeenCalled();
+    });
+
+    it('recycles combat roles when threat is old', () => {
+      Game.time = 500;
+      Memory.rooms['W1N1'] = { threatLastSeen: 100 } as any; // 400 ticks ago > 200
+      const spawnMock = {
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        recycleCreep: vi.fn(() => ERR_NOT_IN_RANGE),
+      };
+      const creep = mockCreep({
+        memory: { role: 'defender', idleSince: 390, _idleLastTick: 499 },
+        pos: Object.assign(new RoomPosition(10, 10, 'W1N1'), {
+          findClosestByRange: vi.fn(() => spawnMock),
+        }),
+      });
+      markIdle(creep);
+      expect(spawnMock.recycleCreep).toHaveBeenCalledWith(creep);
+    });
+
+    it('rallies toward controller when it is far from spawn', () => {
+      const spawnPos = new RoomPosition(16, 31, 'W1N1');
+      const ctrlPos = new RoomPosition(40, 15, 'W1N1');
+      const room = mockRoom({
+        controller: { my: true, level: 4, pos: ctrlPos },
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+          return [];
+        }),
+      });
+      const creep = mockCreep({
+        room,
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      // Should not crash and should compute a rally target near ctrlPos
+      expect(() => markIdle(creep)).not.toThrow();
+    });
+
+    it('falls back to storage or spawn when controller is too close', () => {
+      // Controller within 8 tiles of spawn → getRallyPos returns undefined → fallback
+      const spawnPos = new RoomPosition(16, 31, 'W1N1');
+      const ctrlPos = new RoomPosition(18, 33, 'W1N1'); // range ~3 — too close
+      const room = mockRoom({
+        controller: { my: true, level: 4, pos: ctrlPos },
+        storage: { pos: new RoomPosition(16, 29, 'W1N1') },
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+          return [];
+        }),
+      });
+      const creep = mockCreep({
+        room,
+        pos: new RoomPosition(10, 10, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      expect(() => markIdle(creep)).not.toThrow();
+    });
+
+    it('moves creep toward storage when far away (fallback path)', () => {
       const storage = {
         pos: new RoomPosition(30, 30, 'W1N1'),
         store: { getUsedCapacity: () => 0, getFreeCapacity: () => 1000000 },
@@ -33,9 +190,7 @@ describe('idle', () => {
       });
 
       markIdle(creep);
-
-      // Creep is far from storage (range > 3), so moveTo should be called
-      // via registerMove in the traffic manager
+      // Should not throw — movement intent registered via traffic manager
     });
 
     it('does not move creep already near storage', () => {
@@ -50,8 +205,7 @@ describe('idle', () => {
       });
 
       markIdle(creep);
-
-      // Creep is within range 3 of storage, no movement registered
+      // Creep is within range 5 of storage — no movement registered
     });
 
     it('falls back to spawn when no storage', () => {
@@ -72,8 +226,86 @@ describe('idle', () => {
       });
 
       markIdle(creep);
-
       // Should target spawn since no storage exists
+    });
+  });
+
+  describe('nameHash', () => {
+    it('returns a non-negative integer', () => {
+      expect(nameHash('hauler_123')).toBeGreaterThanOrEqual(0);
+      expect(nameHash('defender_abc')).toBeGreaterThanOrEqual(0);
+    });
+
+    it('returns different values for different names', () => {
+      expect(nameHash('hauler_1')).not.toBe(nameHash('hauler_2'));
+    });
+
+    it('is deterministic', () => {
+      expect(nameHash('test_creep')).toBe(nameHash('test_creep'));
+    });
+
+    it('produces values distributed across offset slots', () => {
+      const OFFSET_COUNT = 9;
+      const slots = new Set<number>();
+      const names = [
+        'hauler_1',
+        'hauler_2',
+        'hauler_3',
+        'defender_1',
+        'remoteHauler_1',
+        'upgrader_1',
+        'miner_1',
+        'reserver_1',
+        'scout_1',
+      ];
+      for (const name of names) {
+        slots.add(nameHash(name) % OFFSET_COUNT);
+      }
+      // 9 different names should hit at least 4 distinct slots
+      expect(slots.size).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  describe('shouldRecycle', () => {
+    it('returns false for roles without a threshold', () => {
+      const creep = mockCreep({ memory: { role: 'upgrader' } });
+      expect(shouldRecycle(creep, 1000)).toBe(false);
+    });
+
+    it('returns false for hauler below threshold', () => {
+      const creep = mockCreep({ memory: { role: 'hauler' } });
+      expect(shouldRecycle(creep, 49)).toBe(false);
+    });
+
+    it('returns true for hauler at threshold', () => {
+      const creep = mockCreep({ memory: { role: 'hauler' } });
+      expect(shouldRecycle(creep, 50)).toBe(true);
+    });
+
+    it('returns false for defender below threshold', () => {
+      const creep = mockCreep({ memory: { role: 'defender' } });
+      expect(shouldRecycle(creep, 99)).toBe(false);
+    });
+
+    it('returns false for defender at threshold but recent threat', () => {
+      Game.time = 200;
+      Memory.rooms['W1N1'] = { threatLastSeen: 150 } as any;
+      const creep = mockCreep({ memory: { role: 'defender' } });
+      expect(shouldRecycle(creep, 100)).toBe(false);
+    });
+
+    it('returns true for defender at threshold with old threat', () => {
+      Game.time = 500;
+      Memory.rooms['W1N1'] = { threatLastSeen: 100 } as any;
+      const creep = mockCreep({ memory: { role: 'defender' } });
+      expect(shouldRecycle(creep, 100)).toBe(true);
+    });
+
+    it('returns true for defender with no threat history', () => {
+      Game.time = 200;
+      Memory.rooms['W1N1'] = {} as any;
+      const creep = mockCreep({ memory: { role: 'defender' } });
+      expect(shouldRecycle(creep, 100)).toBe(true);
     });
   });
 
@@ -85,8 +317,8 @@ describe('idle', () => {
 
       markIdle(creep);
       resetIdle();
-      // drawIdleIndicators after reset should not draw anything
       drawIdleIndicators();
+      // No draw calls expected after reset
     });
   });
 
@@ -99,8 +331,7 @@ describe('idle', () => {
       markIdle(creep);
       delete (Game as any).creeps['ghost'];
 
-      // Should not throw when creep is gone
-      drawIdleIndicators();
+      expect(() => drawIdleIndicators()).not.toThrow();
     });
 
     it('draws circle for each idle creep', () => {

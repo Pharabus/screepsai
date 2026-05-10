@@ -200,5 +200,73 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1']).toBeDefined();
       expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
     });
+
+    it('classifies rooms with a controller as reserved', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 2,
+        scoutedHasController: true,
+      } as any;
+
+      const room = mockRoom({ name: 'W1N1' });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W2N1'].remoteType).toBe('reserved');
+    });
+
+    it('classifies rooms without a controller as remote', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 2,
+        scoutedHasController: false,
+      } as any;
+
+      const room = mockRoom({ name: 'W1N1' });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W2N1'].remoteType).toBe('remote');
+    });
+
+    it('sets defend policy for reserved rooms and flee for remote rooms', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 2,
+        scoutedHasController: true,
+      } as any;
+      Memory.rooms['W1N2'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        scoutedHasController: false,
+      } as any;
+
+      // Storage ≥ 100k so cap = 2 and both rooms get selected
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W2N1'].defensePolicy).toBe('defend');
+      expect(Memory.rooms['W1N2'].defensePolicy).toBe('flee');
+    });
+
+    it('does not overwrite an existing defense policy', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        scoutedHasController: false,
+        defensePolicy: 'abandon',
+      } as any;
+
+      const room = mockRoom({ name: 'W1N1' });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W2N1'].defensePolicy).toBe('abandon');
+    });
   });
 });

@@ -127,7 +127,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Per-resource stockpile thresholds** — `src/utils/thresholds.ts` provides shared `MINERAL_STORAGE_FLOOR` (5k), `MINERAL_TERMINAL_CEILING` (50k), `ENERGY_TERMINAL_BUFFER` (50k), and `isTerminalSurplus()` helper. Hauler and terminal manager import from here (eliminated duplication).
 - [x] **Market logging** — Terminal manager logs surplus minerals above `MINERAL_TERMINAL_CEILING` with best buy-order prices every 100 ticks. Read-only — no actual selling yet.
 - [x] **Market selling** — `runTerminal` sells surplus above `MINERAL_TERMINAL_CEILING` to best buy order every 100 ticks.
-- [x] **Market buying for lab inputs** — `buyForLabs()` in `terminal.ts` runs every 500 ticks. Queries `getChainBuyNeeds()` from labs manager (chain-aware), falls back to active reaction inputs. Buys cheapest sell order ≤ `MAX_BUY_PRICE` (0.5cr) in `BUY_BATCH_SIZE` (3k) batches. Gates on `MIN_BUY_ENERGY` (100k) terminal energy, skips own room's mineral type.
+- [x] **Market buying for lab inputs** — `buyForLabs()` in `terminal.ts` runs every 500 ticks. Queries `getChainBuyNeeds()` from labs manager (chain-aware), falls back to active reaction inputs. Buys cheapest sell order ≤ `MAX_BUY_PRICE` (0.5cr) in `BUY_BATCH_SIZE` (3k) batches. Gates on `MIN_BUY_ENERGY_BASE` (30k) for base minerals or `MIN_BUY_ENERGY_INTERMEDIATES` (60k) for compounds, skips own room's mineral type.
 - [x] **Unit tests for RCL gating** — 16 tests across 12 describe blocks in `test/managers/construction.test.ts`. Each `place*` function tested for correct RCL gating (e.g. extensions at RCL 2+, towers at RCL 3+, storage at RCL 4+, links at RCL 5+, terminal/extractor/mineral at RCL 6+).
 
 - [x] **Builder/repairer logistics integration** - Both roles now check `minerEconomy` and withdraw from source containers (closest, >100 energy) or storage before falling back to self-harvest. Shared `withdrawFromLogistics()` utility in `src/utils/sources.ts`. Bootstrap mode unchanged.
@@ -165,7 +165,7 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 #### Future spawn placement
 
-- [ ] **Improve spawn site selection for new rooms** — When claiming new rooms, select a spawn position that has enough open terrain in all directions for the extension diamond + road corridors. Current `findOpenPosition` doesn't account for the full stamp footprint. Evaluate candidate positions by checking that the stamp's cross corridors (dx=0, dy=0) are walkable and that at least ~80% of stamp cells are buildable. Avoids the W43N58 situation where walls compress the layout into a congested corner.
+- [x] **Improve spawn site selection for new rooms** — `scoreSpawnCandidate(x, y, terrain)` in `layoutPlanner.ts` evaluates candidate positions by running the full layout planner from each anchor and counting buildable lab + extension cells. Returns -1 if fewer than 3 labs or 50 extensions are achievable. Score = labCount×10 + extCount + corridorOpenness×2. `findBestSpawnPosition(roomName)` stride-2 scans [5..44] and stores the best in `RoomMemory.suggestedSpawnPos`. Console command `suggestSpawn(roomName)` triggers on demand.
 
 ### Economy rebalancing (Tier 2)
 
@@ -185,8 +185,8 @@ Builds on existing remote mining infrastructure (scout, remotePlanner, remote mi
 Reserving a remote room's controller doubles source capacity (3000/tick → 6000/tick) and halves container decay rate. Low cost, high return.
 
 - [x] **Add `reserver` role** — `[CLAIM×2, MOVE×2]` body (1300 energy). Paths to the remote room's controller and calls `creep.reserveController()`. 2 CLAIM parts = +2 ticks/tick (net +1/tick). Spawned 1 per remote room with a controller. Scout records `scoutedHasController` for gating.
-- [ ] **Remote room type field** — Add `type: 'remote' | 'reserved' | 'claimed'` to `RoomMemory` for remote rooms. `selectRemoteRooms()` sets type based on GCL availability and distance. Spawner uses type to decide which roles to queue (reserver only for `reserved`, full colony for `claimed`).
-- [ ] **Spawner integration** — Queue 1 reserver per `reserved` remote room, after remote haulers in priority. Only spawn when room has a controller (some remote rooms are source keeper or highway rooms with no controller).
+- [x] **Remote room type field** — `RoomMemory.remoteType: 'remote' | 'reserved' | 'claimed'` added. `selectRemoteRooms()` sets it via `classifyRemoteType()`: rooms with `scoutedHasController` become `'reserved'`, others `'remote'`. Spawner gates reserver and remoteBuilder on `remoteType === 'reserved'`.
+- [x] **Spawner integration** — Reserver and remoteBuilder now gated on `remoteType === 'reserved'` (was `scoutedHasController`), ensuring type field drives all role spawning decisions. Per-room `countCreepsByRole()` uses `homeRoom` scoping so remote creep counts don't pollute home room queues.
 - [x] **Remote road building** — Place roads from home room spawn to remote source positions along the PathFinder route. Hauler throughput increases ~2x on roads (fatigue halved). Build incrementally (1 site/tick like local roads). Only for reserved rooms (worth the investment).
 
 #### Phase 2 — Room claiming (GCL 2+)
@@ -198,7 +198,7 @@ Claiming a second room gives a full autonomous colony. Requires GCL 2 (earned by
 - [ ] **Colony bootstrap sequence** — After claiming: (1) send a builder with energy to build the first spawn, (2) once spawn is up, the new room runs the normal bootstrap economy, (3) home room may need to send energy via terminal to accelerate early RCL.
 - [ ] **Target room selection** — Evaluate rooms by: source count (2 preferred), distance from home (linear range ≤ 3), mineral type (complement home room), terrain openness (room for base layout), hostile proximity. Store evaluation in Memory for manual override.
 - [ ] **Inter-room energy transfer** — Terminal `send()` energy from established rooms to new colonies during bootstrap. Add to `terminal.ts` manager: detect claimed rooms below RCL 4 (no storage yet) and send energy if home has surplus.
-- [ ] **Remote defense policy** — Decide per-room: flee (pull creeps home when hostiles appear, for undefended remotes), defend (spawn defenders, for reserved/claimed rooms with investment), or abandon (drop the room from remoteRooms if hostiles are persistent). Add `defensePolicy` to remote room memory.
+- [x] **Remote defense policy** — `RoomMemory.defensePolicy: 'flee' | 'defend' | 'abandon'` added. `selectRemoteRooms()` sets default: `'defend'` for `reserved` rooms, `'flee'` for `remote`. Does not overwrite an existing policy (allows manual `'abandon'` override). Field is placeholder for future reactive defense logic (remote creep retreat, defender dispatch to remote).
 
 ### Advanced defense
 
@@ -211,15 +211,15 @@ Current defense: tower focus-fire, safe mode, melee defenders. Sufficient for NP
 
 #### Defender improvements
 
-- [ ] **Ranged defender role** — `[RANGED_ATTACK, MOVE]` body. Kites hostiles from range 3, retreats behind ramparts when damaged. More effective than melee against boosted attackers who can one-shot melee defenders.
-- [ ] **Healer role** — `[HEAL, MOVE]` body. Pairs with defenders to sustain them during extended fights. Stays at range 1 behind the attacker. Useful once we face enemies with HEAL parts.
+- [x] **Ranged defender role** — `src/roles/rangedDefender.ts`. KITE state: kites at range 3, uses `rangedMassAttack` when 2+ hostiles in range 3, retreats when gap drops to ≤1. RALLY state: moves toward spawn when no hostiles. `defenderComposition()` in spawner returns melee/ranged/healer mix: ≤200 threat = melee only; 201–600 = melee+ranged; >600 = melee+2ranged+healer (bumps ranged +1 if any enemy has HEAL parts, capped at 4 total).
+- [x] **Healer role** — `src/roles/healer.ts`. FOLLOW state: moves adjacent to `partnerName` creep (cached from `creep.memory.partnerName`), uses `heal()` at range 1 or `rangedHeal()` within range 3. RALLY state: moves to spawn when partner absent. Paired with melee defender in high-threat compositions.
 - [ ] **Boosted defenders** — At RCL 7+ with lab compounds available, boost defenders with TOUGH (damage reduction) and ATTACK/RANGED_ATTACK compounds before dispatching. Requires boost application infrastructure (see Stage 3 labs todo).
 - [ ] **Defender duo/quad formations** — Coordinated movement of 2-4 creeps as a unit (attacker+healer, or ranged+healer pairs). Requires a formation manager that moves all creeps in lockstep. End-game PvP capability.
 
 #### Intel & strategic
 
 - [ ] **Observer placement and scanning** — Place observer at RCL 8. Scan a queue of rooms each tick (`observer.observeRoom()`). Use for: scouting highway rooms for deposits/power banks, monitoring hostile neighbors, checking remote room status without sending creeps. Add `src/managers/observer.ts` with a scan queue in Memory.
-- [ ] **Threat memory and neighbor tracking** — Record hostile player names, attack patterns, and room ownership in Memory. Use to: avoid placing remotes near aggressive players, preemptively spawn defenders when a known attacker's creeps are spotted in adjacent rooms, prioritize safe mode charges.
+- [x] **Threat memory and neighbor tracking** — `src/utils/neighbors.ts`. Segment-backed (segment 5) `NeighborRecord` stores firstSeen/lastSeen/attacks/seenRooms/maxThreatScore/bodies/hostility per player username. `recordHostile(creep, room)` called from `runDefense` for each hostile. Hostility classifier: `passive` (0 attacks or low threat), `unknown` (1–2 attacks, moderate threat), `aggressive` (3+ attacks OR maxThreatScore ≥ 500). `hostilesSeen(roomName, maxAge)` used in `evaluateRemoteRoom` to reject rooms with recent aggressive-player sightings. Console commands: `neighbors()` (summary table), `suggestSpawn(roomName)`.
 
 ### Offensive capabilities
 
