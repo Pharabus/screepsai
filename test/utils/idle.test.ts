@@ -54,7 +54,7 @@ describe('idle', () => {
       expect(creep.memory.idleSince).toBe(100); // unchanged — streak continues
     });
 
-    it('moves hauler to spawn for recycling after 50 idle ticks', () => {
+    it('does not recycle hauler regardless of idle duration', () => {
       Game.time = 200;
       const spawnMock = {
         pos: new RoomPosition(25, 25, 'W1N1'),
@@ -68,41 +68,7 @@ describe('idle', () => {
       });
       markIdle(creep);
 
-      // idleTicks = 200 - 140 = 60 >= 50 → should trigger recycle path
-      expect(creep.pos.findClosestByRange).toHaveBeenCalledWith(FIND_MY_SPAWNS);
-      expect(spawnMock.recycleCreep).toHaveBeenCalledWith(creep);
-    });
-
-    it('recycles hauler immediately when adjacent to spawn', () => {
-      Game.time = 200;
-      const spawnMock = {
-        pos: new RoomPosition(10, 10, 'W1N1'),
-        recycleCreep: vi.fn(() => OK),
-      };
-      const creep = mockCreep({
-        memory: { role: 'hauler', idleSince: 140, _idleLastTick: 199 },
-        pos: Object.assign(new RoomPosition(11, 10, 'W1N1'), {
-          findClosestByRange: vi.fn(() => spawnMock),
-          inRangeTo: vi.fn(() => false),
-          isEqualTo: vi.fn(() => false),
-        }),
-      });
-      markIdle(creep);
-      expect(spawnMock.recycleCreep).toHaveBeenCalledWith(creep);
-    });
-
-    it('does not recycle hauler before the 50-tick threshold', () => {
-      Game.time = 200;
-      const spawnMock = { recycleCreep: vi.fn() };
-      const creep = mockCreep({
-        memory: { role: 'hauler', idleSince: 170, _idleLastTick: 199 },
-        pos: Object.assign(new RoomPosition(10, 10, 'W1N1'), {
-          findClosestByRange: vi.fn(() => spawnMock),
-        }),
-      });
-      markIdle(creep);
-
-      // idleTicks = 30 < 50 → no recycle
+      // Hauler has no recycle threshold — should never be sent to recycle
       expect(spawnMock.recycleCreep).not.toHaveBeenCalled();
     });
 
@@ -272,14 +238,11 @@ describe('idle', () => {
       expect(shouldRecycle(creep, 1000)).toBe(false);
     });
 
-    it('returns false for hauler below threshold', () => {
+    it('returns false for hauler (no recycle threshold)', () => {
       const creep = mockCreep({ memory: { role: 'hauler' } });
       expect(shouldRecycle(creep, 49)).toBe(false);
-    });
-
-    it('returns true for hauler at threshold', () => {
-      const creep = mockCreep({ memory: { role: 'hauler' } });
-      expect(shouldRecycle(creep, 50)).toBe(true);
+      expect(shouldRecycle(creep, 50)).toBe(false);
+      expect(shouldRecycle(creep, 10_000)).toBe(false);
     });
 
     it('returns false for defender below threshold', () => {

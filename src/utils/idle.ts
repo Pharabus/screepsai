@@ -5,7 +5,6 @@ const idleCreeps = new Set<string>();
 
 // How many consecutive idle ticks before a role is recycled back to spawn energy.
 const RECYCLE_THRESHOLDS: Partial<Record<CreepRoleName, number>> = {
-  hauler: 50,
   defender: 100,
   rangedDefender: 100,
   healer: 100,

@@ -135,6 +135,7 @@ export function upgradersNeeded(room: Room): number {
 
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
+  if (room.storage && stored < 5_000) return 0; // pause — let remotes refill before resuming drain
   if (stored < 100_000) return 1;
   if (stored < 200_000) return 2;
   if (stored < 500_000) return 3;
@@ -290,9 +291,14 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     });
     // Keep 1 harvester as emergency bootstrap in case all miners die
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], maxRepeats: 4, minCount: 1 });
-    // Cap upgrader body at 5 WORK while storage is very low to limit per-tick drain
+    // Scale upgrader body to storage reserves: 5W below 15k, 10W below 50k, full above.
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-    const upgraderEnergyCap = storedEnergy < 50_000 ? 600 : room.energyCapacityAvailable;
+    const upgraderEnergyCap =
+      storedEnergy < 15_000
+        ? 600 // 5 WORK
+        : storedEnergy < 50_000
+          ? 1100 // 10 WORK
+          : room.energyCapacityAvailable;
     queue.push({
       role: 'upgrader',
       body: buildUpgraderBody(upgraderEnergyCap),
@@ -322,6 +328,8 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       });
     }
     // Remote mining roles (lower priority than local economy)
+    // Prespawn threshold: body spawn time (~33t) + cross-room travel (~80t) + buffer
+    const REMOTE_MINER_PRESPAWN_TICKS = 150;
     const remoteRooms = mem?.remoteRooms ?? [];
     for (const remoteRoom of remoteRooms) {
       const remoteMem = Memory.rooms[remoteRoom];
@@ -335,10 +343,25 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       const totalMiners = countCreepsByRole('miner', room.name);
       const totalHaulers = countCreepsByRole('remoteHauler', room.name);
 
-      // Spawn remote miners: 1 per source, using source assignments when available
+      // Spawn remote miners: 1 per source, prespawning when TTL is low so the
+      // source is never left unmined between a miner dying and its replacement arriving.
       if (remoteMem?.sources) {
         for (const entry of remoteMem.sources) {
-          if (entry.minerName && Game.creeps[entry.minerName]) continue;
+          const existingMiner = entry.minerName ? Game.creeps[entry.minerName] : undefined;
+          // Skip if miner is alive with enough TTL to outlast a replacement's travel time
+          if (
+            existingMiner &&
+            (existingMiner.ticksToLive ?? Infinity) >= REMOTE_MINER_PRESPAWN_TICKS
+          )
+            continue;
+          // If dying or dead, skip if a replacement is already en route to this room
+          const hasReplacement = Object.values(Game.creeps).some(
+            (c) =>
+              c.memory.role === 'miner' &&
+              c.memory.targetRoom === remoteRoom &&
+              c.name !== (entry.minerName ?? ''),
+          );
+          if (hasReplacement) continue;
           queue.push({
             role: 'miner',
             body: remoteBody,

@@ -344,7 +344,17 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(2);
   });
 
-  it('returns 1 when storage exists but is low', () => {
+  it('returns 0 when storage exists but is below 5k (pause to let remotes refill)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      storage: { store: { getUsedCapacity: () => 4_999 } },
+    });
+    expect(upgradersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 when storage exists and is at/above 5k floor', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
