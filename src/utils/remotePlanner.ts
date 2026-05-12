@@ -3,7 +3,7 @@
  * Called periodically to update Memory.rooms[homeRoom].remoteRooms.
  */
 
-import { hostilesSeen } from './neighbors';
+import { hostilesSeen, getNeighbor } from './neighbors';
 
 // Auto-scale cap: hold at 1 remote room until home storage clears this bar so
 // a second remote's spawn/bootstrap cost doesn't stall storage growth.
@@ -23,8 +23,10 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
   if (hostiles > 0 && scoutAge < 1500) return -1;
 
-  // Reject rooms where we've seen aggressive players recently
-  const aggressiveInRoom = hostilesSeen(targetRoomName, 20_000).length > 0;
+  // Reject rooms where aggressive players (not mere scouts) have been seen recently
+  const aggressiveInRoom = hostilesSeen(targetRoomName, 20_000).some(
+    (name) => getNeighbor(name)?.hostility === 'aggressive',
+  );
   if (aggressiveInRoom) return -1;
 
   // Reject rooms with no sources
@@ -56,11 +58,16 @@ export function selectRemoteRooms(homeRoom: Room): void {
   scored.sort((a, b) => b.score - a.score);
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Auto-scale: 1 remote while storage is below 100k (a second remote adds
-  // ~5 e/t spawn cost plus bootstrap drain, which can stall storage growth
-  // before surplus is established), 2 remotes once storage clears that bar.
+  // Auto-scale with hysteresis: scale up at 100k, scale down only below 70k.
+  // Prevents churn when storage oscillates near the threshold — a room that
+  // was selected stays selected until storage is well below the scale-up bar.
   const stored = homeRoom.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  const cap = stored >= REMOTE_ROOM_SCALE_THRESHOLD ? 2 : 1;
+  const currentCount = mem.remoteRooms?.length ?? 0;
+  const SCALE_DOWN_THRESHOLD = Math.round(REMOTE_ROOM_SCALE_THRESHOLD * 0.7);
+  const cap =
+    stored >= REMOTE_ROOM_SCALE_THRESHOLD || (currentCount >= 2 && stored >= SCALE_DOWN_THRESHOLD)
+      ? 2
+      : 1;
   const selected = scored.slice(0, cap);
   mem.remoteRooms = selected.map((r) => r.name);
 

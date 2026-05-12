@@ -82,7 +82,7 @@ describe('buildSpawnQueue', () => {
     expect(builderEntry?.minCount).toBe(0);
   });
 
-  it('requests builders when sources are unlinked even if storage below floor', () => {
+  it('requests 0 builders when no construction sites exist', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
@@ -96,8 +96,36 @@ describe('buildSpawnQueue', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 15000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const builderEntry = queue.find((r) => r.role === 'builder');
+
+    expect(builderEntry?.minCount).toBe(0);
+  });
+
+  it('requests builders when construction sites exist (unlinked, low storage)', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const site = { structureType: STRUCTURE_ROAD };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
         store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5000 : 0) },
       },
+      find: vi.fn((type: number) => {
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [site];
+        return [];
+      }),
     });
     const queue = buildSpawnQueue(room);
     const builderEntry = queue.find((r) => r.role === 'builder');
@@ -105,7 +133,7 @@ describe('buildSpawnQueue', () => {
     expect(builderEntry?.minCount).toBeGreaterThan(0);
   });
 
-  it('requests builders when all sources linked and storage above floor', () => {
+  it('requests builders when construction sites exist (all-linked, storage above floor)', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
@@ -123,11 +151,16 @@ describe('buildSpawnQueue', () => {
     };
     (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
 
+    const site = { structureType: STRUCTURE_EXTENSION };
     const room = mockRoom({
       name: 'W1N1',
       storage: {
         store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 15000 : 0) },
       },
+      find: vi.fn((type: number) => {
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [site];
+        return [];
+      }),
     });
     const queue = buildSpawnQueue(room);
     const builderEntry = queue.find((r) => r.role === 'builder');
@@ -161,12 +194,31 @@ describe('buildSpawnQueue', () => {
     expect(harvester?.minCount).toBe(2);
   });
 
-  it('miner economy keeps 1 emergency harvester', () => {
+  it('miner economy retires harvester when all miners are alive', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
         sources: [
           { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    expect(harvester?.minCount).toBe(0);
+  });
+
+  it('miner economy keeps emergency harvester when a source lacks a miner', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any }, // no miner
         ],
       },
     };

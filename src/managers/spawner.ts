@@ -163,7 +163,7 @@ function buildersNeeded(room: Room): number {
     'spawner:sites:' + room.name,
     () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
   );
-  if (sites === 0) return 1; // idle-upgrades
+  if (sites === 0) return 0;
   return Math.min(Math.ceil(sites / 3), 3);
 }
 
@@ -289,8 +289,14 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       maxRepeats: 8,
       minCount: haulersNeeded(room),
     });
-    // Keep 1 harvester as emergency bootstrap in case all miners die
-    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], maxRepeats: 4, minCount: 1 });
+    // Emergency bootstrap harvester: only needed while at least one source lacks a miner.
+    // Retires automatically once all container sources are covered.
+    queue.push({
+      role: 'harvester',
+      pattern: [WORK, CARRY, MOVE],
+      maxRepeats: 4,
+      minCount: minersNeeded(room) > 0 ? 1 : 0,
+    });
     // Scale upgrader body to storage reserves: 5W below 15k, 10W below 50k, full above.
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
     const upgraderEnergyCap =
