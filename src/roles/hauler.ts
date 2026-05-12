@@ -327,35 +327,31 @@ function pickupLabFlush(creep: Creep, mem: RoomMemory | undefined): boolean {
 function pickupLabInput(creep: Creep, mem: RoomMemory | undefined): boolean {
   if (!mem?.activeReaction || !mem.inputLabIds) return false;
   const storage = creep.room.storage;
-  if (!storage) return false;
+  const terminal = creep.room.terminal;
+  if (!storage && !terminal) return false;
 
   const { input1, input2 } = mem.activeReaction;
-  const lab1 = Game.getObjectById(mem.inputLabIds[0]);
-  const lab2 = Game.getObjectById(mem.inputLabIds[1]);
+  const inputs: [StructureLab | null, ResourceConstant][] = [
+    [Game.getObjectById(mem.inputLabIds[0]), input1],
+    [Game.getObjectById(mem.inputLabIds[1]), input2],
+  ];
 
-  if (lab1 && (lab1.store.getFreeCapacity(input1) ?? 0) >= LAB_REACTION_AMOUNT) {
-    if (storage.store.getUsedCapacity(input1) > 0) {
-      creep.memory.targetId = storage.id;
-      if (creep.withdraw(storage, input1) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storage, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#00ff88' },
-        });
-      }
-      return true;
+  for (const [lab, mineral] of inputs) {
+    if (!lab || (lab.store.getFreeCapacity(mineral) ?? 0) < LAB_REACTION_AMOUNT) continue;
+    const inStorage = storage?.store.getUsedCapacity(mineral) ?? 0;
+    const inTerminal = terminal?.store.getUsedCapacity(mineral) ?? 0;
+    // Prefer storage; fall back to terminal so 26k H stuck there isn't invisible to labs
+    const source: StructureStorage | StructureTerminal | null =
+      inStorage > 0 ? (storage ?? null) : inTerminal > 0 ? (terminal ?? null) : null;
+    if (!source) continue;
+    creep.memory.targetId = source.id;
+    if (creep.withdraw(source, mineral) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, source, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#00ff88' },
+      });
     }
-  }
-  if (lab2 && (lab2.store.getFreeCapacity(input2) ?? 0) >= LAB_REACTION_AMOUNT) {
-    if (storage.store.getUsedCapacity(input2) > 0) {
-      creep.memory.targetId = storage.id;
-      if (creep.withdraw(storage, input2) === ERR_NOT_IN_RANGE) {
-        moveTo(creep, storage, {
-          priority: PRIORITY_HAULER,
-          visualizePathStyle: { stroke: '#00ff88' },
-        });
-      }
-      return true;
-    }
+    return true;
   }
   return false;
 }
@@ -514,8 +510,22 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
   );
   if (!mineralType) return false;
 
-  // Prefer terminal for excess minerals
+  const storage = creep.room.storage;
   const terminal = creep.room.terminal;
+
+  // Keep a working buffer in storage so pickupLabInput can load labs without
+  // touching the terminal (which requires an extra trip across the room).
+  if (storage && storage.store.getUsedCapacity(mineralType) < MINERAL_STORAGE_FLOOR) {
+    if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, storage, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#cc66ff' },
+      });
+    }
+    return true;
+  }
+
+  // Overflow to terminal
   if (terminal && terminal.store.getFreeCapacity() > 0) {
     if (creep.transfer(terminal, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, terminal, {
@@ -526,7 +536,7 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
     return true;
   }
 
-  const storage = creep.room.storage;
+  // Terminal full or absent — spill into storage
   if (storage) {
     if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {

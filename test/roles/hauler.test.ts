@@ -161,6 +161,38 @@ describe('hauler terminal logistics', () => {
     expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H');
   });
 
+  it('fills storage buffer before overflowing to terminal when storage mineral is below floor', () => {
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, H: 0 }, 1000000), // 0 H in storage
+    };
+    const terminal = {
+      pos: new RoomPosition(28, 28, 'W1N1'),
+      store: mockStore({}, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ H: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // 0 H in storage < 5000 floor → deliver to storage first, not terminal
+    expect(creep.transfer).toHaveBeenCalledWith(storage, 'H');
+    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, 'H');
+  });
+
   it('does not move minerals to terminal when storage is below floor', () => {
     const storageStore = mockStore({ energy: 100, H: 3000 });
     const storage = {
@@ -238,6 +270,55 @@ describe('hauler lab logistics', () => {
     hauler.run(creep);
 
     expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H');
+  });
+
+  it('withdraws lab input from terminal when storage has none', () => {
+    const inputLab1 = mockLab('lab1', {
+      store: mockLabStore({}, { H: 3000 }), // lab needs H
+    });
+    const inputLab2 = mockLab('lab2');
+
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100 }), // 0 H in storage
+    };
+    const terminal = {
+      id: 'term1' as any,
+      pos: new RoomPosition(28, 28, 'W1N1'),
+      store: mockStore({ energy: 10000, H: 5000 }, 300000), // H in terminal
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3'],
+      },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // No H in storage → fall back to withdrawing from terminal
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, 'H');
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'H');
   });
 
   it('delivers lab input mineral to the correct input lab', () => {

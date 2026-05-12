@@ -1,7 +1,7 @@
 export const MINERAL_STORAGE_FLOOR = 5000;
-export const MINERAL_TERMINAL_CEILING = 50000;
-export const ENERGY_TERMINAL_BUFFER = 50000;
-export const TERMINAL_ENERGY_FLOOR = 10_000;
+export const MINERAL_TERMINAL_CEILING = 20_000;
+export const ENERGY_TERMINAL_BUFFER = 5_000;
+export const TERMINAL_ENERGY_FLOOR = 15_000;
 
 // Market buying thresholds
 export const MAX_BUY_PRICE = 0.5;

@@ -23,6 +23,7 @@ interface CreepMemory {
     | Resource
     | StructureContainer
     | StructureStorage
+    | StructureTerminal
     | StructureController
     | StructureSpawn
     | StructureExtension

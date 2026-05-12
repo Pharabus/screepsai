@@ -3,6 +3,7 @@ import { assignMineralMiner } from '../utils/roomPlanner';
 import { moveTo } from '../utils/movement';
 import { registerStationary, PRIORITY_STATIC, PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { MINERAL_TERMINAL_CEILING } from '../utils/thresholds';
 
 const states: StateMachineDefinition = {
   POSITION: {
@@ -50,6 +51,18 @@ const states: StateMachineDefinition = {
 
       const mineral = Game.getObjectById(mem.mineralId);
       if (!mineral || mineral.mineralAmount === 0) return undefined;
+
+      // Throttle: pause when the container is full (prevents overflow decay) or
+      // total stockpile has reached the terminal sell ceiling (don't outpace logistics).
+      if (mem.mineralContainerId) {
+        const container = Game.getObjectById(mem.mineralContainerId);
+        if (container && container.store.getFreeCapacity() === 0) return undefined;
+      }
+      const mineralType = mineral.mineralType;
+      const totalStockpile =
+        (creep.room.storage?.store.getUsedCapacity(mineralType) ?? 0) +
+        (creep.room.terminal?.store.getUsedCapacity(mineralType) ?? 0);
+      if (totalStockpile >= MINERAL_TERMINAL_CEILING) return undefined;
 
       creep.harvest(mineral);
       return undefined;
