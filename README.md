@@ -13,9 +13,9 @@ A TypeScript Screeps AI focused on automated room management from RCL 1 through 
 - **Load-balanced harvesting** that spreads creeps across available sources.
 - **Memory optimisations** — lazy `RawMemory` segment wrapper, per-tick cache, and one-shot Memory shape init to keep the per-tick JSON parse cheap as persistent data grows.
 - **CPU profiler** with exponential-moving-average samples per manager and per role, exposed via console globals `stats()` / `resetStats()`.
-- **Remote mining** — Scouts explore adjacent rooms; remote planner picks the best room(s), auto-scaling the cap with home storage (1 remote below 100k, 2 above); remote miners and haulers harvest energy from unowned rooms and deliver it home.
+- **Remote mining** — Scouts explore adjacent rooms; remote planner picks the best room(s), auto-scaling the cap with home storage (1 remote below 100k, 2 above) with hysteresis (drops back to 1 only below 70k to prevent churn); rejects rooms with recent aggressive-neighbor sightings; remote miners and haulers harvest energy from unowned rooms and deliver it home.
 - **Lab reactions** (RCL 6+) — Stamp-based lab placement (3/6/10 labs at RCL 6/7/8), automatic reaction selection from available minerals, hauler-managed input/output logistics.
-- **Terminal policy** (RCL 6+) — Haulers deliver minerals to terminal preferentially; excess minerals above a 5k storage floor are moved from storage to terminal for future market orders.
+- **Terminal policy** (RCL 6+) — Haulers fill storage with minerals up to a 5k floor before overflowing to terminal (keeps labs supplied without round-tripping through the market); terminal manager sells minerals above a 20k ceiling to the best buy order every 100 ticks, reserving 5k energy for transaction fees.
 - **Soft traffic manager** — CostMatrix-based pathing avoids creep clusters (cost 15) and hard-blocks stationary miners (cost 255). Each creep paths and moves independently; the Screeps engine handles 2-way swaps natively. Stuck detection fallback after 3 ticks. Cross-room pathing uses `maxRooms: 2`.
 - **Creep state machine** — all roles use a lightweight FSM (`StateMachineDefinition`) with state persisted in `creep.memory.state` for in-game debugging.
 - **Visual debugging overlay** (opt-in) drawing per-room RCL / energy / creep counts / source load / idle creep indicators / path visualizations via `RoomVisual`.
@@ -102,16 +102,16 @@ src/
 
 1. `initMemory()` — One-shot (per global reset) shape init for `Memory.creeps` / `Memory.rooms`, so hot-path code skips defensive `??= {}` branches.
 2. `resetTickCache()` — Clears the transient per-tick memoisation map.
-2b. `resetTraffic()` — Clears stationary creep set and visualization buffer.
-2c. `resetIdle()` — Clears the idle creep set for fresh per-tick tracking.
+   2b. `resetTraffic()` — Clears stationary creep set and visualization buffer.
+   2c. `resetIdle()` — Clears the idle creep set for fresh per-tick tracking.
 3. `runDefense()` — Refreshes per-room threat state and activates safe mode if a hostile has breached the base perimeter. Runs first so the spawner and towers both see the same threat view.
 4. `runSpawner()` — Walks the (dynamically built) spawn queue and issues one spawn per tick if a role is under its minimum.
 5. `runLinks()` — Transfers energy from source links to storage/controller links. Runs before rooms so creeps see fresh link state.
 6. `runRooms()` — Cleans `Memory.creeps` entries for dead creeps, then dispatches each living creep to its role handler. Roles register movement intents via `moveTo()` during this phase.
-6b. `resolveTraffic()` — Draws path visualizations when `Memory.visuals` is enabled. Movement already happened during role execution via `executeMove()`.
+   6b. `resolveTraffic()` — Draws path visualizations when `Memory.visuals` is enabled. Movement already happened during role execution via `executeMove()`.
 7. `runTowers()` — All towers focus-fire the highest-threat hostile; otherwise heal wounded allies, then repair. Wall/rampart repair target scales with storage energy.
-7b. `runLabs()` — Selects a reaction from available minerals (re-evaluated every 500 ticks), runs `outputLab.runReaction(inputLab1, inputLab2)` on all output labs each tick when input labs are loaded. Stores the active reaction in `RoomMemory.activeReaction`.
-7c. `runTerminal()` — Runs every 10 ticks. Stub for future market sell orders; hauler handles the actual storage→terminal mineral transfers.
+   7b. `runLabs()` — Selects a reaction from available minerals (re-evaluated every 500 ticks), runs `outputLab.runReaction(inputLab1, inputLab2)` on all output labs each tick when input labs are loaded. Stores the active reaction in `RoomMemory.activeReaction`.
+   7c. `runTerminal()` — Runs every 10 ticks. Stub for future market sell orders; hauler handles the actual storage→terminal mineral transfers.
 8. `runConstruction()` — Runs every 5 ticks. Places extensions, towers, containers, storage, terminal, extractor, links, labs, roads, ramparts — gated by RCL.
 9. `runVisuals()` — Opt-in `RoomVisual` overlay (no-op unless `Memory.visuals` is true). Includes idle creep indicators.
 10. `flushSegments()` — Serialises any mutated `RawMemory.segments` entries and registers requested segments for the next tick.
@@ -122,18 +122,18 @@ Each of steps 3–9 is wrapped in `profile(...)` so per-manager CPU cost surface
 
 All roles implement the `Role` interface (`run(creep: Creep): void`) in `src/roles/Role.ts` and use the FSM engine in `src/utils/stateMachine.ts`. Each role defines a `StateMachineDefinition` with named states; state is persisted in `creep.memory.state` so you can inspect what any creep is doing in-game. Builder and repairer roles refill via the shared `gatherEnergy()` helper (`src/utils/sources.ts`), which withdraws from logistics infrastructure (containers/storage) in miner economy or self-harvests from the best source in bootstrap economy. Delivery logic shared between hauler and remoteHauler is extracted into `src/utils/delivery.ts` — haulers opportunistically fill adjacent spawns/extensions, cache movement targets across ticks, and spread across unclaimed targets to avoid convergence oscillation.
 
-| Role           | Minimum | Body pattern        | Behavior |
-|----------------|---------|---------------------|----------|
-| `miner`        | 1/source (miner economy) | Local: `buildMinerBody` (max 6 WORK + CARRY + MOVE); Remote: `buildRemoteMinerBody` (WORK+MOVE pairs + CARRY, cap 5 WORK) | Sits on a container adjacent to its assigned source and harvests indefinitely. Transfers energy to adjacent link if available (requires CARRY). Remote miners path directly to stored source positions via cross-room PathFinder, build their own container, then repair it when damaged using their CARRY buffer. |
-| `hauler`       | 2-3/source unlinked, 2 linked (+1 with mineral/lab infra) | `[CARRY×2, MOVE×2]` | Task commitment: once a hauler picks a target it finishes the trip before re-evaluating. Only the nearest hauler to storage responds to urgent spawn/extension/tower energy needs (can preempt, but not within range 3 of a committed target). Pickup priority: storage link (≥200 energy) → dropped energy (≥50) → dropped minerals (≥50) → full source containers (≥1000) → mineral container → any source container → lab/terminal logistics. Delivery skips controller container when storage is below floor; controller container delivery requires ≥200 free capacity to prevent trivial top-offs. |
-| `harvester`    | 2 (bootstrap) / 1 (miner economy) | `[WORK, CARRY, MOVE]` | Self-harvests then delivers energy to spawn/extension/tower. Acts as emergency bootstrap when all miners die. |
-| `upgrader`     | 2 (bootstrap) / 1–6 (miner economy) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE]` ×4 | In miner economy: withdraws from controller container or storage, camps at controller (range 3). Count scales with storage surplus. |
-| `builder`      | 1–3 (by site count) | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4 | Builds construction sites prioritized by type (spawn > extensions > tower > containers > storage > roads > ramparts), falls back to upgrading when idle. Gathers energy via shared `gatherEnergy()` (logistics withdrawal in miner economy, self-harvest in bootstrap). |
-| `repairer`     | 1–2 (by damage) | `[WORK, CARRY, MOVE]` | Repairs structures below 75% HP (excluding walls), falls back to upgrading. Gathers energy via shared `gatherEnergy()`. |
-| `defender`     | dynamic | `[ATTACK, MOVE]`      | Chases the highest-threat hostile. Marks idle and rallies near storage/spawn when no hostiles. Only produced during active threats. |
-| `mineralMiner` | 0–1 (RCL 6+) | `[WORK×2, MOVE]` ×5 | Stands on mineral container and harvests when mineral is not depleted. Spawned only when extractor + container exist. |
-| `scout`        | 0–1 (miner economy) | `[MOVE]` | Explores adjacent rooms, records source count/ownership/hostiles/positions. Re-scouts every 5000 ticks. Only spawned when there is an unscouted or stale room. |
-| `remoteHauler` | 2/remote source | `[CARRY×2, MOVE×2]` ×8 | Picks up dropped energy or withdraws from containers in remote room. Delivers to storage/spawns/towers/controller container in home room. Idles near source when waiting for energy. Sized to match local haulers (800 carry) so two haulers can keep up with a reserved source's 10/tick production over long round trips. |
+| Role           | Minimum                                                   | Body pattern                                                                                                                             | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `miner`        | 1/source (miner economy)                                  | Local: `buildMinerBody` (max 6 WORK + CARRY + MOVE); Remote: `buildRemoteMinerBody` (WORK+MOVE pairs + CARRY, cap 5 WORK)                | Sits on a container adjacent to its assigned source and harvests indefinitely. Transfers energy to adjacent link if available (requires CARRY). Remote miners path directly to stored source positions via cross-room PathFinder, build their own container, then repair it when damaged using their CARRY buffer.                                                                                                                                                                                                                                                                                       |
+| `hauler`       | 2-3/source unlinked, 2 linked (+1 with mineral/lab infra) | `[CARRY×2, MOVE×2]`                                                                                                                      | Task commitment: once a hauler picks a target it finishes the trip before re-evaluating. Only the nearest hauler to storage responds to urgent spawn/extension/tower energy needs (can preempt, but not within range 3 of a committed target). Pickup priority: storage link (≥200 energy) → dropped energy (≥50) → dropped minerals (≥50) → full source containers (≥1000) → mineral container → any source container → lab/terminal logistics. Delivery skips controller container when storage is below floor; controller container delivery requires ≥200 free capacity to prevent trivial top-offs. |
+| `harvester`    | 2 (bootstrap) / 0–1 (miner economy)                       | `[WORK, CARRY, MOVE]`                                                                                                                    | Self-harvests then delivers energy to spawn/extension/tower. In miner economy retires to 0 once every source has an assigned miner; spawns 1 emergency bootstrap creep only when a source lacks a miner.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `upgrader`     | 2 (bootstrap) / 0–6 (miner economy)                       | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK×2, CARRY, MOVE]` ×4 (capped at 600 energy below 15k storage, 1100 below 50k, full above) | In miner economy: withdraws from controller container or storage, camps at controller (range 3). Returns 0 when storage exists and stored energy is below 5k (pause production so storage refills). Body cap shrinks under storage scarcity so a 15-WORK upgrader doesn't drain storage faster than miners can refill it. Count scales with storage surplus.                                                                                                                                                                                                                                             |
+| `builder`      | 0–3 (by site count)                                       | Bootstrap: `[WORK, CARRY, MOVE]`; Miner: `[WORK, CARRY, MOVE×2]` ×4                                                                      | Builds construction sites prioritized by type (spawn > extensions > tower > containers > storage > roads > ramparts), falls back to upgrading when idle. Returns 0 when there are no active construction sites (was previously 1 to idle-upgrade — that path silently bled energy on fully-built rooms). Gathers energy via shared `gatherEnergy()` (logistics withdrawal in miner economy, self-harvest in bootstrap).                                                                                                                                                                                  |
+| `repairer`     | 1–2 (by damage)                                           | `[WORK, CARRY, MOVE]`                                                                                                                    | Repairs structures below 75% HP (excluding walls), falls back to upgrading. Gathers energy via shared `gatherEnergy()`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `defender`     | dynamic                                                   | `[ATTACK, MOVE]`                                                                                                                         | Chases the highest-threat hostile. Marks idle and rallies near storage/spawn when no hostiles. Only produced during active threats.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `mineralMiner` | 0–1 (RCL 6+)                                              | `[WORK×2, MOVE]` ×5                                                                                                                      | Stands on mineral container and harvests when mineral is not depleted. Spawned only when extractor + container exist.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `scout`        | 0–1 (miner economy)                                       | `[MOVE]`                                                                                                                                 | Explores adjacent rooms, records source count/ownership/hostiles/positions. Re-scouts every 5000 ticks. Only spawned when there is an unscouted or stale room.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `remoteHauler` | 2/remote source                                           | `[CARRY×2, MOVE×2]` ×8                                                                                                                   | Picks up dropped energy or withdraws from containers in remote room. Delivers to storage/spawns/towers/controller container in home room. Idles near source when waiting for energy. Sized to match local haulers (800 carry) so two haulers can keep up with a reserved source's 10/tick production over long round trips.                                                                                                                                                                                                                                                                              |
 
 Bodies are generated by `buildBody` (`src/utils/body.ts`), which repeats the pattern as many times as `energyCapacityAvailable` allows (default cap: 50 / pattern length). Specialized body builders exist for miners (`buildMinerBody` — maximizes WORK, cap 6), upgraders (`buildUpgraderBody` — maximizes WORK, cap 15), and remote miners (`buildRemoteMinerBody` — WORK+MOVE pairs at 1:1 off-road ratio, plus 1 CARRY for building containers, cap 5 WORK). Non-production roles are capped via `maxRepeats` to control spawning cost: haulers ×8, remote haulers ×8, harvesters ×4, builders ×4, repairers ×4. As the room's energy capacity grows, newly spawned creeps automatically get larger bodies.
 
@@ -144,13 +144,13 @@ The spawn queue in `src/managers/spawner.ts` is rebuilt each tick per room by `b
 **Miner economy** (once source containers are built):
 
 0. defender (dynamic — only when threats active)
-1. miner (1 per source with a container)
+1. miner (1 per source with a container; remote miners are pre-spawned 150 ticks before TTL expiry)
 2. hauler (2–3 per unlinked source, 1 total for linked sources)
-3. harvester (1 — emergency bootstrap)
-4. upgrader (1–6, scales with capacity + storage surplus: >50k/200k/500k = +1/+2/+3)
-5. builder (1–3, scales with active construction sites: `ceil(sites / 3)`)
+3. harvester (0–1 — only emergency bootstrap when a source lacks an assigned miner)
+4. upgrader (0–6; 0 when storage < 5k, scales with capacity + storage surplus: >50k/200k/500k = +1/+2/+3)
+5. builder (0–3, scales with active construction sites; 0 when no sites)
 6. repairer (1–2, scales to 2 when >5 damaged structures)
-7. mineralMiner (0–1, RCL 6+ when extractor + container + mineral available)
+7. mineralMiner (0–1, RCL 6+ when extractor + container + mineral available; throttles when container is full or stockpile reaches `MINERAL_TERMINAL_CEILING` 20k)
 8. remote miners (1 per remote source — reuses `miner` role with `targetRoom` set)
 9. remoteHauler (2 per remote source)
 10. scout (0–1 — only spawned when unscouted or stale rooms exist)
@@ -173,16 +173,16 @@ Progression is driven by the controller level (RCL) of each owned room. The cons
 
 ### Structure caps per RCL
 
-| RCL | Extensions | Towers | Links | Containers | Storage | Other |
-|-----|------------|--------|-------|------------|---------|-------|
-| 1   | 0          | 0      | 0     | —          | —       | —     |
-| 2   | 5          | 0      | 0     | Source + controller | — | Roads |
-| 3   | 10         | 1      | 0     | "          | —       | Roads, ramparts |
-| 4   | 20         | 1      | 0     | "          | 1       | Roads, ramparts |
-| 5   | 30         | 2      | 2     | "          | "       | Roads, ramparts |
-| 6   | 40         | 2      | 3     | + mineral  | "       | Roads, ramparts, extractor, terminal, 3 labs |
-| 7   | 50         | 3      | 4     | "          | "       | " + 6 labs |
-| 8   | 60         | 6      | 6     | "          | "       | " + 10 labs |
+| RCL | Extensions | Towers | Links | Containers          | Storage | Other                                        |
+| --- | ---------- | ------ | ----- | ------------------- | ------- | -------------------------------------------- |
+| 1   | 0          | 0      | 0     | —                   | —       | —                                            |
+| 2   | 5          | 0      | 0     | Source + controller | —       | Roads                                        |
+| 3   | 10         | 1      | 0     | "                   | —       | Roads, ramparts                              |
+| 4   | 20         | 1      | 0     | "                   | 1       | Roads, ramparts                              |
+| 5   | 30         | 2      | 2     | "                   | "       | Roads, ramparts                              |
+| 6   | 40         | 2      | 3     | + mineral           | "       | Roads, ramparts, extractor, terminal, 3 labs |
+| 7   | 50         | 3      | 4     | "                   | "       | " + 6 labs                                   |
+| 8   | 60         | 6      | 6     | "                   | "       | " + 10 labs                                  |
 
 - **Extensions** use a compact stamp pattern (`EXTENSION_STAMP`) around the spawn with road corridors on the cardinal axes. Falls back to ring scanning if stamp positions are terrain-blocked.
 - **Towers** are placed on ring positions 3–6 tiles from the first spawn.
@@ -201,6 +201,7 @@ Progression is driven by the controller level (RCL) of each owned room. The cons
 The room starts in **bootstrap economy** (harvesters self-harvest and deliver) and transitions to **miner economy** when the room planner (`src/utils/roomPlanner.ts`) detects the first source container is built. The transition is automatic and tracked via `RoomMemory.minerEconomy`.
 
 In miner economy:
+
 - Static **miners** (WORK+CARRY+MOVE) sit on source containers and harvest continuously. With CARRY parts, they can transfer energy directly to adjacent links.
 - **Haulers** (CARRY + MOVE) use a task commitment system — once a pickup target is selected, the hauler finishes the trip before re-evaluating priorities (only urgent spawn/extension needs can preempt, and not when the hauler is within range 3 of its target). Pickup priority: storage link (≥200 energy threshold) → dropped energy → dropped minerals → full source containers (≥1000) → mineral container → remaining source containers → lab/terminal logistics. On delivery, haulers skip the controller container when storage is below floor, and require ≥200 free capacity to deliver to the controller container (preventing trivial top-offs).
 - **Upgraders** switch to heavy WORK bodies and withdraw from the controller container or storage instead of self-harvesting. They camp at the controller permanently. Count scales with storage surplus.
@@ -213,7 +214,7 @@ In miner economy:
 1. **RCL 1 (bootstrap):** Two harvesters feed the spawn; two upgraders push the controller toward RCL 2. One builder and one repairer idle-upgrade until there is work.
 2. **RCL 2 (transition):** Extensions, roads, source containers, and controller container construction sites appear. Once the first source container is built, the room switches to miner economy — miners, haulers, and heavy-WORK upgraders replace the harvester-based flow. Upgrade throughput jumps significantly.
 3. **RCL 3:** The first tower goes up; ramparts are placed on critical structures. The tower manager starts defending, healing, and repairing (holding 50% of its energy in reserve for combat).
-4. **RCL 4:** Storage is built; haulers stockpile surplus. Upgrader count scales with storage energy: 1 below 15k, 2 below 50k, then capacity-based with bonus tiers at 100k/200k/500k. Builders unlock at 10k, upgraders at 15k — the gap lets builders work without a second upgrader competing for energy. Extension stamp fills out to 20.
+4. **RCL 4:** Storage is built; haulers stockpile surplus. Upgrader count scales with storage energy: 0 below 5k (pause to let storage refill), 1 below 15k, 2 below 50k, then capacity-based with bonus tiers at 100k/200k/500k. Upgrader bodies also scale down under scarcity (cap 600 energy below 15k, 1100 below 50k, full above) so a single 15-WORK upgrader doesn't drain reserves faster than miners can refill them. Builders unlock at 10k, upgraders at 15k — the gap lets builders work without a second upgrader competing for energy. Extension stamp fills out to 20.
 5. **RCL 5:** Two links are built — storage link (receiver) and source link (sender). Miners transfer energy to the source link; it transfers instantly to the storage link; a hauler empties it. Hauler count drops for linked sources. Second tower comes online.
 6. **RCL 6:** Third link (controller or second source). Extractor + mineral container placed on the room mineral; a mineralMiner spawns. Terminal placed near storage. Lab cluster (3 labs) placed via stamp pattern; the lab manager auto-selects reactions from available minerals. Haulers carry minerals to storage/terminal and manage lab input/output logistics.
 
@@ -223,11 +224,11 @@ Once in miner economy, the AI expands into adjacent unowned rooms for supplement
 
 1. A `scout` creep (1 MOVE, cheapest possible) is spawned only when `findScoutTarget()` identifies an unscouted or stale (>5000 ticks) adjacent room. It explores via cross-room PathFinder, recording source count, source positions (`scoutedSourceData`), controller ownership/reservation, and hostile presence into `RoomMemory` scouting fields. Once all rooms are freshly scouted, no scout is spawned — the existing one expires via TTL.
 
-2. Every 100 ticks, `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) evaluates all scouted adjacent rooms. It rejects rooms that are owned, reserved by other players (own reservations are accepted), have no sources, or have hostile sightings less than 1500 ticks old (stale sightings from transient invaders are tolerated). The top 2 rooms by source count are stored in `RoomMemory.remoteRooms`.
+2. Every 100 ticks, `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) evaluates all scouted adjacent rooms. It rejects rooms that are owned, reserved by other players (own reservations are accepted), have no sources, have hostile sightings less than 1500 ticks old (stale sightings from transient invaders are tolerated), or where any player previously classified as `aggressive` (≥3 attacks or maxThreatScore ≥500) has been seen within 20k ticks. The top rooms by source count are stored in `RoomMemory.remoteRooms`, capped at 1 below 100k home storage and 2 above; the second slot is kept with hysteresis until storage drops below 70k, preventing churn when storage oscillates near the threshold.
 
 3. For each remote room, the spawner queues remote miners (1 per source, `buildRemoteMinerBody` — WORK+MOVE pairs for off-road travel plus CARRY for building containers) and remote haulers (2 per source, `[CARRY×2, MOVE×2]` ×4).
 
-4. Remote miners reuse the existing `miner` role with `CreepMemory.targetRoom` set. The `POSITION` state handles cross-room travel by pathing directly to stored source positions via PathFinder with `maxRooms: 2`. Once at the source, the miner places a container construction site and builds it (using its CARRY part), then harvests normally once the container is complete. Remote miners also repair their container when it takes decay damage, using the same CARRY buffer (home miners use theirs for link transfers instead). Container decay (5000 hits/100 ticks) costs ~50 energy and ~10 ticks per cycle — negligible throughput loss.
+4. Remote miners reuse the existing `miner` role with `CreepMemory.targetRoom` set. The `POSITION` state handles cross-room travel by pathing directly to stored source positions via PathFinder with `maxRooms: 2`. Once at the source, the miner places a container construction site and builds it (using its CARRY part), then harvests normally once the container is complete. Remote miners also repair their container when it takes decay damage, using the same CARRY buffer (home miners use theirs for link transfers instead). Container decay (5000 hits/100 ticks) costs ~50 energy and ~10 ticks per cycle — negligible throughput loss. The spawner pre-spawns the next remote miner 150 ticks before its predecessor's TTL expires (`REMOTE_MINER_PRESPAWN_TICKS`), so cross-room travel time doesn't leave the source unmined.
 
 5. `remoteHauler` creeps pick up dropped resources and container energy in the remote room, then travel home to deliver to storage, spawns, towers, or the controller container. When waiting for energy in the remote room, haulers idle near the source to avoid border-tile bouncing.
 
@@ -249,13 +250,13 @@ For each room with towers, each tick (`src/managers/towers.ts`):
 
 Each hostile creep's `threatScore` is the sum of per-part values, ignoring dead parts (`hits === 0`):
 
-| Part           | Score |
-|----------------|-------|
-| `HEAL`         | 250   |
-| `CLAIM`        | 200   |
-| `RANGED_ATTACK`| 150   |
-| `ATTACK`       | 80    |
-| `WORK`         | 30    |
+| Part            | Score |
+| --------------- | ----- |
+| `HEAL`          | 250   |
+| `CLAIM`         | 200   |
+| `RANGED_ATTACK` | 150   |
+| `ATTACK`        | 80    |
+| `WORK`          | 30    |
 
 `pickPriorityTarget(room)` returns the highest-scoring hostile in a room, breaking ties on current hits ascending (finish the weak ones first). Zero-threat hostiles (scouts, stripped invaders with only TOUGH parts remaining) are still targeted — towers will finish off any hostile in the room.
 
@@ -332,15 +333,15 @@ When enabled, for each owned room it draws:
 
 ### Path colors
 
-| Color | Hex | Activity |
-|-------|-----|----------|
+| Color  | Hex       | Activity                                                                                            |
+| ------ | --------- | --------------------------------------------------------------------------------------------------- |
 | Orange | `#ffaa00` | Gathering energy — miners positioning, haulers picking up, upgraders/builders/repairers withdrawing |
-| Green | `#33ff33` | Builders moving to construction sites |
-| White | `#ffffff` | Haulers delivering to spawns/extensions/towers/controller container/storage |
-| Blue | `#3333ff` | Upgrading controller (upgraders, and builders/repairers falling back to upgrade) |
-| Red | `#ff0000` | Defenders attacking hostiles |
-| Purple | `#cc66ff` | Mineral operations — mineral miner positioning, haulers carrying minerals |
-| Grey | `#888888` | Idle creeps rallying toward storage/spawn |
+| Green  | `#33ff33` | Builders moving to construction sites                                                               |
+| White  | `#ffffff` | Haulers delivering to spawns/extensions/towers/controller container/storage                         |
+| Blue   | `#3333ff` | Upgrading controller (upgraders, and builders/repairers falling back to upgrade)                    |
+| Red    | `#ff0000` | Defenders attacking hostiles                                                                        |
+| Purple | `#cc66ff` | Mineral operations — mineral miner positioning, haulers carrying minerals                           |
+| Grey   | `#888888` | Idle creeps rallying toward storage/spawn                                                           |
 
 Extend `runVisuals()` with more overlays (construction plans, tower ranges, etc.) as the AI grows.
 

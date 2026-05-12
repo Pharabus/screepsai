@@ -56,12 +56,12 @@ The current AI only harvests energy from Sources. Screeps has four other harvest
 
 #### Gating summary (by RCL)
 
-| RCL | Unlocks                                       | Resource goal                                   |
-|-----|-----------------------------------------------|-------------------------------------------------|
-| 4   | Storage                                       | Central stockpile (prereq for everything below) |
-| 6   | Extractor, Terminal, Labs (3)                 | Mineral mining + lab reactions + market         |
-| 7   | Factory, more Labs (6)                        | Commodity production                            |
-| 8   | Power Spawn, Observer, full labs (10), nuker  | Power processing + deposit mining at scale      |
+| RCL | Unlocks                                      | Resource goal                                   |
+| --- | -------------------------------------------- | ----------------------------------------------- |
+| 4   | Storage                                      | Central stockpile (prereq for everything below) |
+| 6   | Extractor, Terminal, Labs (3)                | Mineral mining + lab reactions + market         |
+| 7   | Factory, more Labs (6)                       | Commodity production                            |
+| 8   | Power Spawn, Observer, full labs (10), nuker | Power processing + deposit mining at scale      |
 
 Deposit mining (highway surfaces) is technically possible earlier but is only economical once we have a Factory (RCL 7) to refine commodities from them, so gate it there.
 
@@ -124,7 +124,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 ##### Cross-cutting
 
-- [x] **Per-resource stockpile thresholds** — `src/utils/thresholds.ts` provides shared `MINERAL_STORAGE_FLOOR` (5k), `MINERAL_TERMINAL_CEILING` (50k), `ENERGY_TERMINAL_BUFFER` (50k), and `isTerminalSurplus()` helper. Hauler and terminal manager import from here (eliminated duplication).
+- [x] **Per-resource stockpile thresholds** — `src/utils/thresholds.ts` provides shared `MINERAL_STORAGE_FLOOR` (5k), `MINERAL_TERMINAL_CEILING` (20k, was 50k), `ENERGY_TERMINAL_BUFFER` (5k, was 50k — 50k blocked all sells), `TERMINAL_ENERGY_FLOOR` (15k), and `isTerminalSurplus()` helper. Hauler and terminal manager import from here (eliminated duplication).
 - [x] **Market logging** — Terminal manager logs surplus minerals above `MINERAL_TERMINAL_CEILING` with best buy-order prices every 100 ticks. Read-only — no actual selling yet.
 - [x] **Market selling** — `runTerminal` sells surplus above `MINERAL_TERMINAL_CEILING` to best buy order every 100 ticks.
 - [x] **Market buying for lab inputs** — `buyForLabs()` in `terminal.ts` runs every 500 ticks. Queries `getChainBuyNeeds()` from labs manager (chain-aware), falls back to active reaction inputs. Buys cheapest sell order ≤ `MAX_BUY_PRICE` (0.5cr) in `BUY_BATCH_SIZE` (3k) batches. Gates on `MIN_BUY_ENERGY_BASE` (30k) for base minerals or `MIN_BUY_ENERGY_INTERMEDIATES` (60k) for compounds, skips own room's mineral type.
@@ -139,9 +139,10 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Rampart placement on critical structures** - `placeRamparts()` at RCL ≥ 3 places ramparts on spawns, towers, and storage. One per tick. Towers already repair ramparts (capped at 10k hits).
 - [x] **Wall/rampart repair scaling** - `wallRepairMax(room)` replaces hardcoded 10k cap. Scales with storage energy (stored × 0.5) clamped to per-RCL caps: 3=10k, 4=50k, 5=300k, 6=1M, 7=5M, 8=50M. Cached per room per tick.
 - [x] **CPU optimizations** - Construction runs every 5 ticks instead of every tick. Tower repair target cached per room (shared across towers). `status()` console command shows link info.
-- [x] **Dynamic spawn counts for all roles** - All role counts in `spawner.ts` are now computed per-room per-tick via `*Needed(room)` functions: `buildersNeeded` scales 1–3 by `ceil(constructionSites / 3)` (paused to 0 when all sources are linked and storage < 10k), `repairersNeeded` scales 1–2 when >5 structures below 75% HP, `upgradersNeeded` scales 1–3 by room energy capacity, `haulersNeeded` 2–3 per source container, `minersNeeded` 1 per container without a miner, `defendersNeeded` by threat score. No hardcoded minimums except bootstrap harvesters (2) and emergency miner-economy harvester (1). Idle builders/repairers fall back to upgrading.
+- [x] **Dynamic spawn counts for all roles** - All role counts in `spawner.ts` are now computed per-room per-tick via `*Needed(room)` functions: `buildersNeeded` scales 0–3 by `ceil(constructionSites / 3)` (0 when no sites, paused to 0 when all sources are linked and storage < 10k), `repairersNeeded` scales 1–2 when >5 structures below 75% HP, `upgradersNeeded` scales 0–3 by room energy capacity (0 below 5k storage), `haulersNeeded` 2–3 per source container, `minersNeeded` 1 per container without a miner, `defendersNeeded` by threat score. No hardcoded minimums except bootstrap harvesters (2). Miner-economy harvester is 0 unless a source lacks a miner (emergency-only). Idle builders/repairers fall back to upgrading.
 - [x] **Add multi-room support (remote mining)** - Scout role explores adjacent rooms and records source positions, remote planner evaluates/selects up to 2 best rooms (tolerates stale hostile sightings), miners reuse existing role with cross-room PathFinder pathing to stored source positions, remote miners self-build containers at remote sources, dedicated remoteHauler role for cross-room energy transport with full delivery chain (storage/spawns/towers/controller container), builder construction priority (extensions before storage). Expandable to claiming later.
 - [x] ~~**Remote container repair**~~ — Removed. Remote haulers lack WORK parts so repair was never functional (caused a stall bug instead). Miners rebuild containers when they decay.
+
 ### Base traffic & layout improvements
 
 Observed in W43N58: spawn area is heavily congested, haulers and remote haulers oscillate back-and-forth trying to path to similar locations. Root causes identified:
@@ -173,8 +174,27 @@ Energy starvation analysis (May 2026) surfaced structural issues that need a sec
 
 - [ ] **Remote miner WORK cap for reserved sources** — `body.ts` caps remote miners at 5 WORK (10 e/t). A reserved source has 3000 capacity requiring 10 WORK for full saturation. Either raise cap to 10 gated on `scoutedReservation === 'Pharabus'`, or spawn 2 miners per remote source in reserved rooms.
 - [ ] **Distance-aware remote hauler count** — `spawner.ts:285` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2.
-- [ ] **Stop spawning idle builders/repairers** — `buildersNeeded` returns 1 even with zero construction sites (controller-upgrade fallback). `repairersNeeded` always returns at least 1. Return 0 when no sites exist and all structures are healthy — these roles become hidden upgraders that consume spawn slots without accounting for the extra controller drain.
+- [ ] **Stop spawning idle repairers** — Builder side resolved (`buildersNeeded` now returns 0 when there are no construction sites — Phase 17). `repairersNeeded` still returns at least 1; should return 0 when all structures are healthy so the role doesn't become a hidden upgrader that consumes spawn slots without accounting for the extra controller drain.
 - [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
+
+### Phase 17 — Energy-flow stabilization (May 2026, completed)
+
+After opening a second remote room (W44N58) we observed storage drop from 72k → 10k over 48h. A multi-agent investigation identified compounding drains: a too-aggressive upgrader (15 WORK at 12k storage = -15 e/tick), a 50-tick hauler recycle that churned haulers between spawn/recycle cycles, a miner-coverage gap when remote miners died en route home, and bootstrap-economy harvesters that never retired. Mineral H was also stranded: the mineralMiner ran without a throttle (overflowing container) and `pickupLabInput` only looked at storage, so 26k H sat in the terminal while labs deadlocked.
+
+Fixes deployed:
+
+- [x] **Upgrader pause at low storage** — `upgradersNeeded()` returns 0 when storage exists and stored < 5k, so storage can refill before adding upgrader load.
+- [x] **Upgrader body cap by storage tier** — bodies are capped at 600 energy below 15k storage, 1100 below 50k, full `energyCapacityAvailable` above. Stops a 15-WORK upgrader from draining storage faster than miners can refill it.
+- [x] **Remote miner prespawn** — spawner now queues the next remote miner 150 ticks before its predecessor's TTL (`REMOTE_MINER_PRESPAWN_TICKS`), eliminating cross-room travel gaps.
+- [x] **Hauler recycle removed** — the 50-tick hauler threshold in `RECYCLE_THRESHOLDS` removed; combat roles (defender/rangedDefender/healer) still recycle at 100 ticks. Haulers now stay alive through brief idle periods.
+- [x] **Harvester retirement** — in miner economy, `minCount` drops to 0 once every source has an assigned miner; an emergency harvester is only spawned when a source lacks coverage.
+- [x] **Builder floor at zero sites** — `buildersNeeded` returns 0 when there are no construction sites (was 1 to idle-upgrade — that path silently bled energy on fully-built rooms).
+- [x] **Mineral miner harvest throttle** — `mineralMiner.ts` HARVEST state now skips when the mineral container is full or when storage + terminal stockpile reaches `MINERAL_TERMINAL_CEILING`, so minerals stop accumulating once we have enough to sell.
+- [x] **Lab input terminal fallback** — `pickupLabInput` in `hauler.ts` checks storage first then falls back to terminal when storage is empty, so labs don't deadlock when minerals route straight to terminal.
+- [x] **Mineral storage-first delivery** — `deliverToTerminalOrStorage` fills storage with minerals up to `MINERAL_STORAGE_FLOOR` (5k) before overflowing to terminal, so labs always have stock without round-tripping through the market.
+- [x] **Threshold corrections** — `MINERAL_TERMINAL_CEILING` 50k → 20k (sells earlier so containers don't back up), `ENERGY_TERMINAL_BUFFER` 50k → 5k (50k blocked all sells since W43N58's terminal only held ~11k), `TERMINAL_ENERGY_FLOOR` 10k → 15k (haulers top up terminal energy earlier so deals can actually fire).
+- [x] **Aggression filter in remote planner** — `evaluateRemoteRoom` rejects rooms where any player previously classified `aggressive` (≥3 attacks or maxThreatScore ≥500) has been seen within 20k ticks. Uses `hostilesSeen(roomName, 20_000)` + `getNeighbor(name)?.hostility === 'aggressive'`.
+- [x] **Remote room cap hysteresis** — `selectRemoteRooms` scales up to 2 remotes at 100k storage but only drops back to 1 below 70k (`SCALE_DOWN_THRESHOLD = REMOTE_ROOM_SCALE_THRESHOLD * 0.7`), so a room oscillating around 100k doesn't churn through repeated bootstrap costs.
 
 ### Multi-room expansion (claiming & reservation)
 
