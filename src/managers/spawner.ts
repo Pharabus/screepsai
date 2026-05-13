@@ -171,7 +171,7 @@ function buildersNeeded(room: Room): number {
  * Repairer count scales with damaged structures. At least 1 (falls back to
  * upgrading), up to 2 when there's significant damage.
  */
-function repairersNeeded(room: Room): number {
+export function repairersNeeded(room: Room): number {
   const REPAIR_THRESHOLD = 0.75;
   const damaged = cached(
     'spawner:damaged:' + room.name,
@@ -183,6 +183,7 @@ function repairersNeeded(room: Room): number {
           s.structureType !== STRUCTURE_RAMPART,
       }).length,
   );
+  if (damaged === 0) return 0;
   if (damaged > 5) return 2;
   return 1;
 }
@@ -339,7 +340,8 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     const remoteRooms = mem?.remoteRooms ?? [];
     for (const remoteRoom of remoteRooms) {
       const remoteMem = Memory.rooms[remoteRoom];
-      const remoteBody = buildRemoteMinerBody(room.energyCapacityAvailable);
+      const isReserved = remoteMem?.remoteType === 'reserved';
+      const remoteBody = buildRemoteMinerBody(room.energyCapacityAvailable, isReserved ? 10 : 5);
       if (remoteBody.length === 0) continue;
       const sourceCount = remoteMem?.sources?.length ?? remoteMem?.scoutedSources ?? 0;
       if (sourceCount === 0) continue;
@@ -384,8 +386,10 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      // Remote haulers: 2 per source
-      const haulersWanted = sourceCount * 2;
+      // Reserved rooms run 10-WORK miners (20 e/t) and are typically further away;
+      // 3 haulers per source saturates throughput for ~100-tick round trips.
+      // Plain remotes stay at 2 (shorter range, lower yield).
+      const haulersWanted = sourceCount * (isReserved ? 3 : 2);
       if (existingRemoteHaulers < haulersWanted) {
         queue.push({
           role: 'remoteHauler',

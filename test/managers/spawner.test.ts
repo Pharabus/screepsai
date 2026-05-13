@@ -3,6 +3,7 @@ import {
   minersNeeded,
   haulersNeeded,
   upgradersNeeded,
+  repairersNeeded,
   remoteBuilderNeeded,
   defenderComposition,
 } from '../../src/managers/spawner';
@@ -634,5 +635,157 @@ describe('defenderComposition', () => {
     (Game as any).time = 1;
     const comp = defenderComposition(room);
     expect(comp.ranged).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('repairersNeeded', () => {
+  it('returns 0 when no structures are damaged', () => {
+    const room = mockRoom({ name: 'W1N1' }); // find() returns [] by default
+    expect(repairersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 when 1 to 5 structures are damaged', () => {
+    const damaged = { structureType: STRUCTURE_ROAD, hits: 100, hitsMax: 1000 };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_STRUCTURES) {
+          const structs = [damaged];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        return [];
+      }),
+    });
+    expect(repairersNeeded(room)).toBe(1);
+  });
+
+  it('returns 2 when more than 5 structures are damaged', () => {
+    const damaged = { structureType: STRUCTURE_ROAD, hits: 100, hitsMax: 1000 };
+    const sixDamaged = Array(6).fill(damaged);
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_STRUCTURES) {
+          return opts?.filter ? sixDamaged.filter(opts.filter) : sixDamaged;
+        }
+        return [];
+      }),
+    });
+    expect(repairersNeeded(room)).toBe(2);
+  });
+
+  it('does not count walls or ramparts as damaged', () => {
+    const wall = { structureType: STRUCTURE_WALL, hits: 1, hitsMax: 300000000 };
+    const rampart = { structureType: STRUCTURE_RAMPART, hits: 1, hitsMax: 300000000 };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_STRUCTURES) {
+          const structs = [wall, rampart];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        return [];
+      }),
+    });
+    expect(repairersNeeded(room)).toBe(0);
+  });
+});
+
+describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
+  it('queues 10-WORK miner body for reserved remote room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    (Game as any).creeps = {};
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const remoteMiner = queue.find(
+      (r) => r.role === 'miner' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(remoteMiner).toBeDefined();
+    const workParts = remoteMiner!.body!.filter((p) => p === WORK).length;
+    expect(workParts).toBe(10);
+  });
+
+  it('queues 5-WORK miner body for non-reserved remote room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'remote', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    (Game as any).creeps = {};
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const remoteMiner = queue.find(
+      (r) => r.role === 'miner' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(remoteMiner).toBeDefined();
+    const workParts = remoteMiner!.body!.filter((p) => p === WORK).length;
+    expect(workParts).toBe(5);
+  });
+
+  it('queues remoteHauler when below quota of 3 for reserved room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    // 2 existing haulers for this room — still below quota of 3
+    (Game as any).creeps = {
+      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const haulerEntry = queue.find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(haulerEntry).toBeDefined();
+  });
+
+  it('does not queue remoteHauler when at quota of 3 for reserved room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    // 3 existing haulers — at quota
+    (Game as any).creeps = {
+      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh3: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const haulerEntry = queue.find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(haulerEntry).toBeUndefined();
+  });
+
+  it('stops queuing remoteHauler at 2 per source for non-reserved room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'remote', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    // 2 existing haulers — at quota for non-reserved
+    (Game as any).creeps = {
+      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const haulerEntry = queue.find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(haulerEntry).toBeUndefined();
   });
 });

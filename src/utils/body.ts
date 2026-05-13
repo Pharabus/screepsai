@@ -43,10 +43,10 @@ export function buildUpgraderBody(energyAvailable: number): BodyPartConstant[] {
  * Build a remote miner body: WORK+MOVE pairs (1:1 for off-road travel)
  * plus 1 CARRY for building the source container. Caps at 5 WORK.
  */
-export function buildRemoteMinerBody(energyAvailable: number): BodyPartConstant[] {
+export function buildRemoteMinerBody(energyAvailable: number, maxWork = 5): BodyPartConstant[] {
   const baseCost = 100; // 1 CARRY (50) + 1 MOVE for CARRY (50)
   if (energyAvailable < baseCost + 150) return []; // need at least 1 WORK + 1 MOVE + 1 CARRY + 1 MOVE
-  const workCount = Math.min(Math.floor((energyAvailable - baseCost) / 150), 5);
+  const workCount = Math.min(Math.floor((energyAvailable - baseCost) / 150), maxWork);
   if (workCount === 0) return [];
   const body: BodyPartConstant[] = [];
   for (let i = 0; i < workCount; i++) body.push(WORK);

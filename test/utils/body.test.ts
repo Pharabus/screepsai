@@ -1,4 +1,9 @@
-import { buildBody, buildMinerBody, buildUpgraderBody } from '../../src/utils/body';
+import {
+  buildBody,
+  buildMinerBody,
+  buildRemoteMinerBody,
+  buildUpgraderBody,
+} from '../../src/utils/body';
 
 describe('buildBody', () => {
   it('returns correct body for exact energy match', () => {
@@ -95,5 +100,31 @@ describe('buildUpgraderBody', () => {
     expect(body.filter((p) => p === WORK).length).toBe(15);
     expect(body).toContain(CARRY);
     expect(body).toContain(MOVE);
+  });
+});
+
+describe('buildRemoteMinerBody', () => {
+  it('returns empty array when energy is insufficient', () => {
+    expect(buildRemoteMinerBody(200)).toEqual([]);
+  });
+
+  it('caps at 5 WORK by default', () => {
+    const body = buildRemoteMinerBody(2300);
+    expect(body.filter((p) => p === WORK).length).toBe(5);
+    expect(body.filter((p) => p === CARRY).length).toBe(1);
+  });
+
+  it('respects maxWork override for reserved rooms', () => {
+    const body = buildRemoteMinerBody(2300, 10);
+    expect(body.filter((p) => p === WORK).length).toBe(10);
+    expect(body.filter((p) => p === CARRY).length).toBe(1);
+    // 10 WORK + 1 CARRY + 11 MOVE = 22 parts, cost = 1000+50+550 = 1600 ≤ 2300
+    expect(body.filter((p) => p === MOVE).length).toBe(11);
+  });
+
+  it('does not exceed energy at maxWork 10', () => {
+    // At 1500 energy: (1500-100)/150 = 9.33 → 9 WORK
+    const body = buildRemoteMinerBody(1500, 10);
+    expect(body.filter((p) => p === WORK).length).toBe(9);
   });
 });

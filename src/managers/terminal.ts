@@ -74,10 +74,10 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   // Don't spend credits on lab inputs until we have an energy surplus
   if (Game.market.credits < 50) return;
 
-  const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
-  if (terminalEnergy < MIN_BUY_ENERGY_BASE) return;
-
   const storage = room.storage;
+  const storageEnergy = storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (storageEnergy < MIN_BUY_ENERGY_BASE) return;
+  const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
   const ownMineral = mem.mineralId
     ? (Game.getObjectById(mem.mineralId) as Mineral | null)?.mineralType
     : undefined;

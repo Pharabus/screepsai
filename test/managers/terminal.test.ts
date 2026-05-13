@@ -160,7 +160,9 @@ describe('runTerminal — lab buying', () => {
       },
       storage: {
         store: {
-          getUsedCapacity: vi.fn((r?: string) => (r === 'Z' ? 5000 : 0)),
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
         },
       },
     });
@@ -188,7 +190,7 @@ describe('runTerminal — lab buying', () => {
     consoleSpy.mockRestore();
   });
 
-  it('does not buy when terminal energy is below minimum', () => {
+  it('does not buy when storage energy is below minimum', () => {
     (Game as any).time = 500;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -196,8 +198,40 @@ describe('runTerminal — lab buying', () => {
       name: 'W1N1',
       controller: { my: true, level: 6 },
       terminal: {
-        store: makeTerminalStore({ energy: 10000 }), // below MIN_BUY_ENERGY_BASE (30k)
+        store: makeTerminalStore({ energy: 10000 }),
         cooldown: 0,
+      },
+      // no storage → storageEnergy=0, below MIN_BUY_ENERGY_BASE (30k)
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('does not buy when terminal energy is high but storage energy is below minimum', () => {
+    (Game as any).time = 500;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: makeTerminalStore({ energy: 200000 }), // terminal is flush but storage is not
+        cooldown: 0,
+      },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn(() => 5000), // below MIN_BUY_ENERGY_BASE (30k)
+        },
       },
     });
     (Game as any).rooms = { W1N1: room };
