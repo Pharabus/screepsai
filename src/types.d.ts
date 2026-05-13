@@ -53,6 +53,9 @@ interface RoomMemory {
   // Defense (src/managers/defense.ts)
   threatLastSeen?: number;
   lastThreatScore?: number;
+  // Remote room threat — set by any creep that spots a hostile in this room.
+  // Used by remote roles to flee and stay home until the threat clears.
+  hostileLastSeen?: number;
   // Room planning (src/managers/spawner.ts, construction.ts)
   sources?: {
     id: Id<Source>;

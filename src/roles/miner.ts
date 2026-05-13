@@ -3,6 +3,7 @@ import { assignMiner, findUnminedSource } from '../utils/roomPlanner';
 import { moveTo } from '../utils/movement';
 import { registerStationary, PRIORITY_STATIC, PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { handleRemoteThreat } from '../utils/remoteThreat';
 
 function getSourcePos(creep: Creep): RoomPosition | undefined {
   const roomName = creep.memory.targetRoom ?? creep.room.name;
@@ -155,6 +156,7 @@ function placeRemoteContainer(creep: Creep, source: Source): void {
 
 export const miner: Role = {
   run(creep: Creep): void {
+    if (handleRemoteThreat(creep)) return;
     runStateMachine(creep, states, 'POSITION');
   },
 };

@@ -2,6 +2,7 @@ import { Role } from './Role';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_DEFAULT } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { handleRemoteThreat } from '../utils/remoteThreat';
 
 const states: StateMachineDefinition = {
   RESERVE: {
@@ -37,6 +38,7 @@ const states: StateMachineDefinition = {
 
 export const reserver: Role = {
   run(creep: Creep): void {
+    if (handleRemoteThreat(creep)) return;
     runStateMachine(creep, states, 'RESERVE');
   },
 };

@@ -3,6 +3,7 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
+import { handleRemoteThreat } from '../utils/remoteThreat';
 
 function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
   const targetRoom = creep.memory.targetRoom;
@@ -141,6 +142,7 @@ const states: StateMachineDefinition = {
 
 export const remoteHauler: Role = {
   run(creep: Creep): void {
+    if (handleRemoteThreat(creep)) return;
     runStateMachine(creep, states, 'PICKUP');
   },
 };
