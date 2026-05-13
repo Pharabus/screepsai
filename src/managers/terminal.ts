@@ -1,7 +1,7 @@
 import {
   ENERGY_TERMINAL_BUFFER,
   MINERAL_TERMINAL_CEILING,
-  MAX_BUY_PRICE,
+  getMaxBuyPrice,
   BUY_BATCH_SIZE,
   BUY_INTERVAL,
   MIN_BUY_ENERGY_BASE,
@@ -102,11 +102,12 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
     const inTerminal = terminal.store.getUsedCapacity(mineral);
     if (inStorage + inTerminal >= BUY_BATCH_SIZE) continue; // already stocked
 
+    const maxBuyPrice = getMaxBuyPrice();
     const orders = Game.market.getAllOrders({ type: ORDER_SELL, resourceType: mineral });
     let cheapestOrder: Order | undefined;
     let lowestPrice = Infinity;
     for (const order of orders) {
-      if (order.remainingAmount > 0 && order.price < lowestPrice && order.price <= MAX_BUY_PRICE) {
+      if (order.remainingAmount > 0 && order.price < lowestPrice && order.price <= maxBuyPrice) {
         lowestPrice = order.price;
         cheapestOrder = order;
       }
@@ -114,7 +115,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 
     if (!cheapestOrder) {
       console.log(
-        `[terminal] ${room.name}: need ${mineral} for labs, no sell orders <= ${MAX_BUY_PRICE}`,
+        `[terminal] ${room.name}: need ${mineral} for labs, no sell orders <= ${maxBuyPrice}`,
       );
       continue;
     }

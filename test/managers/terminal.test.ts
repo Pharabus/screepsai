@@ -254,6 +254,83 @@ describe('runTerminal — lab buying', () => {
     consoleSpy.mockRestore();
   });
 
+  it('respects the shard-tuned max buy price (shard3 accepts higher prices)', () => {
+    (Game as any).time = 500;
+    (Game as any).shard = { name: 'shard3' };
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    // Order priced at 99cr — above the default 0.5 cap, but below shard3's cap
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell_expensive', price: 99, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('sell_expensive', expect.any(Number), 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('rejects the same 99cr order on shard0 (default cap)', () => {
+    (Game as any).time = 500;
+    (Game as any).shard = { name: 'shard0' };
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell_expensive', price: 99, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it('does not buy when storage energy is below minimum', () => {
     (Game as any).time = 500;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
