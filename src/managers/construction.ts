@@ -474,6 +474,19 @@ export function placeLabs(room: Room): void {
         return;
       }
     }
+    if (Game.time % 100 === 0) {
+      const occupants = plan.labPositions.map(({ x, y }) => {
+        const pos = new RoomPosition(x, y, room.name);
+        const here = [
+          ...pos.lookFor(LOOK_STRUCTURES).map((s) => s.structureType),
+          ...pos.lookFor(LOOK_CONSTRUCTION_SITES).map((s) => `${s.structureType}-site`),
+        ];
+        return `(${x},${y})=${here.join('+') || '?'}`;
+      });
+      console.log(
+        `[construction] ${room.name}: placeLabs blocked, all planned tiles occupied: ${occupants.join(' ')}`,
+      );
+    }
     return;
   }
 
@@ -510,6 +523,10 @@ export function placeCorridorRoads(room: Room): void {
 
   const terrain = room.getTerrain();
   const maxRing = Math.min(rcl - 1, 4);
+  const labPositions = Memory.rooms[room.name]?.layoutPlan?.labPositions;
+  const isLabTile = labPositions
+    ? (x: number, y: number) => labPositions.some((p) => p.x === x && p.y === y)
+    : () => false;
 
   for (let offset = -maxRing; offset <= maxRing; offset++) {
     if (offset === 0) continue;
@@ -519,6 +536,7 @@ export function placeCorridorRoads(room: Room): void {
     ] as [number, number][]) {
       if (x < 2 || x > 47 || y < 2 || y > 47) continue;
       if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+      if (isLabTile(x, y)) continue;
 
       const structs = room.lookForAt(LOOK_STRUCTURES, x, y);
       const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
