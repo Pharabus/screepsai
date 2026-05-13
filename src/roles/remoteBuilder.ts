@@ -2,6 +2,7 @@ import { Role } from './Role';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { handleRemoteThreat } from '../utils/remoteThreat';
 
 function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
   const targetRoom = creep.memory.targetRoom;
@@ -116,6 +117,7 @@ const states: StateMachineDefinition = {
 
 export const remoteBuilder: Role = {
   run(creep: Creep): void {
+    if (handleRemoteThreat(creep)) return;
     runStateMachine(creep, states, 'TRAVEL');
   },
 };
