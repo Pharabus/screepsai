@@ -24,17 +24,81 @@ describe('runTerminal', () => {
   });
 
   it('does nothing when not on the check interval', () => {
-    (Game as any).time = 50;
+    (Game as any).time = 55; // not a multiple of MARKET_INTERVAL (10) or BUY_INTERVAL (500)
     const room = mockRoom({
       name: 'W1N1',
       controller: { my: true, level: 6 },
-      terminal: { store: mockTerminalStore({}), cooldown: 0 },
+      terminal: { store: mockTerminalStore({ Z: 50000 }), cooldown: 0 },
     });
     (Game as any).rooms = { W1N1: room };
 
     runTerminal();
 
     expect(Game.market.getAllOrders).not.toHaveBeenCalled();
+  });
+
+  it('runs sell every MARKET_INTERVAL (10) ticks, not just every 100', () => {
+    (Game as any).time = 10; // would have been below the old 100-tick gate
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: mockTerminalStore({ Z: 50000 }), cooldown: 0 },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Game as any).market.getAllOrders = vi.fn(() => []);
+
+    runTerminal();
+
+    expect(Game.market.getAllOrders).toHaveBeenCalled();
+  });
+
+  it('skips sell when buy has just dealt at a coincident interval (tick 500)', () => {
+    (Game as any).time = 500; // both BUY_INTERVAL and MARKET_INTERVAL boundary
+
+    // Terminal's cooldown changes from 0 → 10 once buyForLabs deals.
+    const terminal: any = {
+      store: mockTerminalStore({ energy: 200000, Z: 50000 }),
+      cooldown: 0,
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal,
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => (r === RESOURCE_ENERGY ? 50000 : 0)),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    // Sell-side returns one viable buyer; buy-side returns one viable seller.
+    // Deal call also flips terminal cooldown so the sell branch sees it busy.
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.type === ORDER_SELL && opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 0.1, remainingAmount: 3000, roomName: 'W2N2' }];
+      }
+      if (opts.type === ORDER_BUY && opts.resourceType === 'Z') {
+        return [{ id: 'buy1', price: 5, remainingAmount: 3000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+    (Game as any).market.deal = vi.fn(() => {
+      terminal.cooldown = 10;
+      return OK;
+    });
+
+    runTerminal();
+
+    // Exactly one deal — the buy. Sell should be skipped due to cooldown re-check.
+    expect(Game.market.deal).toHaveBeenCalledTimes(1);
+    expect(Game.market.deal).toHaveBeenCalledWith('sell1', expect.any(Number), 'W1N1');
   });
 
   it('does nothing when terminal does not exist', () => {

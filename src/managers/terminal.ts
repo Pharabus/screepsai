@@ -8,7 +8,10 @@ import {
 } from '../utils/thresholds';
 import { getChainBuyNeeds } from './labs';
 
-const MARKET_INTERVAL = 100;
+// Matches the 10-tick terminal cooldown so we capture every available sell
+// window. Running every tick would do the same but cost more CPU on no-op
+// store-scans; every 10 ticks is the sweet spot.
+const MARKET_INTERVAL = 10;
 const MIN_SELL_PRICE = 0.01;
 
 // Base minerals that can be purchased on the market (not compound outputs)
@@ -150,12 +153,14 @@ export function runTerminal(): void {
     const terminal = room.terminal;
     if (!terminal || terminal.cooldown > 0) continue;
 
-    if (Game.time % MARKET_INTERVAL === 0) {
-      sellSurplus(room, terminal);
-    }
-
+    // Buy runs first so it isn't blocked when both intervals coincide
+    // (every 500 ticks). If buy deals, the cooldown re-check below skips sell.
     if (Game.time % BUY_INTERVAL === 0) {
       buyForLabs(room, terminal);
+    }
+
+    if (terminal.cooldown === 0 && Game.time % MARKET_INTERVAL === 0) {
+      sellSurplus(room, terminal);
     }
   }
 }
