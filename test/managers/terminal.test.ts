@@ -197,6 +197,7 @@ describe('runTerminal — lab buying', () => {
   beforeEach(() => {
     resetGameGlobals();
     (Game as any).market = {
+      credits: 1_000_000, // plentiful by default; affordability test overrides
       getAllOrders: vi.fn(() => []),
       calcTransactionCost: vi.fn(() => 100),
       deal: vi.fn(() => OK),
@@ -372,6 +373,75 @@ describe('runTerminal — lab buying', () => {
       storage: {
         store: {
           getUsedCapacity: vi.fn(() => 5000), // below MIN_BUY_ENERGY_BASE (30k)
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('scales buy amount down to what credits can afford', () => {
+    (Game as any).time = 500;
+    (Game as any).shard = { name: 'shard3' }; // raise MAX_BUY_PRICE so 99cr passes
+    (Game as any).market.credits = 1000; // only enough for ~10 units @ 99cr
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 99, remainingAmount: 3000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    // Should deal for ~10 units (1000cr / 99cr/unit = 10), not the full 3000-unit batch
+    expect(Game.market.deal).toHaveBeenCalledWith('sell1', 10, 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('skips buying when credits are too low for even one unit', () => {
+    (Game as any).time = 500;
+    (Game as any).market.credits = 50; // below MIN_BUY check but let's exercise affordability
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => (r === RESOURCE_ENERGY ? 50000 : 0)),
         },
       },
     });

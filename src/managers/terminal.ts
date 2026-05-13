@@ -120,11 +120,20 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
       continue;
     }
 
-    const buyAmount = Math.min(
+    const wantAmount = Math.min(
       BUY_BATCH_SIZE - (inStorage + inTerminal),
       cheapestOrder.remainingAmount,
     );
-    if (buyAmount <= 0) continue;
+    const affordableAmount = Math.floor(Game.market.credits / cheapestOrder.price);
+    const buyAmount = Math.min(wantAmount, affordableAmount);
+    if (buyAmount <= 0) {
+      if (wantAmount > 0) {
+        console.log(
+          `[terminal] ${room.name}: insufficient credits for ${mineral} @ ${cheapestOrder.price.toFixed(3)} (have ${Game.market.credits.toFixed(0)})`,
+        );
+      }
+      continue;
+    }
 
     const energyCost = Game.market.calcTransactionCost(
       buyAmount,
