@@ -6,6 +6,7 @@ import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../util
 import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
+import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
 
 interface SpawnRequest {
   role: CreepRoleName;
@@ -65,6 +66,38 @@ function countReservers(remoteRoom: string): number {
     }
     return count;
   });
+}
+
+function countCreepsByRoleAndTarget(role: CreepRoleName, targetRoom: string): number {
+  return cached(`spawner:${role}:target:${targetRoom}`, () => {
+    let count = 0;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role === role && c.memory.targetRoom === targetRoom) count++;
+    }
+    return count;
+  });
+}
+
+/**
+ * Body for the one-shot claimer creep. [CLAIM, MOVE×5] = 850 energy, 1:1 MOVE
+ * ratio for plain-terrain off-road travel. Claimer TTL is 600 ticks so it must
+ * reach its target within that window.
+ */
+function buildClaimerBody(energyAvailable: number): BodyPartConstant[] {
+  if (energyAvailable < 850) return [];
+  return [CLAIM, MOVE, MOVE, MOVE, MOVE, MOVE];
+}
+
+/**
+ * How many colony builders this colony wants. 2 at RCL 0 (pre-spawn) so the
+ * first spawn site lands quickly even if one dies in transit; reduces to 1
+ * once a spawn exists (colony bootstraps its own builders from there).
+ */
+function colonyBuildersWanted(targetRoom: string): number {
+  const room = Game.rooms[targetRoom];
+  if (!room) return 2; // no visibility yet — keep the pipeline pre-warmed
+  const hasSpawn = room.find(FIND_MY_SPAWNS).length > 0;
+  return hasSpawn ? 1 : 2;
 }
 
 export function remoteBuilderNeeded(remoteRoom: string): boolean {
@@ -334,6 +367,51 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         minCount: mineralMiners,
       });
     }
+    // Colony expansion: claimer + colonyBuilder for any target room parented here.
+    // Slotted ahead of remote mining because a colony in flight has a hard TTL
+    // window (claimer dies after 600 ticks) and once it lands, the new room's
+    // ROI dwarfs adding another remote.
+    for (const { room: colonyRoom, state } of coloniesForHome(room.name)) {
+      if (state.status === 'active') continue;
+
+      if (state.status === 'claiming') {
+        const liveClaimers = countCreepsByRoleAndTarget('claimer', colonyRoom);
+        if (liveClaimers === 0) {
+          const claimerBody = buildClaimerBody(room.energyCapacityAvailable);
+          if (claimerBody.length > 0) {
+            queue.push({
+              role: 'claimer',
+              body: claimerBody,
+              minCount: countCreepsByRole('claimer', room.name) + 1,
+              memory: {
+                role: 'claimer' as CreepRoleName,
+                homeRoom: room.name,
+                targetRoom: colonyRoom,
+              },
+            });
+          }
+        }
+      }
+
+      if (state.status === 'bootstrapping') {
+        const liveBuilders = countCreepsByRoleAndTarget('colonyBuilder', colonyRoom);
+        const wanted = colonyBuildersWanted(colonyRoom);
+        if (liveBuilders < wanted) {
+          queue.push({
+            role: 'colonyBuilder',
+            pattern: [WORK, CARRY, MOVE, MOVE],
+            maxRepeats: 4,
+            minCount: countCreepsByRole('colonyBuilder', room.name) + (wanted - liveBuilders),
+            memory: {
+              role: 'colonyBuilder' as CreepRoleName,
+              homeRoom: room.name,
+              targetRoom: colonyRoom,
+            },
+          });
+        }
+      }
+    }
+
     // Remote mining roles (lower priority than local economy)
     // Prespawn threshold: body spawn time (~33t) + cross-room travel (~80t) + buffer
     const REMOTE_MINER_PRESPAWN_TICKS = 150;
@@ -456,6 +534,10 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 }
 
 export function runSpawner(): void {
+  // Advance colony lifecycle states before any queue decisions so a newly-claimed
+  // room flips to 'bootstrapping' on the same tick the claim lands.
+  updateColonyStates();
+
   // Ensure room plans are up to date before making spawn decisions
   for (const room of Object.values(Game.rooms)) {
     if (room.controller?.my) {

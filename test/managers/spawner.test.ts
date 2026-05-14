@@ -788,4 +788,117 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     expect(haulerEntry).toBeUndefined();
   });
+
+  describe('colony expansion queueing', () => {
+    it('queues a claimer for a claiming colony when none is alive', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
+      };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      const claimerEntry = queue.find((r) => r.role === 'claimer');
+
+      expect(claimerEntry).toBeDefined();
+      expect((claimerEntry?.memory as any)?.targetRoom).toBe('W2N1');
+      expect(claimerEntry?.body).toEqual([CLAIM, MOVE, MOVE, MOVE, MOVE, MOVE]);
+    });
+
+    it('does not queue a claimer when one is already alive for the target', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
+      };
+      (Game as any).creeps = {
+        claimer_1: { memory: { role: 'claimer', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      };
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
+    });
+
+    it('does not queue a claimer when energy capacity is below 850', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
+      };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
+    });
+
+    it('queues colonyBuilders for a bootstrapping colony with no spawn', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, claimedAt: 100 },
+      };
+      (Game as any).creeps = {};
+      // No visibility to W2N1 — colonyBuildersWanted defaults to 2
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1300 });
+      const queue = buildSpawnQueue(room);
+      const builderEntry = queue.find((r) => r.role === 'colonyBuilder');
+
+      expect(builderEntry).toBeDefined();
+      expect((builderEntry?.memory as any)?.targetRoom).toBe('W2N1');
+      expect(builderEntry?.minCount).toBe(2);
+    });
+
+    it('drops to 1 colonyBuilder once a spawn exists in the colony', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, claimedAt: 100 },
+      };
+      (Game as any).creeps = {};
+      (Game as any).rooms = {
+        W1N1: { name: 'W1N1', controller: { my: true } },
+        W2N1: {
+          name: 'W2N1',
+          controller: { my: true },
+          find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'colSpawn1' }] : []),
+        },
+      };
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1300 });
+      const queue = buildSpawnQueue(room);
+      const builderEntry = queue.find((r) => r.role === 'colonyBuilder');
+
+      expect(builderEntry?.minCount).toBe(1);
+    });
+
+    it('skips queueing for active colonies', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: {
+          homeRoom: 'W1N1',
+          status: 'active',
+          selectedAt: 1,
+          claimedAt: 100,
+          activeAt: 200,
+        },
+      };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'colonyBuilder')).toBeUndefined();
+    });
+
+    it('does not queue colony roles for a different home room', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Memory as any).colonies = {
+        W2N1: { homeRoom: 'W9N9', status: 'claiming', selectedAt: 1 },
+      };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
+    });
+  });
 });

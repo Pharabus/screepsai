@@ -1,4 +1,4 @@
-import { EXTENSION_STAMP, LAB_STAMP } from '../utils/layoutPlanner';
+import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
 
 // Max extensions per RCL level (from Screeps docs)
 const MAX_EXTENSIONS: Record<number, number> = {
@@ -660,12 +660,65 @@ export function placeRemoteRoads(room: Room): void {
   }
 }
 
+/**
+ * Place the first spawn construction site in a newly-claimed colony room.
+ *
+ * Triggered for rooms we own that have no spawn structure AND no spawn site —
+ * the bootstrap state established by Memory.colonies. Uses the suggested spawn
+ * position from layoutPlanner (computed during scouting); falls back to a fresh
+ * scan if no suggestion exists yet.
+ */
+export function placeColonySpawn(room: Room): void {
+  if (!room.controller?.my) return;
+
+  const hasSpawn = room.find(FIND_MY_SPAWNS).length > 0;
+  if (hasSpawn) return;
+
+  const existingSite = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_SPAWN,
+  });
+  if (existingSite.length > 0) return;
+
+  const mem = (Memory.rooms[room.name] ??= {});
+  let suggested = mem.suggestedSpawnPos;
+  if (!suggested) {
+    suggested = findBestSpawnPosition(room.name) ?? undefined;
+  }
+  if (!suggested) {
+    if (Game.time % 100 === 0) {
+      console.log(`[construction] ${room.name}: no viable spawn position for colony bootstrap`);
+    }
+    return;
+  }
+
+  const terrain = room.getTerrain();
+  if (terrain.get(suggested.x, suggested.y) === TERRAIN_MASK_WALL) {
+    delete mem.suggestedSpawnPos;
+    return;
+  }
+
+  const pos = new RoomPosition(suggested.x, suggested.y, room.name);
+  const blocked =
+    pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType !== STRUCTURE_ROAD) ||
+    pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+  if (blocked) return;
+
+  const result = room.createConstructionSite(pos, STRUCTURE_SPAWN);
+  if (result === OK) {
+    console.log(`[construction] ${room.name}: placed first colony spawn at (${pos.x},${pos.y})`);
+  }
+}
+
 export function runConstruction(): void {
   if (Game.time % 5 !== 0) return;
   if (Object.keys(Game.constructionSites).length >= 90) return;
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
+
+    // Colony-bootstrap rooms get their first spawn placed before anything else —
+    // until a spawn exists the room has no economy at all.
+    placeColonySpawn(room);
 
     placeSourceContainers(room);
     placeControllerContainer(room);

@@ -12,7 +12,9 @@ type CreepRoleName =
   | 'scout'
   | 'remoteHauler'
   | 'reserver'
-  | 'remoteBuilder';
+  | 'remoteBuilder'
+  | 'claimer'
+  | 'colonyBuilder';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -118,9 +120,32 @@ interface ProfilerSample {
   samples: number;
 }
 
+interface ColonyState {
+  /** Parent colony's room name — the room that owns the spawn budget for bootstrap. */
+  homeRoom: string;
+  /**
+   * Lifecycle of a colony target:
+   * - 'claiming'      → claimer is dispatched; awaiting controller.my === true.
+   * - 'bootstrapping' → room is claimed but no spawn yet. Home room ships colonyBuilders
+   *                     to build the first spawn, then the room transitions to its own
+   *                     regular spawn pipeline.
+   * - 'active'        → room has its own spawn and is self-sufficient (treated as a
+   *                     standard owned room — kept here mostly for status display).
+   */
+  status: 'claiming' | 'bootstrapping' | 'active';
+  /** Tick when claim() was issued. */
+  selectedAt: number;
+  /** Tick when controller.my flipped to true. */
+  claimedAt?: number;
+  /** Tick when the first spawn finished. */
+  activeAt?: number;
+}
+
 interface Memory {
   creeps: { [name: string]: CreepMemory };
   rooms: { [name: string]: RoomMemory };
+  /** Multi-room expansion targets keyed by the room being claimed. */
+  colonies?: { [targetRoom: string]: ColonyState };
   // CPU samples by label, keyed by the name passed to profile().
   stats?: { [name: string]: ProfilerSample };
   // Toggles — default off, flip from the in-game console.

@@ -13,6 +13,8 @@ import { scout } from './scout';
 import { remoteHauler } from './remoteHauler';
 import { reserver } from './reserver';
 import { remoteBuilder } from './remoteBuilder';
+import { claimer } from './claimer';
+import { colonyBuilder } from './colonyBuilder';
 
 export type { Role };
 
@@ -31,4 +33,6 @@ export const roles: Record<CreepRoleName, Role> = {
   remoteHauler,
   reserver,
   remoteBuilder,
+  claimer,
+  colonyBuilder,
 };

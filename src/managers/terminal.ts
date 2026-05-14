@@ -7,6 +7,7 @@ import {
   MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
 import { getChainBuyNeeds } from './labs';
+import { coloniesForHome } from '../utils/colonyPlanner';
 
 // Matches the 10-tick terminal cooldown so we capture every available sell
 // window. Running every tick would do the same but cost more CPU on no-op
@@ -185,6 +186,51 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   }
 }
 
+// Inter-room energy support for young colonies. A home room with an established
+// terminal and storage surplus can ship energy to a colony whose own terminal
+// is online but whose storage is still building up.
+const COLONY_SEND_INTERVAL = 100;
+/** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
+const COLONY_SEND_AMOUNT = 10_000;
+/** Home storage must hold at least this much before we'll donate energy. */
+const HOME_SURPLUS_FLOOR = 80_000;
+/** Stop topping a colony up once its storage clears this bar. */
+const COLONY_STORAGE_TARGET = 30_000;
+
+function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
+  const homeStorage = home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (homeStorage < HOME_SURPLUS_FLOOR) return;
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER)
+    return;
+
+  for (const { room: colonyRoom, state } of coloniesForHome(home.name)) {
+    if (state.status === 'claiming') continue; // no terminal exists yet
+    const target = Game.rooms[colonyRoom];
+    // A claimed room without our visibility can't have a usable terminal yet.
+    if (!target?.controller?.my) continue;
+    const colonyTerminal = target.terminal;
+    if (!colonyTerminal) continue; // RCL < 6 colony — colonyBuilder handles bootstrap locally
+    const colonyStorage = target.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    if (colonyStorage >= COLONY_STORAGE_TARGET) continue;
+    if (colonyTerminal.store.getFreeCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT) continue;
+
+    const result = terminal.send(
+      RESOURCE_ENERGY,
+      COLONY_SEND_AMOUNT,
+      colonyRoom,
+      'colony bootstrap',
+    );
+    if (result === OK) {
+      console.log(
+        `[terminal] ${home.name}: sent ${COLONY_SEND_AMOUNT} energy to colony ${colonyRoom}`,
+      );
+      return; // one send per interval
+    } else {
+      console.log(`[terminal] ${home.name}: colony send to ${colonyRoom} failed: ${result}`);
+    }
+  }
+}
+
 export function runTerminal(): void {
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
@@ -195,6 +241,10 @@ export function runTerminal(): void {
     // (every 500 ticks). If buy deals, the cooldown re-check below skips sell.
     if (Game.time % BUY_INTERVAL === 0) {
       buyForLabs(room, terminal);
+    }
+
+    if (terminal.cooldown === 0 && Game.time % COLONY_SEND_INTERVAL === 0) {
+      sendEnergyToColonies(room, terminal);
     }
 
     if (terminal.cooldown === 0 && Game.time % MARKET_INTERVAL === 0) {
