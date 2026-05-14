@@ -33,10 +33,19 @@ export function findScoutTarget(homeRoom: string): string | undefined {
       visited.add(neighbor);
 
       const rmem = Memory.rooms[neighbor];
+      // Skip rooms that were recently attempted but failed (scout died at border).
+      // Give a SCOUT_STALE_TICKS cooldown before retrying.
+      const attemptAge =
+        rmem?.scoutAttempted !== undefined ? Game.time - rmem.scoutAttempted : Infinity;
       if (!rmem?.scoutedAt) {
-        unscouted.push(neighbor);
-      } else if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS) {
-        stale.push(neighbor);
+        if (attemptAge > SCOUT_STALE_TICKS) unscouted.push(neighbor);
+      } else {
+        // Owned rooms change ownership rarely — re-scout 10× less often so
+        // we don't send scouts into hostile territory on a 5k-tick loop.
+        const staleMultiplier = rmem.scoutedOwner ? 10 : 1;
+        if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS * staleMultiplier) {
+          stale.push(neighbor);
+        }
       }
 
       if (entry.depth < SCOUT_MAX_DEPTH) {
@@ -65,6 +74,10 @@ const states: StateMachineDefinition = {
         }
         creep.memory.targetRoom = target;
         delete creep.memory._scoutTick;
+        // Stamp the room so findScoutTarget skips it while this scout is alive.
+        // If the scout dies before entering, scoutedAt won't be set but
+        // scoutAttempted will, preventing a tight respawn loop.
+        (Memory.rooms[target] ??= {}).scoutAttempted = Game.time;
       }
 
       const targetRoom = creep.memory.targetRoom as string;
@@ -75,6 +88,7 @@ const states: StateMachineDefinition = {
         rmem.scoutedSources = sources.length;
         rmem.scoutedSourceData = sources.map((s) => ({ id: s.id, x: s.pos.x, y: s.pos.y }));
         rmem.scoutedAt = Game.time;
+        delete rmem.scoutAttempted;
 
         const controller = creep.room.controller;
         rmem.scoutedHasController = !!controller;

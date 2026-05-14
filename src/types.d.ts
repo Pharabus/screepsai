@@ -104,6 +104,8 @@ interface RoomMemory {
   defensePolicy?: 'flee' | 'defend' | 'abandon';
   // Scout data (populated by scouts visiting unowned rooms)
   scoutedAt?: number;
+  /** Set when a scout departs for this room; cleared on arrival. Prevents respawn loops when scout dies at border. */
+  scoutAttempted?: number;
   scoutedSources?: number;
   /** Source data recorded by scouts, so miners can path without visibility */
   scoutedSourceData?: { id: Id<Source>; x: number; y: number }[];
