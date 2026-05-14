@@ -269,7 +269,45 @@ describe('hauler lab logistics', () => {
 
     hauler.run(creep);
 
-    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H');
+    // toWithdraw = min(needed=3000, carry=300, available=500) = 300
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H', 300);
+  });
+
+  it('skips lab input load when lab needs less than MIN_LAB_LOAD', () => {
+    const inputLab1 = mockLab('lab1', {
+      store: mockLabStore({ H: 2995 }, { H: 5 }), // only 5 free — below threshold
+    });
+    const inputLab2 = mockLab('lab2');
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100, H: 500 }),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3'],
+        storageLinkId: undefined,
+      },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'H', expect.anything());
   });
 
   it('withdraws lab input from terminal when storage has none', () => {
@@ -317,8 +355,9 @@ describe('hauler lab logistics', () => {
     hauler.run(creep);
 
     // No H in storage → fall back to withdrawing from terminal
-    expect(creep.withdraw).toHaveBeenCalledWith(terminal, 'H');
-    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'H');
+    // toWithdraw = min(needed=3000, carry=300, available=5000) = 300
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, 'H', 300);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'H', expect.anything());
   });
 
   it('delivers lab input mineral to the correct input lab', () => {

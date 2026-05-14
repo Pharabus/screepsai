@@ -8,6 +8,12 @@ import { cached } from '../utils/tickCache';
 import { MINERAL_STORAGE_FLOOR, TERMINAL_ENERGY_FLOOR } from '../utils/thresholds';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
+// Only dispatch a hauler for lab minerals when the lab genuinely needs a
+// refill batch. LAB_REACTION_AMOUNT (5) is far too small — it fired on every
+// tick of reaction consumption, monopolising both haulers with micro-loads
+// (800 units withdrawn to deliver 5) and starving energy logistics.
+// At 5 energy consumed per reaction tick, 500 units = ~100 ticks of runway.
+const MIN_LAB_LOAD = 500;
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -336,15 +342,20 @@ function pickupLabInput(creep: Creep, mem: RoomMemory | undefined): boolean {
   ];
 
   for (const [lab, mineral] of inputs) {
-    if (!lab || (lab.store.getFreeCapacity(mineral) ?? 0) < LAB_REACTION_AMOUNT) continue;
+    const needed = lab?.store.getFreeCapacity(mineral) ?? 0;
+    if (!lab || needed < MIN_LAB_LOAD) continue;
     const inStorage = storage?.store.getUsedCapacity(mineral) ?? 0;
     const inTerminal = terminal?.store.getUsedCapacity(mineral) ?? 0;
     // Prefer storage; fall back to terminal so 26k H stuck there isn't invisible to labs
     const source: StructureStorage | StructureTerminal | null =
       inStorage > 0 ? (storage ?? null) : inTerminal > 0 ? (terminal ?? null) : null;
     if (!source) continue;
+    const available = inStorage > 0 ? inStorage : inTerminal;
     creep.memory.targetId = source.id;
-    if (creep.withdraw(source, mineral) === ERR_NOT_IN_RANGE) {
+    // Withdraw exactly what the lab needs — no more, to avoid haulers dumping
+    // excess minerals back to storage on the delivery trip.
+    const toWithdraw = Math.min(needed, creep.store.getFreeCapacity(), available);
+    if (creep.withdraw(source, mineral, toWithdraw) === ERR_NOT_IN_RANGE) {
       moveTo(creep, source, {
         priority: PRIORITY_HAULER,
         visualizePathStyle: { stroke: '#00ff88' },
