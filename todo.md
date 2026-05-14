@@ -172,9 +172,9 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 
 Energy starvation analysis (May 2026) surfaced structural issues that need a second pass once Tier 1 changes stabilise (monitor for ~5000 ticks after deploy):
 
-- [ ] **Remote miner WORK cap for reserved sources** — `body.ts` caps remote miners at 5 WORK (10 e/t). A reserved source has 3000 capacity requiring 10 WORK for full saturation. Either raise cap to 10 gated on `scoutedReservation === 'Pharabus'`, or spawn 2 miners per remote source in reserved rooms.
+- [x] **Remote miner WORK cap for reserved sources** — `spawner.ts` now passes `isReserved ? 10 : 5` to `buildRemoteMinerBody`; reserved sources get 10-WORK miners for full 3000-energy saturation.
 - [ ] **Distance-aware remote hauler count** — `spawner.ts:285` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2.
-- [ ] **Stop spawning idle repairers** — Builder side resolved (`buildersNeeded` now returns 0 when there are no construction sites — Phase 17). `repairersNeeded` still returns at least 1; should return 0 when all structures are healthy so the role doesn't become a hidden upgrader that consumes spawn slots without accounting for the extra controller drain.
+- [x] **Stop spawning idle repairers** — `repairersNeeded` returns 0 when no structure is below 75% HP (excluding walls/ramparts), 1 for minor damage, 2 when 5+ structures are damaged. Fixed in commit `27dc6c3`.
 - [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
 
 ### Phase 17 — Energy-flow stabilization (May 2026, completed)

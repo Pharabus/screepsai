@@ -8,26 +8,44 @@ function pickScoutTarget(creep: Creep): string | undefined {
   return findScoutTarget(creep.memory.homeRoom ?? creep.room.name);
 }
 
-export function findScoutTarget(homeRoom: string): string | undefined {
-  const exits = Game.map.describeExits(homeRoom);
-  if (!exits) return undefined;
+const SCOUT_MAX_DEPTH = 3;
+const SCOUT_STALE_TICKS = 5000;
+// Timeout for reaching a target room. At 1 tile/tick a [MOVE]-only scout
+// takes ~40t per room; depth-3 needs ~200t plus border-wait padding.
+const SCOUT_STUCK_TICKS = 300;
 
-  const candidates = Object.values(exits);
+export function findScoutTarget(homeRoom: string): string | undefined {
   const mem = Memory.rooms[homeRoom];
   const alreadyRemote = new Set(mem?.remoteRooms ?? []);
 
-  for (const roomName of candidates) {
-    if (alreadyRemote.has(roomName)) continue;
-    const rmem = Memory.rooms[roomName];
-    if (!rmem?.scoutedAt) return roomName;
+  const visited = new Set<string>([homeRoom]);
+  const queue: Array<{ room: string; depth: number }> = [{ room: homeRoom, depth: 0 }];
+  const unscouted: string[] = [];
+  const stale: string[] = [];
+
+  while (queue.length > 0) {
+    const entry = queue.shift()!;
+    const exits = Game.map.describeExits(entry.room);
+    if (!exits) continue;
+
+    for (const neighbor of Object.values(exits)) {
+      if (visited.has(neighbor) || alreadyRemote.has(neighbor)) continue;
+      visited.add(neighbor);
+
+      const rmem = Memory.rooms[neighbor];
+      if (!rmem?.scoutedAt) {
+        unscouted.push(neighbor);
+      } else if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS) {
+        stale.push(neighbor);
+      }
+
+      if (entry.depth < SCOUT_MAX_DEPTH) {
+        queue.push({ room: neighbor, depth: entry.depth + 1 });
+      }
+    }
   }
 
-  for (const roomName of candidates) {
-    const rmem = Memory.rooms[roomName];
-    if (rmem?.scoutedAt && Game.time - rmem.scoutedAt > 5000) return roomName;
-  }
-
-  return undefined;
+  return unscouted[0] ?? stale[0];
 }
 
 function markUnreachable(targetRoom: string): void {
@@ -84,7 +102,7 @@ const states: StateMachineDefinition = {
       // Stuck detection: if we haven't changed rooms after a while, mark unreachable
       if (!creep.memory._scoutTick) {
         creep.memory._scoutTick = Game.time;
-      } else if (Game.time - creep.memory._scoutTick > 50) {
+      } else if (Game.time - creep.memory._scoutTick > SCOUT_STUCK_TICKS) {
         markUnreachable(targetRoom);
         creep.memory.targetRoom = undefined;
         delete creep.memory._scoutTick;

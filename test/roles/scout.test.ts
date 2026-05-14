@@ -61,6 +61,20 @@ describe('scout', () => {
       expect(creep.memory.targetRoom).toBe('W2N1');
     });
 
+    it('finds unscouted room at depth 2 when depth-1 rooms are scouted', () => {
+      Game.time = 100;
+      // W1N1 → W2N1 (scouted) → W3N1 (unscouted)
+      Game.map.describeExits = (room: string) => {
+        if (room === 'W1N1') return { '1': 'W2N1' } as any;
+        if (room === 'W2N1') return { '1': 'W3N1' } as any;
+        return {} as any;
+      };
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100 } as any;
+
+      expect(findScoutTarget('W1N1')).toBe('W3N1');
+    });
+
     it('skips rooms already in remoteRooms list', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;
@@ -227,14 +241,14 @@ describe('scout', () => {
       expect(creep.memory._scoutTick).toBe(100);
     });
 
-    it('marks room unreachable after 50 ticks stuck', () => {
-      Game.time = 200;
+    it('marks room unreachable after 300 ticks stuck', () => {
+      Game.time = 302;
       const creep = mockCreep({
         memory: {
           role: 'scout',
           state: 'SCOUT',
           targetRoom: 'W2N1',
-          _scoutTick: 100,
+          _scoutTick: 1,
         },
         room: mockRoom({ name: 'W1N1' }),
         pos: new RoomPosition(48, 25, 'W1N1'),
@@ -242,20 +256,20 @@ describe('scout', () => {
 
       scout.run(creep);
 
-      expect(Memory.rooms['W2N1'].scoutedAt).toBe(200);
+      expect(Memory.rooms['W2N1'].scoutedAt).toBe(302);
       expect(Memory.rooms['W2N1'].scoutedSources).toBe(0);
       expect(creep.memory.targetRoom).toBeUndefined();
       expect(creep.memory._scoutTick).toBeUndefined();
     });
 
-    it('does not mark unreachable before 50 ticks', () => {
-      Game.time = 140;
+    it('does not mark unreachable before 300 ticks', () => {
+      Game.time = 300;
       const creep = mockCreep({
         memory: {
           role: 'scout',
           state: 'SCOUT',
           targetRoom: 'W2N1',
-          _scoutTick: 100,
+          _scoutTick: 1,
         },
         room: mockRoom({ name: 'W1N1' }),
         pos: new RoomPosition(48, 25, 'W1N1'),
