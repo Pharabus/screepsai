@@ -114,7 +114,7 @@ describe('runTerminal', () => {
     expect(Game.market.getAllOrders).not.toHaveBeenCalled();
   });
 
-  it('logs surplus minerals with best buy price', () => {
+  it('picks the highest-revenue order, not the highest-price one', () => {
     (Game as any).time = 100;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -128,6 +128,8 @@ describe('runTerminal', () => {
     });
     (Game as any).rooms = { W1N1: room };
 
+    // order1 has lower price but larger volume → 1000*0.5=500cr revenue
+    // order2 has higher price but smaller volume → 500*0.8=400cr revenue
     (Game as any).market.getAllOrders = vi.fn(() => [
       { id: 'order1', price: 0.5, remainingAmount: 1000, roomName: 'W2N2' },
       { id: 'order2', price: 0.8, remainingAmount: 500, roomName: 'W3N3' },
@@ -140,9 +142,91 @@ describe('runTerminal', () => {
       type: 'buy',
       resourceType: 'H',
     });
-    expect(Game.market.deal).toHaveBeenCalledWith('order2', 500, 'W1N1');
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 500 H'));
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('0.800'));
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', 1000, 'W1N1');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 1000 H'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('0.500'));
+
+    consoleSpy.mockRestore();
+  });
+
+  it('skips 1-unit decoy buy orders when a bulk order is also available', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 30000, energy: 100000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // Decoy filtered at order-selection (remainingAmount=1 < MIN_DEAL_SIZE=100)
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'decoy', price: 500, remainingAmount: 1, roomName: 'W2N2' },
+      { id: 'bulk', price: 50, remainingAmount: 200, roomName: 'W3N3' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('bulk', 200, 'W1N1');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 200 H'));
+
+    consoleSpy.mockRestore();
+  });
+
+  it('refuses to deal when only decoy-sized orders exist', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 30000, energy: 100000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'decoy', price: 500, remainingAmount: 1, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no viable buy orders'));
+
+    consoleSpy.mockRestore();
+  });
+
+  it('skips a deal when energy fees exceed 50% of gross revenue', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 30000, energy: 100000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // dealAmount=200, price=0.5 → revenue=100cr. energyCost=200 → fee > 50% limit (50cr).
+    (Game as any).market.calcTransactionCost = vi.fn(() => 200);
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'cheap', price: 0.5, remainingAmount: 200, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('skipping (energy fee'));
 
     consoleSpy.mockRestore();
   });

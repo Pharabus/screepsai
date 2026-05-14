@@ -173,6 +173,14 @@ function pickup(creep: Creep): boolean {
 
   // --- Priority chain for selecting a NEW pickup target ---
 
+  // Lab work first: flushing/loading is otherwise starved when the storage
+  // link keeps refilling above the drain threshold. Each branch returns
+  // false fast when there's nothing to do (full lab or no active reaction),
+  // so this only kicks in when labs actually need attention.
+  if (pickupLabFlush(creep, mem)) return true;
+  if (pickupLabInput(creep, mem)) return true;
+  if (pickupLabOutput(creep, mem)) return true;
+
   // Drain storage link — bottleneck of the link pipeline
   if (mem?.storageLinkId) {
     const storageLink = Game.getObjectById(mem.storageLinkId);
@@ -284,15 +292,6 @@ function pickup(creep: Creep): boolean {
     }
     return true;
   }
-
-  // Lab flush: withdraw stale minerals from input labs before loading new ones
-  if (pickupLabFlush(creep, mem)) return true;
-
-  // Lab input: withdraw needed mineral from storage for input lab
-  if (pickupLabInput(creep, mem)) return true;
-
-  // Lab output: collect compounds from output labs
-  if (pickupLabOutput(creep, mem)) return true;
 
   // Terminal: move excess minerals from storage to terminal
   if (pickupForTerminal(creep)) return true;

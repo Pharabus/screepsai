@@ -13,6 +13,12 @@ import { getChainBuyNeeds } from './labs';
 // store-scans; every 10 ticks is the sweet spot.
 const MARKET_INTERVAL = 10;
 const MIN_SELL_PRICE = 0.01;
+// Ignore orders with < 100 remaining and never deal < 100 units. Shard3 is
+// full of 1-unit honeypot orders at 500cr designed to waste terminal cooldowns.
+const MIN_DEAL_SIZE = 100;
+// Skip a deal when energy fees exceed this fraction of gross revenue (treating
+// 1 energy ≈ 1 credit). Prevents selling cheap minerals at a net energy loss.
+const MAX_ENERGY_FEE_FRACTION = 0.5;
 
 // Base minerals that can be purchased on the market (not compound outputs)
 const BUYABLE_MINERALS = new Set<string>(['H', 'O', 'U', 'L', 'K', 'Z', 'X', 'G']);
@@ -26,19 +32,26 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 
     const surplus = amount - MINERAL_TERMINAL_CEILING;
     const orders = Game.market.getAllOrders({ type: ORDER_BUY, resourceType: resource });
-    let bestPrice = 0;
+    // Rank by revenue-per-deal (min(surplus, remaining) * price), not just price.
+    // A high-price decoy with remainingAmount=1 wastes a 10-tick cooldown for 1 unit;
+    // a real bulk order at lower price clears far more surplus per deal.
+    let bestRevenue = 0;
     let bestOrder: Order | undefined;
     for (const order of orders) {
-      if (order.remainingAmount > 0 && order.price > bestPrice) {
-        bestPrice = order.price;
+      if (order.remainingAmount < MIN_DEAL_SIZE) continue; // fix #1: decoy filter
+      if (order.price < MIN_SELL_PRICE) continue;
+      const revenue = Math.min(surplus, order.remainingAmount) * order.price;
+      if (revenue > bestRevenue) {
+        bestRevenue = revenue;
         bestOrder = order;
       }
     }
 
-    if (!bestOrder || bestPrice < MIN_SELL_PRICE) {
+    if (!bestOrder) {
       console.log(`[terminal] ${room.name}: ${resource} surplus=${surplus}, no viable buy orders`);
       continue;
     }
+    const bestPrice = bestOrder.price;
 
     if (sold) {
       console.log(
@@ -48,9 +61,24 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
     }
 
     const dealAmount = Math.min(surplus, bestOrder.remainingAmount);
+    if (dealAmount < MIN_DEAL_SIZE) {
+      console.log(
+        `[terminal] ${room.name}: ${resource} surplus=${surplus}, deal too small (${dealAmount})`,
+      );
+      continue;
+    }
     const energyCost = Game.market.calcTransactionCost(dealAmount, room.name, bestOrder.roomName!);
-    const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
 
+    // fix #3: energy-fee profitability guard (1 energy ≈ 1 credit approximation)
+    const revenue = dealAmount * bestOrder.price;
+    if (energyCost > revenue * MAX_ENERGY_FEE_FRACTION) {
+      console.log(
+        `[terminal] ${room.name}: ${resource} skipping (energy fee ${energyCost} > ${Math.round(revenue * MAX_ENERGY_FEE_FRACTION)} limit)`,
+      );
+      continue;
+    }
+
+    const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
     if (terminalEnergy < energyCost + ENERGY_TERMINAL_BUFFER) {
       console.log(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, skipping (need ${energyCost} energy, have ${terminalEnergy})`,
