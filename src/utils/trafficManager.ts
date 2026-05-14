@@ -67,10 +67,16 @@ function getPath(creep: Creep, target: RoomPosition, range: number): RoomPositio
       {
         plainCost: 2,
         swampCost: 10,
-        maxRooms: crossRoom ? 2 : 1,
+        // Diagonal / multi-hop targets (e.g. depth-3 scout, remote miners)
+        // need to traverse intermediate rooms; 2 is not enough.
+        maxRooms: crossRoom ? 6 : 1,
+        maxOps: crossRoom ? 4000 : 2000,
         roomCallback: (roomName) => {
           const room = Game.rooms[roomName];
-          if (!room) return false;
+          // Unseen rooms: return true so PathFinder uses default terrain.
+          // Returning false would skip the room entirely, breaking any path
+          // through unscouted territory.
+          if (!room) return true;
           return getRoomCostMatrix(room);
         },
       },
