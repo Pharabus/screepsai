@@ -3,6 +3,7 @@ import {
   resetTraffic,
   executeMove,
   getRoomCostMatrix,
+  pathRoomCallback,
   PRIORITY_STATIC,
 } from '../../src/utils/trafficManager';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -126,6 +127,49 @@ describe('trafficManager', () => {
 
       const matrix = getRoomCostMatrix(room);
       expect(matrix.get(30, 30)).toBe(255);
+    });
+  });
+
+  describe('pathRoomCallback', () => {
+    it('returns true for unseen rooms with no scout data', () => {
+      expect(pathRoomCallback('W5N5')).toBe(true);
+    });
+
+    it('skips unseen rooms owned by another player', () => {
+      Memory.rooms['W5N5'] = { scoutedOwner: 'Bosko' } as any;
+      Game.spawns['Spawn1'] = { owner: { username: 'Pharabus' } } as any;
+
+      expect(pathRoomCallback('W5N5')).toBe(false);
+    });
+
+    it('does not skip our own rooms even if vision is briefly lost', () => {
+      Memory.rooms['W5N5'] = { scoutedOwner: 'Pharabus' } as any;
+      Game.spawns['Spawn1'] = { owner: { username: 'Pharabus' } } as any;
+
+      expect(pathRoomCallback('W5N5')).toBe(true);
+    });
+
+    it('returns cost matrix for visible rooms', () => {
+      const room = mockRoom({
+        name: 'W5N5',
+        find: vi.fn((type: number) => {
+          if (type === FIND_STRUCTURES) {
+            return [{ structureType: STRUCTURE_ROAD, pos: { x: 10, y: 10 } }];
+          }
+          return [];
+        }),
+      });
+      Game.rooms['W5N5'] = room;
+
+      const result = pathRoomCallback('W5N5');
+      expect(typeof result).toBe('object');
+      expect((result as CostMatrix).get(10, 10)).toBe(1);
+    });
+
+    it('does not skip enemy-reserved rooms (no towers there)', () => {
+      Memory.rooms['W5N5'] = { scoutedReservation: 'EnemyReserver' } as any;
+
+      expect(pathRoomCallback('W5N5')).toBe(true);
     });
   });
 

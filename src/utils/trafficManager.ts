@@ -58,6 +58,31 @@ export function executeMove(
   }
 }
 
+function getMyUsername(): string | undefined {
+  return cached('me:username', () => {
+    for (const name in Game.spawns) {
+      return Game.spawns[name]?.owner.username;
+    }
+    return undefined;
+  });
+}
+
+export function pathRoomCallback(roomName: string): boolean | CostMatrix {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    // Unseen room: skip if known to be owned by another player — their towers
+    // will one-shot our creeps. Owned rooms we have vision into fall through
+    // to the cost-matrix path below; if we lose vision briefly, the scoutedOwner
+    // comparison against our username keeps our own rooms traversable.
+    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+    if (owner && owner !== getMyUsername()) return false;
+    // Otherwise return true so PathFinder uses default terrain. Returning false
+    // here would skip every unscouted room, breaking cross-room paths.
+    return true;
+  }
+  return getRoomCostMatrix(room);
+}
+
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   return cached(`traffic:path:${creep.name}`, () => {
     const crossRoom = creep.pos.roomName !== target.roomName;
@@ -71,14 +96,7 @@ function getPath(creep: Creep, target: RoomPosition, range: number): RoomPositio
         // need to traverse intermediate rooms; 2 is not enough.
         maxRooms: crossRoom ? 6 : 1,
         maxOps: crossRoom ? 4000 : 2000,
-        roomCallback: (roomName) => {
-          const room = Game.rooms[roomName];
-          // Unseen rooms: return true so PathFinder uses default terrain.
-          // Returning false would skip the room entirely, breaking any path
-          // through unscouted territory.
-          if (!room) return true;
-          return getRoomCostMatrix(room);
-        },
+        roomCallback: pathRoomCallback,
       },
     );
     return result.path;
