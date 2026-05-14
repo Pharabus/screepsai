@@ -75,6 +75,25 @@ describe('scout', () => {
       expect(findScoutTarget('W1N1')).toBe('W3N1');
     });
 
+    it('does not target rooms beyond SCOUT_MAX_DEPTH (depth 3)', () => {
+      Game.time = 100;
+      // W1N1 → W2N1 → W3N1 → W4N1 → W5N1 (depth 4, should NOT be picked)
+      Game.map.describeExits = (room: string) => {
+        if (room === 'W1N1') return { '1': 'W2N1' } as any;
+        if (room === 'W2N1') return { '1': 'W3N1' } as any;
+        if (room === 'W3N1') return { '1': 'W4N1' } as any;
+        if (room === 'W4N1') return { '1': 'W5N1' } as any;
+        return {} as any;
+      };
+      // All rooms through depth 3 scouted; only depth-4 would remain.
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100 } as any;
+      Memory.rooms['W3N1'] = { scoutedAt: 100 } as any;
+      Memory.rooms['W4N1'] = { scoutedAt: 100 } as any;
+
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
     it('skips rooms already in remoteRooms list', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;

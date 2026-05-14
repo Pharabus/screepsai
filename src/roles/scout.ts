@@ -25,6 +25,7 @@ export function findScoutTarget(homeRoom: string): string | undefined {
 
   while (queue.length > 0) {
     const entry = queue.shift()!;
+    if (entry.depth >= SCOUT_MAX_DEPTH) continue;
     const exits = Game.map.describeExits(entry.room);
     if (!exits) continue;
 
@@ -48,9 +49,7 @@ export function findScoutTarget(homeRoom: string): string | undefined {
         }
       }
 
-      if (entry.depth < SCOUT_MAX_DEPTH) {
-        queue.push({ room: neighbor, depth: entry.depth + 1 });
-      }
+      queue.push({ room: neighbor, depth: entry.depth + 1 });
     }
   }
 
