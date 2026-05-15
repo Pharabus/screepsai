@@ -72,6 +72,25 @@ const states: StateMachineDefinition = {
       if (!creep.memory.targetRoom) {
         const target = pickScoutTarget(creep);
         if (!target) {
+          // Nothing left to scout. If we're in a foreign room, markIdle does
+          // nothing (no my-spawn/storage anchor), and a scout sitting on a
+          // border tile gets auto-evicted across the boundary each tick.
+          // Head home and recycle there.
+          const homeRoom = creep.memory.homeRoom;
+          if (homeRoom && creep.room.name !== homeRoom) {
+            moveTo(creep, new RoomPosition(25, 25, homeRoom), {
+              range: 20,
+              priority: PRIORITY_DEFAULT,
+            });
+            return undefined;
+          }
+          const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+          if (spawn) {
+            if (spawn.recycleCreep(creep) === ERR_NOT_IN_RANGE) {
+              moveTo(creep, spawn.pos, { range: 1, priority: PRIORITY_DEFAULT });
+            }
+            return undefined;
+          }
           markIdle(creep);
           return undefined;
         }
