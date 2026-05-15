@@ -131,8 +131,10 @@ describe('trafficManager', () => {
   });
 
   describe('pathRoomCallback', () => {
-    it('returns true for unseen rooms with no scout data', () => {
-      expect(pathRoomCallback('W5N5')).toBe(true);
+    it('returns an empty CostMatrix for unseen rooms with no scout data', () => {
+      const result = pathRoomCallback('W5N5');
+      expect(result).toBeInstanceOf(PathFinder.CostMatrix);
+      expect((result as CostMatrix).get(25, 25)).toBe(0);
     });
 
     it('skips unseen rooms owned by another player', () => {
@@ -146,7 +148,8 @@ describe('trafficManager', () => {
       Memory.rooms['W5N5'] = { scoutedOwner: 'Pharabus' } as any;
       Game.spawns['Spawn1'] = { owner: { username: 'Pharabus' } } as any;
 
-      expect(pathRoomCallback('W5N5')).toBe(true);
+      const result = pathRoomCallback('W5N5');
+      expect(result).toBeInstanceOf(PathFinder.CostMatrix);
     });
 
     it('returns cost matrix for visible rooms', () => {
@@ -169,7 +172,8 @@ describe('trafficManager', () => {
     it('does not skip enemy-reserved rooms (no towers there)', () => {
       Memory.rooms['W5N5'] = { scoutedReservation: 'EnemyReserver' } as any;
 
-      expect(pathRoomCallback('W5N5')).toBe(true);
+      const result = pathRoomCallback('W5N5');
+      expect(result).toBeInstanceOf(PathFinder.CostMatrix);
     });
   });
 

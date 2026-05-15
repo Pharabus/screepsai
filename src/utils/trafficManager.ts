@@ -76,9 +76,14 @@ export function pathRoomCallback(roomName: string): boolean | CostMatrix {
     // comparison against our username keeps our own rooms traversable.
     const owner = Memory.rooms?.[roomName]?.scoutedOwner;
     if (owner && owner !== getMyUsername()) return false;
-    // Otherwise return true so PathFinder uses default terrain. Returning false
-    // here would skip every unscouted room, breaking cross-room paths.
-    return true;
+    // Return an empty CostMatrix (not `true` or `undefined`) so terrain falls
+    // through. Mixing `true`/`undefined` returns with real CostMatrix returns
+    // for visible rooms confuses PathFinder when the visible room has 255
+    // obstacles — observed with abandoned constructedWalls in W45N58, the
+    // search would return incomplete with a first step pointing backward,
+    // bouncing the creep across the border. Always returning a CostMatrix
+    // (hivemind does the same) keeps PathFinder consistent.
+    return new PathFinder.CostMatrix();
   }
   return getRoomCostMatrix(room);
 }
@@ -93,9 +98,14 @@ function getPath(creep: Creep, target: RoomPosition, range: number): RoomPositio
         plainCost: 2,
         swampCost: 10,
         // Diagonal / multi-hop targets (e.g. depth-3 scout, remote miners)
-        // need to traverse intermediate rooms; 2 is not enough.
-        maxRooms: crossRoom ? 6 : 1,
-        maxOps: crossRoom ? 4000 : 2000,
+        // need to traverse intermediate rooms; the default of 2 is not enough,
+        // and a cluttered room (constructedWalls, etc.) can force a multi-room
+        // detour. 16 matches the Screeps default and hivemind's choice.
+        maxRooms: crossRoom ? 16 : 1,
+        // Cross-room searches need room to breathe; 2000 (the engine default)
+        // is too tight even for a 2-room hop, and tighter caps return partial
+        // paths pointing backward.
+        maxOps: crossRoom ? 10000 : 2000,
         roomCallback: pathRoomCallback,
       },
     );
