@@ -19,6 +19,13 @@ export function deliverToSpawnOrExtension(creep: Creep): boolean {
       delete creep.memory.targetId;
       return true;
     }
+    // Energy left and more adjacents still need filling. Stay put: next tick's
+    // Phase A drains the next adjacent for free. Pathing to a cached far
+    // target now would skip past these reachable refills.
+    if (adjacent.length > 1) {
+      delete creep.memory.targetId;
+      return true;
+    }
   }
 
   // Move toward cached target if still valid and not already adjacent

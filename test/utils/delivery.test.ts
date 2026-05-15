@@ -9,6 +9,8 @@ vi.mock('../../src/utils/trafficManager', () => ({
   PRIORITY_HAULER: 50,
 }));
 
+import { moveTo } from '../../src/utils/movement';
+
 function mockExtension(id: string, x: number, y: number, freeCapacity: number): any {
   return {
     id,
@@ -23,6 +25,7 @@ function mockExtension(id: string, x: number, y: number, freeCapacity: number): 
 describe('deliverToSpawnOrExtension', () => {
   beforeEach(() => {
     resetGameGlobals();
+    vi.clearAllMocks();
   });
 
   it('picks the closest unclaimed extension when another hauler already targets the nearest', () => {
@@ -144,6 +147,60 @@ describe('deliverToSpawnOrExtension', () => {
     deliverToSpawnOrExtension(creep);
 
     expect(creep.memory.targetId).toBe('ext1');
+  });
+
+  it('stays put when multiple adjacent extensions still need energy', () => {
+    const adj1 = mockExtension('adj1', 25, 26, 50); // adjacent, range 1
+    const adj2 = mockExtension('adj2', 26, 25, 100); // adjacent, range 1
+    const farExt = mockExtension('farExt', 40, 40, 50); // cached, far away
+
+    const findInRange = vi.fn(() => [adj1, adj2]);
+    const creep = mockCreep({
+      name: 'haulerA',
+      pos: Object.assign(new RoomPosition(25, 25, 'W1N1'), { findInRange }),
+      memory: { role: 'hauler', state: 'DELIVER', targetId: 'farExt' },
+      store: {
+        getUsedCapacity: () => 200, // more than adj1's free (50) — won't drain into adj1
+        getFreeCapacity: () => 600,
+      },
+    });
+
+    Game.getObjectById = vi.fn(() => farExt) as any;
+    Game.creeps = { haulerA: creep };
+
+    const result = deliverToSpawnOrExtension(creep);
+
+    expect(result).toBe(true);
+    expect(creep.transfer).toHaveBeenCalledWith(adj1, RESOURCE_ENERGY);
+    // Cache must be cleared; otherwise hauler would path to farExt next tick
+    expect(creep.memory.targetId).toBeUndefined();
+    // No movement: we want it to stay put so next tick fills adj2
+    expect(moveTo).not.toHaveBeenCalled();
+  });
+
+  it('still paths to cached far target when only one adjacent partial fill is possible', () => {
+    const adj1 = mockExtension('adj1', 25, 26, 50);
+    const farExt = mockExtension('farExt', 40, 40, 50);
+
+    const findInRange = vi.fn(() => [adj1]); // only ONE adjacent
+    const creep = mockCreep({
+      name: 'haulerA',
+      pos: Object.assign(new RoomPosition(25, 25, 'W1N1'), { findInRange }),
+      memory: { role: 'hauler', state: 'DELIVER', targetId: 'farExt' },
+      store: {
+        getUsedCapacity: () => 200, // more than adj1's free (50) — energy left after fill
+        getFreeCapacity: () => 600,
+      },
+    });
+
+    Game.getObjectById = vi.fn(() => farExt) as any;
+    Game.creeps = { haulerA: creep };
+
+    deliverToSpawnOrExtension(creep);
+
+    // Cache preserved; hauler moves on to the next target
+    expect(creep.memory.targetId).toBe('farExt');
+    expect(moveTo).toHaveBeenCalled();
   });
 
   it('considers remoteHauler targets as claimed', () => {
