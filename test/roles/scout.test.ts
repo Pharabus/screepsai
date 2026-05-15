@@ -125,6 +125,36 @@ describe('scout', () => {
       expect(creep.memory.targetRoom).toBe('W1N2');
     });
 
+    it('never re-targets owned rooms, even when stale', () => {
+      Game.time = 100_000; // very stale
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 0,
+        scoutedOwner: 'Bosko',
+      } as any;
+
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
+    it('expands BFS past an owned room to reach unscouted rooms behind it', () => {
+      Game.time = 100;
+      // W1N1 → W2N1 (owned by Bosko) → W3N1 (unscouted)
+      Game.map.describeExits = (room: string) => {
+        if (room === 'W1N1') return { '1': 'W2N1' } as any;
+        if (room === 'W2N1') return { '1': 'W3N1' } as any;
+        return {} as any;
+      };
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedOwner: 'Bosko',
+      } as any;
+
+      expect(findScoutTarget('W1N1')).toBe('W3N1');
+    });
+
     it('marks idle when no scout targets available', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: [] } as any;

@@ -34,19 +34,23 @@ export function findScoutTarget(homeRoom: string): string | undefined {
       visited.add(neighbor);
 
       const rmem = Memory.rooms[neighbor];
+      // Never re-scout owned rooms. Ownership rarely changes, and a scout has
+      // zero threat-score so its death doesn't increment the neighbor record —
+      // without this skip, scouts loop into the same hostile capital forever
+      // (observed: 19 deaths in 12h against a single owner). Still expand the
+      // BFS frontier so we can reach unscouted rooms past an owned one.
+      if (rmem?.scoutedOwner) {
+        queue.push({ room: neighbor, depth: entry.depth + 1 });
+        continue;
+      }
       // Skip rooms that were recently attempted but failed (scout died at border).
       // Give a SCOUT_STALE_TICKS cooldown before retrying.
       const attemptAge =
         rmem?.scoutAttempted !== undefined ? Game.time - rmem.scoutAttempted : Infinity;
       if (!rmem?.scoutedAt) {
         if (attemptAge > SCOUT_STALE_TICKS) unscouted.push(neighbor);
-      } else {
-        // Owned rooms change ownership rarely — re-scout 10× less often so
-        // we don't send scouts into hostile territory on a 5k-tick loop.
-        const staleMultiplier = rmem.scoutedOwner ? 10 : 1;
-        if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS * staleMultiplier) {
-          stale.push(neighbor);
-        }
+      } else if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS) {
+        stale.push(neighbor);
       }
 
       queue.push({ room: neighbor, depth: entry.depth + 1 });
