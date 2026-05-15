@@ -466,6 +466,51 @@ describe('hauler lab logistics', () => {
 
     expect(creep.withdraw).not.toHaveBeenCalledWith(inputLab1, 'H');
   });
+
+  it('skips lab work when another hauler in the room is already claimed to a lab', () => {
+    const outputLab = mockLab('lab3', {
+      mineralType: 'OH',
+      store: mockLabStore({ OH: 500 }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3'],
+      },
+    };
+
+    const busyHauler = mockCreep({
+      name: 'hauler_busy',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'lab3' },
+      store: mockStore({}),
+      pos: new RoomPosition(40, 40, 'W1N1'),
+    });
+    const freeHauler = mockCreep({
+      name: 'hauler_free',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_busy: busyHauler, hauler_free: freeHauler } as any;
+
+    hauler.run(freeHauler);
+
+    expect(freeHauler.withdraw).not.toHaveBeenCalledWith(outputLab, 'OH');
+  });
 });
 
 describe('hauler urgent responder', () => {
@@ -750,6 +795,101 @@ describe('hauler pickup priority', () => {
     hauler.run(creep);
 
     expect(creep.pickup).toHaveBeenCalledWith(drop);
+  });
+
+  it('preempts storage link drain when a large dropped pile exists', () => {
+    const bigDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: RESOURCE_ENERGY,
+      amount: 3000,
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 799 }, 800),
+      pos: new RoomPosition(16, 28, 'W1N1'),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        if (_type === FIND_DROPPED_RESOURCES) {
+          const all = [bigDrop];
+          return opts?.filter ? all.filter(opts.filter) : all;
+        }
+        return [];
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(15, 28, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((_type: number, opts?: any) => {
+      const drops = [bigDrop];
+      const filtered = opts?.filter ? drops.filter(opts.filter) : drops;
+      return filtered[0] ?? null;
+    }) as any;
+
+    hauler.run(creep);
+
+    expect(creep.pickup).toHaveBeenCalledWith(bigDrop);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('does not preempt link drain for a small drop below the large-drop threshold', () => {
+    const smallDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: RESOURCE_ENERGY,
+      amount: 200, // below LARGE_DROP_THRESHOLD (1000)
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 600 }, 800),
+      pos: new RoomPosition(16, 28, 'W1N1'),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(15, 28, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((_type: number, opts?: any) => {
+      const drops = [smallDrop];
+      const filtered = opts?.filter ? drops.filter(opts.filter) : drops;
+      return filtered[0] ?? null;
+    }) as any;
+
+    hauler.run(creep);
+
+    // Link drain wins because the drop isn't yet large enough to preempt
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(creep.pickup).not.toHaveBeenCalledWith(smallDrop);
   });
 
   it('ignores storage link below drain threshold', () => {

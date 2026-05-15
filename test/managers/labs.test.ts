@@ -207,9 +207,12 @@ describe('runLabs', () => {
     expect(outputLab.runReaction).not.toHaveBeenCalled();
   });
 
-  it('sets labFlushing when reaction changes and input labs have stale minerals', () => {
-    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'H', stored: { H: 500 } });
-    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'O', stored: { O: 500 } });
+  it('sets labFlushing when reaction changes and labs hold minerals with no viable reaction', () => {
+    // Labs hold K and L — these don't combine, so the stickiness path fails
+    // and the selector falls through to the goal/greedy logic. Storage has
+    // Z+K, so ZK is chosen; lab1 (K) and lab2 (L) don't match Z+K → flush.
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'K', stored: { K: 500 } });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'L', stored: { L: 500 } });
     const outputLab = mockLab({ id: 'lab3' });
 
     (Game as any).getObjectById = vi.fn((id: string) => {
@@ -246,9 +249,7 @@ describe('runLabs', () => {
     runLabs();
 
     const mem = Memory.rooms['W1N1'];
-    // selectReaction should pick Z+K→ZK since storage has no H or O
     expect(mem?.activeReaction?.output).toBe('ZK');
-    // Input labs still hold H and O, so labFlushing should be set
     expect(mem?.labFlushing).toBe(true);
   });
 
@@ -302,6 +303,92 @@ describe('runLabs', () => {
     expect(outputLab.runReaction).not.toHaveBeenCalled();
     // labFlushing should remain true because lab1 has 'L' not 'H'
     expect(Memory.rooms['W1N1']?.labFlushing).toBe(true);
+  });
+
+  it('prefers a reaction matching current lab contents to avoid flushing', () => {
+    // Input labs hold H and O — sticky should pick OH = H + O even though
+    // storage also has Z/K available for ZK (which the goal chain might
+    // otherwise prefer).
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'H', stored: { H: 500 } });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'O', stored: { O: 500 } });
+    const outputLab = mockLab({ id: 'lab3' });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    const storageStore: Record<string, any> = { Z: 5000, K: 5000, H: 100, O: 100 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: { store: storageStore },
+      terminal: null,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Game as any).time = 500; // force re-evaluation
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'K', output: 'ZK' },
+      },
+    };
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    expect(mem?.activeReaction?.output).toBe('OH');
+    expect(mem?.labFlushing).toBeFalsy();
+  });
+
+  it('does not stick to a residue reaction when supplies are exhausted', () => {
+    // Labs have residual H+O but storage/terminal are dry of both →
+    // sticky should fail and fall through to whatever the goal chain picks.
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'H', stored: { H: 50 } });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'O', stored: { O: 50 } });
+    const outputLab = mockLab({ id: 'lab3' });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    const storageStore: Record<string, any> = { Z: 5000, K: 5000 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: { store: storageStore },
+      terminal: null,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Game as any).time = 500;
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+      },
+    };
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    // Sticky requires MIN_INPUT_AMOUNT (100) of each — H+O total = 50+50 = 100
+    // but each individually is 50 in the lab + 0 in storage = 50 < 100,
+    // so fall through to ZK.
+    expect(mem?.activeReaction?.output).toBe('ZK');
   });
 
   it('selects a reaction when none is active', () => {

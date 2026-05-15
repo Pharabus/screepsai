@@ -14,6 +14,12 @@ const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 // (800 units withdrawn to deliver 5) and starving energy logistics.
 // At 5 energy consumed per reaction tick, 500 units = ~100 ticks of runway.
 const MIN_LAB_LOAD = 500;
+// When the storage link is permanently saturated (source links refilling it
+// faster than one hauler can drain), drops near linked sources never get
+// cleared because storage-link drain is higher priority than dropped energy.
+// Once a pile crosses this size, treat it as decay-critical and preempt the
+// link drain to clear it.
+const LARGE_DROP_THRESHOLD = 1000;
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -179,13 +185,22 @@ function pickup(creep: Creep): boolean {
 
   // --- Priority chain for selecting a NEW pickup target ---
 
+  // Decay-critical: a large dropped pile means the link pipeline can't keep
+  // up. Preempt link drain and lab work to clear it before more decays.
+  if (pickupLargeDrop(creep)) return true;
+
   // Lab work first: flushing/loading is otherwise starved when the storage
   // link keeps refilling above the drain threshold. Each branch returns
   // false fast when there's nothing to do (full lab or no active reaction),
-  // so this only kicks in when labs actually need attention.
-  if (pickupLabFlush(creep, mem)) return true;
-  if (pickupLabInput(creep, mem)) return true;
-  if (pickupLabOutput(creep, mem)) return true;
+  // so this only kicks in when labs actually need attention. Cap at one
+  // hauler at a time: lab loads/flushes are small (≤800) and a single
+  // round-trip drains them — two haulers piling onto the same task starved
+  // energy logistics in small rooms.
+  if (!isLabWorkClaimedByOther(creep, mem)) {
+    if (pickupLabFlush(creep, mem)) return true;
+    if (pickupLabInput(creep, mem)) return true;
+    if (pickupLabOutput(creep, mem)) return true;
+  }
 
   // Drain storage link — bottleneck of the link pipeline
   if (mem?.storageLinkId) {
@@ -303,6 +318,33 @@ function pickup(creep: Creep): boolean {
   if (pickupForTerminal(creep)) return true;
 
   markIdle(creep);
+  return false;
+}
+
+function pickupLargeDrop(creep: Creep): boolean {
+  const drop = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= LARGE_DROP_THRESHOLD,
+  });
+  if (!drop) return false;
+  creep.memory.targetId = drop.id;
+  if (creep.pickup(drop) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, drop, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ffaa00' },
+    });
+  }
+  return true;
+}
+
+function isLabWorkClaimedByOther(creep: Creep, mem: RoomMemory | undefined): boolean {
+  if (!mem?.labIds || mem.labIds.length === 0) return false;
+  const labIds = new Set<string>(mem.labIds);
+  for (const c of Object.values(Game.creeps)) {
+    if (c.name === creep.name) continue;
+    if (c.memory.role !== 'hauler') continue;
+    if (c.room.name !== creep.room.name) continue;
+    if (c.memory.targetId && labIds.has(c.memory.targetId)) return true;
+  }
   return false;
 }
 

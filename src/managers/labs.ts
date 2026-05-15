@@ -30,12 +30,64 @@ function buildAvailableMap(room: Room): Map<ResourceConstant, number> {
 }
 
 /**
+ * If the input labs already hold a viable input pair, prefer that reaction
+ * to avoid a flush cycle. Flushing consumes hauler bandwidth and stalls
+ * energy logistics; finishing the existing batch is almost always cheaper
+ * even if the resulting compound isn't the highest-tier goal.
+ */
+function findStickyReaction(
+  room: Room,
+  available: Map<ResourceConstant, number>,
+): ReactionStep | undefined {
+  const mem = Memory.rooms[room.name];
+  if (!mem?.inputLabIds || mem.inputLabIds.length < 2) return undefined;
+  const lab1 = Game.getObjectById(mem.inputLabIds[0]);
+  const lab2 = Game.getObjectById(mem.inputLabIds[1]);
+  const m1 = lab1?.mineralType;
+  const m2 = lab2?.mineralType;
+  if (!m1 || !m2) return undefined;
+
+  // Try both orientations against the REACTIONS table
+  const product1 = (REACTIONS as Record<string, Record<string, string>>)[m1]?.[m2];
+  const product2 = (REACTIONS as Record<string, Record<string, string>>)[m2]?.[m1];
+
+  let input1: ResourceConstant;
+  let input2: ResourceConstant;
+  let output: ResourceConstant;
+  if (product1) {
+    input1 = m1;
+    input2 = m2;
+    output = product1 as ResourceConstant;
+  } else if (product2) {
+    input1 = m2;
+    input2 = m1;
+    output = product2 as ResourceConstant;
+  } else {
+    return undefined;
+  }
+
+  // Count storage+terminal supply plus what's already in the labs
+  const supply = (r: ResourceConstant) =>
+    (available.get(r) ?? 0) +
+    (lab1?.store.getUsedCapacity(r) ?? 0) +
+    (lab2?.store.getUsedCapacity(r) ?? 0);
+  if (supply(input1) < MIN_INPUT_AMOUNT || supply(input2) < MIN_INPUT_AMOUNT) return undefined;
+
+  return { input1, input2, output };
+}
+
+/**
  * Goal-directed chain selection: try each REACTION_GOAL in priority order,
  * build its production chain, and return the highest viable step.
  * Falls back to greedy if no goal chain is achievable.
  */
 function selectReaction(room: Room): ReactionStep | undefined {
   const available = buildAvailableMap(room);
+
+  // Stickiness check first — prevents needless flush cycles when the prior
+  // reaction's residual minerals still form a viable pair.
+  const sticky = findStickyReaction(room, available);
+  if (sticky) return sticky;
 
   // Try each goal in priority order
   for (const goal of REACTION_GOALS) {
