@@ -98,6 +98,16 @@ const states: StateMachineDefinition = {
         if (controller) {
           rmem.scoutedOwner = controller.owner?.username;
           rmem.scoutedReservation = controller.reservation?.username;
+          rmem.scoutedControllerPos = { x: controller.pos.x, y: controller.pos.y };
+        }
+
+        const mineral = creep.room.find(FIND_MINERALS)[0];
+        if (mineral) {
+          rmem.scoutedMineral = {
+            type: mineral.mineralType,
+            x: mineral.pos.x,
+            y: mineral.pos.y,
+          };
         }
 
         const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);

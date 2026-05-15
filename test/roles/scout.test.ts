@@ -182,7 +182,7 @@ describe('scout', () => {
 
       const targetRoom = mockRoom({
         name: 'W2N1',
-        controller: { owner: undefined, reservation: undefined },
+        controller: { owner: undefined, reservation: undefined, pos: { x: 25, y: 25 } },
         find: vi.fn((type: number) => {
           if (type === FIND_SOURCES) return sources;
           if (type === FIND_HOSTILE_CREEPS) return [];
@@ -211,12 +211,88 @@ describe('scout', () => {
       expect(creep.memory.targetRoom).toBeUndefined();
     });
 
+    it('records controller position when controller exists', () => {
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: {
+          owner: undefined,
+          reservation: undefined,
+          pos: { x: 31, y: 14 },
+        },
+        find: vi.fn(() => []),
+      });
+
+      Memory.rooms['W2N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutedControllerPos).toEqual({ x: 31, y: 14 });
+    });
+
+    it('records mineral type and position when room has a mineral', () => {
+      const mineral = {
+        mineralType: 'L',
+        pos: { x: 42, y: 19 },
+      };
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_MINERALS) return [mineral];
+          return [];
+        }),
+      });
+
+      Memory.rooms['W2N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutedMineral).toEqual({
+        type: 'L',
+        x: 42,
+        y: 19,
+      });
+    });
+
+    it('does not record mineral when room has none', () => {
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn(() => []),
+      });
+
+      Memory.rooms['W2N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutedMineral).toBeUndefined();
+    });
+
     it('records owner and reservation', () => {
       const targetRoom = mockRoom({
         name: 'W2N1',
         controller: {
           owner: { username: 'EnemyPlayer' },
           reservation: { username: 'ReserverBot' },
+          pos: { x: 25, y: 25 },
         },
         find: vi.fn(() => []),
       });

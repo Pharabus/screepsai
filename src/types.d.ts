@@ -113,6 +113,10 @@ interface RoomMemory {
   scoutedReservation?: string;
   scoutedHostiles?: number;
   scoutedHasController?: boolean;
+  /** Controller position — drives base-layout viability when evaluating a claim */
+  scoutedControllerPos?: { x: number; y: number };
+  /** Mineral type + position — used to avoid claiming a duplicate mineral and for extractor planning */
+  scoutedMineral?: { type: MineralConstant; x: number; y: number };
 }
 
 interface ProfilerSample {
