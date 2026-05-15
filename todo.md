@@ -258,6 +258,31 @@ All offensive operations are end-game (RCL 7-8) and require significant economy 
 - [x] **Add profiling/stats** - `src/utils/profiler.ts` exposes `profile(name, fn)` which folds CPU samples into exponential moving averages stored in `Memory.stats` (one slot per label, bounded footprint). Each manager (`spawner`, `rooms`, `towers`, `construction`, `visuals`) plus `main.loop` is wrapped in `main.ts`, and per-creep dispatch in `managers/room.ts` is labelled `role.<roleName>` so hot roles surface separately. Console globals `stats()` (sorted table) and `resetStats()` are installed once per global reset. Gated by `Memory.profiling` — production ticks pay ~nothing when disabled.
 - [x] **Add visual debugging** - `src/managers/visuals.ts` runs once per tick under `profile('visuals', …)`, gated by `Memory.visuals` so it costs nothing when off. For each owned room draws: header with RCL + energy + creep counts by role, last-tick CPU usage, and source-load markers (how many creeps are within range 2 of each source — red when nothing is mining a source). Easy to extend with additional overlays later.
 
+## Hivemind lessons learned
+
+Techniques surfaced by reviewing the hivemind bot. Not direct copies — implement our own way. Tag: `lessonlearned`.
+
+### Worth doing soon (small effort, real CPU win)
+
+- [ ] **Split base CostMatrix from per-tick overlay** `lessonlearned` — `getRoomCostMatrix` in `src/utils/trafficManager.ts:117-145` rebuilds the full matrix every tick by walking `FIND_STRUCTURES` + `FIND_MY_CREEPS` + `FIND_HOSTILE_CREEPS`. Split into `getBaseCostMatrix(room)` (heap-cached ~500 ticks, terrain+structures only, invalidated when a construction site finishes) and a per-tick clone-and-overlay for creeps/hostiles. Inspired by hivemind's `src/utils/cost-matrix.ts:37-110`. Pairs with the structures-by-type cache below.
+- [ ] **Structures-by-type tick cache** `lessonlearned` — Add `getStructuresByType(room)` to `src/utils/tickCache.ts` returning `Record<StructureConstant, Structure[]>` from a single `room.find(FIND_STRUCTURES)` per tick. Replace ad-hoc filters in `runLinks`, `runTowers`, `runLabs`, `runTerminal`, `runConstruction`, and the roles that scan structures. Pattern from hivemind's `src/prototype/room.structures.ts:97-128` `room.structuresByType[STRUCTURE_LINK]`.
+- [ ] **Stuck-detection: repath with higher creep cost** `lessonlearned` — On consecutive-stuck count ≥ 2, rerun `PathFinder.search` with friendly-creep tiles bumped to cost 50 (not 15) so the second attempt actually routes around the blocker. Today our fallback to native `creep.moveTo(reusePath: 0)` uses the same cost matrix and rarely helps. Also move `stuckTicks` (currently a module-level Map in `src/utils/movement.ts:10`) onto a per-creep heap-attached structure for cleaner introspection. Pattern from hivemind's `src/prototype/creep.movement.ts:483-493` and `765-772`.
+- [ ] **Scout records abandoned loot** `lessonlearned` — Extend `src/roles/scout.ts` to record `FIND_RUINS`, `FIND_TOMBSTONES`, and ≥1000-energy drops in `RoomMemory.abandonedResources`. Pair with a low-priority hauler task (only chosen when home logistics are idle) that opportunistically collects. Free minerals/energy from dead remotes and invaders. Pattern from hivemind's `src/room-intel.ts:449-499`.
+- [ ] **Process debug overlay** `lessonlearned` — Add a `Memory.profileOverlay` toggle that draws sorted `Memory.stats` entries as a `RoomVisual()` on the owned room — shows what ran this tick and what was skipped, alongside the existing `stats()` table. ~30 lines in `runVisuals`. Pattern from hivemind's `drawProcessDebug()` in `src/hivemind.ts:435-464`.
+
+### Worth defining now, defer implementation
+
+- [ ] **CPU bucket throttling with priority/interval** `lessonlearned` — Wrap each profiled manager with a `shouldRun({interval, priority, throttleAt, stopAt})` predicate. When bucket < `throttleAt`, low-priority work slips an interval; below `stopAt` it's skipped entirely. Use a Van der Corput sequence to spread throttled work across ticks instead of bunching. Pattern from hivemind's `src/hivemind.ts:295-370` and `src/utils/throttle.ts:78-86`. Not urgent at our current load — important once we have 2 rooms and 4+ remotes.
+- [ ] **NavMesh for cross-room hops** `lessonlearned` — Pre-compute per-room "exit regions" plus intra-room paths between exits, regenerate every ~10k ticks. Inter-room movement does coarse BFS over the mesh first, then `PathFinder.search` only within the current room. Justifies its complexity at 2+ colonies with 3+ remotes — defer until then. Pattern from hivemind's `src/utils/nav-mesh.ts` (804 lines).
+- [ ] **`isOperational` check for RCL-capped structures** `lessonlearned` — Add a helper wrapping `structure.isActive()` with a 500-tick heap cache, used by link selection, tower targeting, and lab planner. Silent killer at RCL 7→6 downgrade and rare overbuild scenarios where structures past the `CONTROLLER_STRUCTURES[type][rcl]` cap stop working. Add when we claim our 2nd room. Pattern from hivemind's `src/prototype/structure.ts:77-104`.
+- [ ] **Funnel/expansion scoring for multi-room energy** `lessonlearned` — Once we have a 2nd colony, the spawner has no notion of "this room is the priority for energy/spawn time right now." Hivemind's `funnel-manager.ts:19-56` heap-caches a prioritization-by-score-divided-by-progress-needed for 500 ticks. Useful for upgrader body sizing and remote-hauler delivery preference post-claim.
+
+### Skipped
+
+Hivemind's process kernel + DI container (framework-level), segment-backed cost-matrix obstacle lists (only worth it for stateful long-term intel), packrat path serialization (premature), squad combat manager (we're not offensive), trade-route auto-balancing (3+ terminals only).
+
+Already absorbed: `roomCallback` always returns a `CostMatrix` (fixed scout-bounce in commit `7a37aa4`).
+
 ## Testing & Quality
 
 - [x] **Add unit tests** - Vitest with hand-rolled Screeps mocks (`test/mocks/screeps.ts`). 48 tests covering `buildBody`, `tickCache`, `stateMachine`, `threatScore`/`pickPriorityTarget`, and `spawner` (buildSpawnQueue, minersNeeded, haulersNeeded, upgradersNeeded). Run via `npm test`, watch mode via `npm run test:watch`, coverage via `npm run test:coverage`.
