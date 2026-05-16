@@ -1,4 +1,18 @@
 {
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))\" | { read -r f; [[ \"$f\" == *.ts ]] && npx prettier --write \"$f\" && npx eslint --fix \"$f\"; } 2>/dev/null || true",
+            "statusMessage": "Formatting and linting..."
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__screeps-mcp__get_console",
