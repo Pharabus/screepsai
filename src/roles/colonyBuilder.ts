@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { moveTo } from '../utils/movement';
+import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { handleRemoteThreat } from '../utils/remoteThreat';
@@ -23,7 +23,9 @@ const states: StateMachineDefinition = {
     run(creep) {
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom) return undefined;
-      if (creep.room.name === targetRoom) return 'HARVEST';
+      // Stay in TRAVEL until 3+ tiles off any border, so the engine doesn't
+      // auto-evict us next tick (see isInRoomInterior).
+      if (creep.room.name === targetRoom && isInRoomInterior(creep)) return 'HARVEST';
 
       moveTo(creep, new RoomPosition(25, 25, targetRoom), {
         range: 20,

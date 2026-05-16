@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { moveTo } from '../utils/movement';
+import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { handleRemoteThreat } from '../utils/remoteThreat';
@@ -21,7 +21,8 @@ const states: StateMachineDefinition = {
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom) return undefined;
 
-      if (creep.room.name === targetRoom) return 'GATHER';
+      // Border-safe arrival check — see isInRoomInterior in utils/movement.
+      if (creep.room.name === targetRoom && isInRoomInterior(creep)) return 'GATHER';
 
       const sourcePos = getRemoteSourcePos(creep);
       if (sourcePos) {

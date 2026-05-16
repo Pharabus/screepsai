@@ -2,6 +2,9 @@ import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
+  // Real implementation — tests pass border vs interior positions to exercise it.
+  isInRoomInterior: (creep: { pos: { x: number; y: number } }) =>
+    creep.pos.x > 2 && creep.pos.x < 47 && creep.pos.y > 2 && creep.pos.y < 47,
 }));
 
 import { claimer } from '../../src/roles/claimer';
@@ -55,7 +58,7 @@ describe('claimer', () => {
     expect(creep.claimController).toHaveBeenCalledWith(controller);
   });
 
-  it('transitions TRAVEL → CLAIM when arriving in the target room', () => {
+  it('transitions TRAVEL → CLAIM when arriving in the target room interior', () => {
     const controller = { pos: { x: 18, y: 13 }, my: false };
     const targetRoom = mockRoom({ name: 'W44N57', controller });
     const creep = mockCreep({
@@ -69,6 +72,26 @@ describe('claimer', () => {
     claimer.run(creep);
 
     expect(creep.memory.state).toBe('CLAIM');
+  });
+
+  it('stays in TRAVEL when in target room but on a border tile', () => {
+    // Regression: previously flipped to CLAIM at (37, 0), creep got auto-evicted
+    // back to W44N58 next tick by the engine. Now we wait until 3+ tiles inside.
+    const controller = { pos: { x: 18, y: 13 }, my: false };
+    const targetRoom = mockRoom({ name: 'W44N57', controller });
+    const creep = mockCreep({
+      name: 'border_claimer',
+      room: targetRoom,
+      pos: new RoomPosition(37, 0, 'W44N57'),
+      memory: { role: 'claimer', state: 'TRAVEL', targetRoom: 'W44N57' },
+    });
+    (creep as any).claimController = vi.fn(() => 0);
+
+    claimer.run(creep);
+
+    expect(creep.memory.state).toBe('TRAVEL');
+    expect(creep.claimController).not.toHaveBeenCalled();
+    expect(moveTo).toHaveBeenCalled();
   });
 
   it('paths toward target room when not yet arrived', () => {

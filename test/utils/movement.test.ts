@@ -5,8 +5,30 @@ vi.mock('../../src/utils/trafficManager', () => ({
   executeMoveAvoidCreeps: vi.fn(),
 }));
 
-import { moveTo, cleanStuckTracker } from '../../src/utils/movement';
+import { moveTo, cleanStuckTracker, isInRoomInterior } from '../../src/utils/movement';
 import { executeMove, executeMoveAvoidCreeps } from '../../src/utils/trafficManager';
+
+describe('isInRoomInterior', () => {
+  it('returns false on border tiles', () => {
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(0, 25, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(49, 25, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(25, 0, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(25, 49, 'W1N1') }))).toBe(false);
+  });
+
+  it('returns false within the 2-tile border ring', () => {
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(2, 25, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(47, 25, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(25, 2, 'W1N1') }))).toBe(false);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(25, 47, 'W1N1') }))).toBe(false);
+  });
+
+  it('returns true 3+ tiles from any border', () => {
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(3, 25, 'W1N1') }))).toBe(true);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(46, 46, 'W1N1') }))).toBe(true);
+    expect(isInRoomInterior(mockCreep({ pos: new RoomPosition(25, 25, 'W1N1') }))).toBe(true);
+  });
+});
 
 describe('movement stuck handling', () => {
   beforeEach(() => {

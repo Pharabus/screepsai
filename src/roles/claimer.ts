@@ -1,5 +1,5 @@
 import { Role } from './Role';
-import { moveTo } from '../utils/movement';
+import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_DEFAULT } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 
@@ -8,7 +8,9 @@ const states: StateMachineDefinition = {
     run(creep) {
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom) return undefined;
-      if (creep.room.name === targetRoom) return 'CLAIM';
+      // Only flip to CLAIM once we're 3+ tiles off any border, so the engine
+      // can't auto-evict us back to the previous room next tick.
+      if (creep.room.name === targetRoom && isInRoomInterior(creep)) return 'CLAIM';
 
       moveTo(creep, new RoomPosition(25, 25, targetRoom), {
         range: 20,

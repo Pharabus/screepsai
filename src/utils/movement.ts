@@ -47,3 +47,13 @@ export function cleanStuckTracker(): void {
     if (!Game.creeps[name]) stuckTicks.delete(name);
   }
 }
+
+// "Arrived" check that excludes the 2-tile border ring. A creep at (37, 0) is
+// technically in the room but the engine treats it as an exit tile: if it
+// ends a tick on a border tile without moving inward, it gets auto-evicted
+// to the adjacent room next tick. Using this check in TRAVEL states keeps
+// the creep moving toward (25,25) until it's safely off the border, so the
+// work state never starts on a tile that's about to be evicted.
+export function isInRoomInterior(creep: Creep): boolean {
+  return creep.pos.x > 2 && creep.pos.x < 47 && creep.pos.y > 2 && creep.pos.y < 47;
+}
