@@ -9,12 +9,14 @@ export interface ReactionStep {
 export const REACTION_GOALS: ResourceConstant[] = [
   'XGHO2' as ResourceConstant, // TOUGH boost (50% dmg reduction)
   'XLHO2' as ResourceConstant, // HEAL boost
+  'XKHO2' as ResourceConstant, // RANGED_ATTACK boost
   'XGH2O' as ResourceConstant, // UPGRADE boost
   'XZHO2' as ResourceConstant, // DISMANTLE boost
   'GHO2' as ResourceConstant, // TOUGH tier 2 precursor
   'LHO2' as ResourceConstant, // HEAL tier 2 precursor
+  'KHO2' as ResourceConstant, // RANGED_ATTACK tier 2 precursor (defensive, reachable from K+O+H)
   'GH2O' as ResourceConstant, // UPGRADE tier 2 precursor
-  'ZHO2' as ResourceConstant, // DISMANTLE tier 2 precursor
+  'ZHO2' as ResourceConstant, // DISMANTLE tier 2 precursor (offensive — lower priority for a single-room base)
   'OH' as ResourceConstant, // Universal tier 1 intermediate
 ];
 
