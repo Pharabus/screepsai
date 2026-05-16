@@ -74,4 +74,28 @@ describe('runStateMachine', () => {
     runStateMachine(creep, definition, 'IDLE');
     expect(creep.memory.state).toBe('IDLE');
   });
+
+  it('chains handlers when a state transition occurs in the same tick', () => {
+    // Regression: TRAVEL → CLAIM on arrival used to leave the creep with no
+    // movement intent that tick, so it ended on a border exit-tile and the
+    // engine evicted it back. The chain ensures CLAIM also runs (and queues
+    // its move) on the arrival tick.
+    vi.mocked(definition.IDLE.run).mockReturnValueOnce('WORK');
+    const creep = mockCreep({ memory: { role: 'harvester', state: 'IDLE' } });
+    runStateMachine(creep, definition, 'IDLE');
+    expect(definition.IDLE.run).toHaveBeenCalledTimes(1);
+    expect(definition.WORK.run).toHaveBeenCalledTimes(1);
+    expect(creep.memory.state).toBe('WORK');
+  });
+
+  it('caps chained transitions to prevent infinite loops', () => {
+    // A misbehaving definition that keeps ping-ponging should still terminate.
+    vi.mocked(definition.IDLE.run).mockReturnValue('WORK');
+    vi.mocked(definition.WORK.run).mockReturnValue('IDLE');
+    const creep = mockCreep({ memory: { role: 'harvester', state: 'IDLE' } });
+    runStateMachine(creep, definition, 'IDLE');
+    // 4-state chain: IDLE → WORK → IDLE → WORK → IDLE → break
+    // (each run() invocation = one chain step, capped at MAX_STATE_CHAIN=4)
+    expect(definition.IDLE.run.mock.calls.length + definition.WORK.run.mock.calls.length).toBe(4);
+  });
 });
