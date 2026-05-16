@@ -109,6 +109,7 @@
 (globalThis as any).ERR_NOT_ENOUGH_ENERGY = -6;
 (globalThis as any).ERR_NO_PATH = -2;
 (globalThis as any).ERR_INVALID_ARGS = -10;
+(globalThis as any).ERR_GCL_NOT_ENOUGH = -15;
 
 // Market order types
 (globalThis as any).ORDER_BUY = 'buy';

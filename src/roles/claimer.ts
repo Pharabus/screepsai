@@ -20,6 +20,14 @@ const states: StateMachineDefinition = {
   },
   CLAIM: {
     run(creep) {
+      // Guard against drifting back across a border. Once state flips to CLAIM,
+      // any subsequent tick where the creep is in a non-target room would
+      // otherwise call claimController on that room's controller. Observed at
+      // 80174499: claimer flipped to CLAIM crossing into W44N57, then traffic
+      // pushed it back to W44N58 and it claimed the wrong room.
+      if (creep.room.name !== creep.memory.targetRoom) {
+        return 'TRAVEL';
+      }
       const controller = creep.room.controller;
       if (!controller) return undefined;
 

@@ -38,6 +38,10 @@ const states: StateMachineDefinition = {
       delete creep.memory.targetId;
     },
     run(creep) {
+      // Same drift-guard as claimer.CLAIM: if traffic pushed us back across the
+      // border, return to TRAVEL rather than harvesting / building in the wrong
+      // room (where we'd waste energy on home-room sites or random sources).
+      if (creep.room.name !== creep.memory.targetRoom) return 'TRAVEL';
       if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) return 'BUILD';
 
       // Prefer dropped piles (free energy from passing remote miners or our own decay)
@@ -85,6 +89,7 @@ const states: StateMachineDefinition = {
   },
   BUILD: {
     run(creep) {
+      if (creep.room.name !== creep.memory.targetRoom) return 'TRAVEL';
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'HARVEST';
 
       // Priority 1: the first spawn site (and any other spawns under construction)
