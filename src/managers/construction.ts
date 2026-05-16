@@ -271,7 +271,6 @@ export function placeRoads(room: Room): void {
     targets.push(room.storage.pos);
   }
 
-  const allComplete = true;
   for (const target of targets) {
     const path = room.findPath(anchor.pos, target, { ignoreCreeps: true, range: 1 });
     if (path.length === 0) continue;
@@ -288,9 +287,8 @@ export function placeRoads(room: Room): void {
     }
   }
 
-  if (allComplete) {
-    (Memory.rooms[room.name] ??= {}).roadsComplete = true;
-  }
+  // Reaching here means every path step has a road or site — mark complete
+  (Memory.rooms[room.name] ??= {}).roadsComplete = true;
 }
 
 function hasUnbuiltLinkSites(room: Room): boolean {
@@ -621,8 +619,6 @@ export function placeRemoteRoads(room: Room): void {
   const anchor = spawns[0];
   if (!anchor) return;
 
-  const allComplete = true;
-
   // Only build roads to rooms with an active reserver
   for (const remoteRoomName of remoteRooms) {
     const remoteMem = Memory.rooms[remoteRoomName];
@@ -672,7 +668,7 @@ export function placeRemoteRoads(room: Room): void {
   }
 
   // All paths are fully roaded — slow down future re-checks
-  if (mem) mem.remoteRoadsComplete = allComplete;
+  if (mem) mem.remoteRoadsComplete = true;
 }
 
 /**
