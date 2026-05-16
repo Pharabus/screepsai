@@ -26,6 +26,18 @@ const states: StateMachineDefinition = {
   },
   BUILD: {
     run(creep) {
+      // Dismantle old-owner structures that block RCL-gated placement — doesn't need energy
+      const hostile = creep.pos.findClosestByRange(FIND_HOSTILE_STRUCTURES, {
+        filter: (s) =>
+          s.structureType === STRUCTURE_EXTENSION || s.structureType === STRUCTURE_TOWER,
+      });
+      if (hostile) {
+        if (creep.dismantle(hostile) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, hostile, { range: 1, priority: PRIORITY_WORKER });
+        }
+        return undefined;
+      }
+
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';
 
       const sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);

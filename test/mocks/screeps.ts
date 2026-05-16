@@ -13,6 +13,7 @@
 (globalThis as any).FIND_SOURCES_ACTIVE = 104;
 (globalThis as any).FIND_MY_CREEPS = 106;
 (globalThis as any).FIND_HOSTILE_CREEPS = 114;
+(globalThis as any).FIND_HOSTILE_STRUCTURES = 109;
 (globalThis as any).FIND_STRUCTURES = 107;
 (globalThis as any).FIND_MY_STRUCTURES = 108;
 (globalThis as any).FIND_CONSTRUCTION_SITES = 130;
@@ -231,6 +232,7 @@ export function mockCreep(overrides: Record<string, any> = {}): any {
     pickup: vi.fn(() => 0),
     upgradeController: vi.fn(() => 0),
     attack: vi.fn(() => 0),
+    dismantle: vi.fn(() => 0),
     heal: vi.fn(() => 0),
     move: vi.fn(() => 0),
     moveTo: vi.fn(() => 0),
