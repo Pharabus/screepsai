@@ -485,7 +485,7 @@ describe('remoteBuilderNeeded', () => {
 
   it('returns true when room has construction sites', () => {
     (Game as any).rooms = {
-      W2N1: { find: vi.fn((type: number) => (type === FIND_CONSTRUCTION_SITES ? [{}] : [])) },
+      W2N1: { find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [{}] : [])) },
     };
     (Game as any).creeps = {};
     expect(remoteBuilderNeeded('W2N1')).toBe(true);
