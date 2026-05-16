@@ -698,9 +698,13 @@ export function placeColonySpawn(room: Room): void {
   }
 
   const pos = new RoomPosition(suggested.x, suggested.y, room.name);
+  // A pre-existing road (built or under construction) is fine — spawn is placed
+  // on top and the road becomes redundant. Anything else on the tile is a real
+  // block. Observed at W44N57: placeRemoteRoads had left a road CS at (27,7)
+  // before the room was claimed, blocking the colony spawn until cleared.
   const blocked =
     pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType !== STRUCTURE_ROAD) ||
-    pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    pos.lookFor(LOOK_CONSTRUCTION_SITES).some((s) => s.structureType !== STRUCTURE_ROAD);
   if (blocked) return;
 
   const result = room.createConstructionSite(pos, STRUCTURE_SPAWN);
