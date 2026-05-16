@@ -287,14 +287,40 @@ describe('colonyPlanner', () => {
       expect(Memory.colonies['W2N1']!.status).toBe('claiming');
     });
 
-    it('flips bootstrapping → active when a spawn exists AND a local producer is alive', () => {
+    it('flips bootstrapping → active when a spawn exists AND a source container is built', () => {
       Game.time = 700;
       Memory.colonies = {
         W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
       };
+      // Source container is present — colony can flip to miner economy on its own.
+      Memory.rooms['W2N1'] = {
+        sources: [
+          { id: 'src1' as Id<Source>, x: 10, y: 10, containerId: 'c1' as Id<StructureContainer> },
+        ],
+      } as any;
       Game.rooms['W2N1'] = {
         name: 'W2N1',
         controller: { my: true },
+        find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
+      } as any;
+      updateColonyStates();
+      expect(Memory.colonies['W2N1']!.status).toBe('active');
+      expect(Memory.colonies['W2N1']!.activeAt).toBe(700);
+    });
+
+    it('flips bootstrapping → active when spawn exists, RCL 3, extensions built, and local producer alive', () => {
+      Game.time = 700;
+      Memory.colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
+      };
+      // No container yet, but RCL 3 + extensions + local harvester = self-sufficient.
+      Memory.rooms['W2N1'] = {
+        sources: [{ id: 'src1' as Id<Source>, x: 10, y: 10 }],
+      } as any;
+      Game.rooms['W2N1'] = {
+        name: 'W2N1',
+        controller: { my: true, level: 3 },
+        energyCapacityAvailable: 600,
         find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
       } as any;
       Game.creeps['h1'] = {
@@ -304,6 +330,26 @@ describe('colonyPlanner', () => {
       updateColonyStates();
       expect(Memory.colonies['W2N1']!.status).toBe('active');
       expect(Memory.colonies['W2N1']!.activeAt).toBe(700);
+    });
+
+    it('stays in bootstrapping with only a harvester and no container at RCL 2', () => {
+      Game.time = 700;
+      Memory.colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
+      };
+      // RCL 2, no container — a single 1-WORK harvester cannot build containers fast enough.
+      Game.rooms['W2N1'] = {
+        name: 'W2N1',
+        controller: { my: true, level: 2 },
+        energyCapacityAvailable: 300,
+        find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
+      } as any;
+      Game.creeps['h1'] = {
+        name: 'h1',
+        memory: { role: 'harvester', homeRoom: 'W2N1' },
+      } as any;
+      updateColonyStates();
+      expect(Memory.colonies['W2N1']!.status).toBe('bootstrapping');
     });
 
     it('stays in bootstrapping when a spawn exists but no local producer yet', () => {

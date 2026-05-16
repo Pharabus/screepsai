@@ -35,11 +35,27 @@ function findPartner(creep: Creep): Creep | undefined {
 const states: StateMachineDefinition = {
   FOLLOW: {
     run(creep) {
-      // Always try to heal the most injured friendly in range 3 first
+      // Always try to heal the most injured friendly in range 3 first.
+      // FIND_MY_CREEPS excludes the healer itself, so check self-heal explicitly.
       const injured = creep.room.find(FIND_MY_CREEPS, {
         filter: (c) => c.hits < c.hitsMax && creep.pos.getRangeTo(c) <= 3,
       });
-      if (injured.length > 0) {
+      if (creep.hits < creep.hitsMax) {
+        // Include self as a candidate — may be the most-injured
+        const selfDamage = creep.hitsMax - creep.hits;
+        const mostInjured = injured.reduce<Creep | undefined>((best, c) => {
+          const damage = c.hitsMax - c.hits;
+          return !best || damage > best.hitsMax - best.hits ? c : best;
+        }, undefined);
+        const mostInjuredDamage = mostInjured ? mostInjured.hitsMax - mostInjured.hits : 0;
+        if (!mostInjured || selfDamage >= mostInjuredDamage) {
+          creep.heal(creep);
+        } else if (creep.pos.getRangeTo(mostInjured) <= 1) {
+          creep.heal(mostInjured);
+        } else {
+          creep.rangedHeal(mostInjured);
+        }
+      } else if (injured.length > 0) {
         const most = injured.reduce((a, b) => (a.hits < b.hits ? a : b));
         if (creep.pos.getRangeTo(most) <= 1) {
           creep.heal(most);

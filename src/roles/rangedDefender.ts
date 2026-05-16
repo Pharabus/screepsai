@@ -11,9 +11,15 @@ function kiteStep(creep: Creep, target: Creep): void {
   const range = creep.pos.getRangeTo(target);
 
   if (range <= 1) {
-    // Target is adjacent — step back before shooting
-    const dx = creep.pos.x - target.pos.x;
-    const dy = creep.pos.y - target.pos.y;
+    // Target is adjacent (or on same tile) — step back before shooting.
+    let dx = creep.pos.x - target.pos.x;
+    let dy = creep.pos.y - target.pos.y;
+    // When dx===0 && dy===0 the retreat vector is a no-op; fall back to moving
+    // away from the room centre so the creep doesn't stay glued to the target.
+    if (dx === 0 && dy === 0) {
+      dx = creep.pos.x >= 25 ? 1 : -1;
+      dy = creep.pos.y >= 25 ? 1 : -1;
+    }
     // Move to a position one step further away (not into walls)
     const retreatX = Math.max(2, Math.min(47, creep.pos.x + Math.sign(dx)));
     const retreatY = Math.max(2, Math.min(47, creep.pos.y + Math.sign(dy)));

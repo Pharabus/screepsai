@@ -4,6 +4,7 @@
  */
 
 import { hostilesSeen, getNeighbor } from './neighbors';
+import { getMyUsername } from './identity';
 
 // Auto-scale cap: hold at 1 remote room until home storage clears this bar so
 // a second remote's spawn/bootstrap cost doesn't stall storage growth.
@@ -15,7 +16,7 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
 
   // Reject owned rooms or rooms reserved by other players
   if (rmem.scoutedOwner) return -1;
-  const myUsername = Object.values(Game.spawns)[0]?.owner.username;
+  const myUsername = getMyUsername();
   if (rmem.scoutedReservation && rmem.scoutedReservation !== myUsername) return -1;
 
   // Reject rooms with recent hostile presence (stale sightings are likely transient invaders)

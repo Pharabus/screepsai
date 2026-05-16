@@ -3,8 +3,7 @@ import { gatherEnergy } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
-
-const REPAIR_THRESHOLD = 0.75;
+import { REPAIR_THRESHOLD } from '../utils/thresholds';
 
 const states: StateMachineDefinition = {
   GATHER: {
@@ -20,8 +19,13 @@ const states: StateMachineDefinition = {
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';
 
+      // Exclude walls (too expensive) and ramparts (towers handle those) so the
+      // spawner's repairersNeeded exclusion list stays consistent.
       const target = creep.room.find(FIND_STRUCTURES, {
-        filter: (s) => s.hits < s.hitsMax * REPAIR_THRESHOLD && s.structureType !== STRUCTURE_WALL,
+        filter: (s) =>
+          s.hits < s.hitsMax * REPAIR_THRESHOLD &&
+          s.structureType !== STRUCTURE_WALL &&
+          s.structureType !== STRUCTURE_RAMPART,
       })[0];
       if (target) {
         if (creep.repair(target) === ERR_NOT_IN_RANGE) {

@@ -1,5 +1,6 @@
 import { moveTo } from './movement';
 import { PRIORITY_HAULER } from './trafficManager';
+import { cached } from './tickCache';
 
 export function deliverToSpawnOrExtension(creep: Creep): boolean {
   type FillTarget = StructureSpawn | StructureExtension;
@@ -47,13 +48,17 @@ export function deliverToSpawnOrExtension(creep: Creep): boolean {
     .filter((s): s is FillTarget => isSpawnOrExt(s) && !creep.pos.isNearTo(s));
   if (targets.length === 0) return adjacent.length > 0;
 
-  const claimed = new Set<string>();
-  for (const c of Object.values(Game.creeps)) {
-    if (c.name === creep.name) continue;
-    if (c.memory.role !== 'hauler' && c.memory.role !== 'remoteHauler') continue;
-    if (c.memory.state !== 'DELIVER' || !c.memory.targetId) continue;
-    claimed.add(c.memory.targetId);
-  }
+  // Build the claimed-targets set once per room per tick rather than per hauler
+  // (the loop was O(N × haulers) without caching).
+  const claimed = cached(`delivery:claimed:${creep.room.name}`, () => {
+    const result = new Set<string>();
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role !== 'hauler' && c.memory.role !== 'remoteHauler') continue;
+      if (c.memory.state !== 'DELIVER' || !c.memory.targetId) continue;
+      result.add(c.memory.targetId);
+    }
+    return result;
+  });
 
   targets.sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
   const target = targets.find((t) => !claimed.has(t.id)) ?? targets[0]!;

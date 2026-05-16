@@ -1,7 +1,6 @@
 import { pickPriorityTarget } from '../utils/threat';
 import { cached } from '../utils/tickCache';
-
-const REPAIR_THRESHOLD = 0.75;
+import { REPAIR_THRESHOLD } from '../utils/thresholds';
 const COMBAT_ENERGY_RESERVE = 0.5;
 
 const WALL_CAPS: Record<number, number> = {

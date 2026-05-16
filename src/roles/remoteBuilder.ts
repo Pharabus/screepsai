@@ -76,7 +76,7 @@ const states: StateMachineDefinition = {
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';
 
-      const site = creep.pos.findClosestByRange(FIND_CONSTRUCTION_SITES);
+      const site = creep.pos.findClosestByRange(FIND_MY_CONSTRUCTION_SITES);
       if (site) {
         if (creep.build(site) === ERR_NOT_IN_RANGE) {
           moveTo(creep, site, {

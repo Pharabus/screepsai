@@ -4,6 +4,18 @@ export interface ReactionStep {
   output: ResourceConstant;
 }
 
+/**
+ * Look up the product of combining two minerals/compounds in the REACTIONS table.
+ * Isolates the unsafe `as Record<...>` cast in one place so all callers get a
+ * typed interface with a clean `string | undefined` return.
+ */
+export function getReactionProduct(
+  r1: MineralConstant | MineralCompoundConstant,
+  r2: MineralConstant | MineralCompoundConstant,
+): string | undefined {
+  return (REACTIONS as Record<string, Record<string, string>>)[r1]?.[r2];
+}
+
 // Priority-ordered target compounds, from most defensively useful to most economic.
 // The chain builder works backward from these through the REACTIONS table.
 export const REACTION_GOALS: ResourceConstant[] = [

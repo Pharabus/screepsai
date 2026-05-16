@@ -372,13 +372,23 @@ function pickupLargeDrop(creep: Creep): boolean {
 function isLabWorkClaimedByOther(creep: Creep, mem: RoomMemory | undefined): boolean {
   if (!mem?.labIds || mem.labIds.length === 0) return false;
   const labIds = new Set<string>(mem.labIds);
-  for (const c of Object.values(Game.creeps)) {
-    if (c.name === creep.name) continue;
-    if (c.memory.role !== 'hauler') continue;
-    if (c.room.name !== creep.room.name) continue;
-    if (c.memory.targetId && labIds.has(c.memory.targetId)) return true;
-  }
-  return false;
+  // Compute the {claimerName, targetId} once per room per tick instead of per-hauler.
+  const claimInfo = cached(
+    `hauler:labClaimed:${creep.room.name}`,
+    (): { name: string; targetId: string } | undefined => {
+      for (const c of Object.values(Game.creeps)) {
+        if (c.memory.role !== 'hauler') continue;
+        if (c.room.name !== creep.room.name) continue;
+        if (c.memory.targetId && labIds.has(c.memory.targetId)) {
+          return { name: c.name, targetId: c.memory.targetId };
+        }
+      }
+      return undefined;
+    },
+  );
+  if (!claimInfo) return false;
+  // The current hauler is not "other" to itself
+  return claimInfo.name !== creep.name;
 }
 
 function pickupLabFlush(creep: Creep, mem: RoomMemory | undefined): boolean {

@@ -1,5 +1,6 @@
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../../src/utils/delivery';
+import { resetTickCache } from '../../src/utils/tickCache';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
@@ -25,6 +26,7 @@ function mockExtension(id: string, x: number, y: number, freeCapacity: number): 
 describe('deliverToSpawnOrExtension', () => {
   beforeEach(() => {
     resetGameGlobals();
+    resetTickCache();
     vi.clearAllMocks();
   });
 

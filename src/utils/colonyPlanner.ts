@@ -15,6 +15,7 @@
  */
 
 import { hostilesSeen, getNeighbor } from './neighbors';
+import { getMyUsername } from './identity';
 
 /** Maximum linear range from a home room to consider claiming. */
 const MAX_CLAIM_DISTANCE = 3;
@@ -41,7 +42,7 @@ export function scoreClaimTarget(targetRoomName: string, homeRoomName: string): 
   if (tmem.scoutedOwner) return { score: -1, reason: `owned by ${tmem.scoutedOwner}` };
 
   // Allow rooms reserved by us; reject other players' reservations
-  const myUsername = Object.values(Game.spawns)[0]?.owner.username;
+  const myUsername = getMyUsername();
   if (tmem.scoutedReservation && tmem.scoutedReservation !== myUsername) {
     return { score: -1, reason: `reserved by ${tmem.scoutedReservation}` };
   }
@@ -150,7 +151,7 @@ export function startClaim(
  *                                  its own spawn without parent support)
  *
  * Does not delete entries — operators can inspect the historical record via the
- * console. To remove, set Memory.colonies[room] = undefined manually.
+ * console. To remove, use `delete Memory.colonies[room]` from the in-game console.
  */
 export function updateColonyStates(): void {
   if (!Memory.colonies) return;
@@ -168,18 +169,34 @@ export function updateColonyStates(): void {
     if (state.status === 'bootstrapping') {
       const spawns = room.find(FIND_MY_SPAWNS);
       if (spawns.length > 0) {
-        // Wait for a self-sustaining local creep before cutting parent support.
-        // Flipping on first-spawn deadlocked W44N57: spawn built with 0 energy,
-        // colonyBuilders retired, nothing left to refill the spawn.
+        // Wait for the colony to be genuinely self-sufficient before cutting parent
+        // support. A single 1-WORK harvester at RCL 2 cannot build source containers
+        // fast enough to flip minerEconomy, causing a permanent deadlock:
+        //   no container → no miner → no miner economy → no container.
+        //
+        // We require at least one of:
+        //   (a) A source container is built (containerId present) — miner economy can
+        //       flip on its own from here; or
+        //   (b) RCL 3 + extensions (≥550 energyCapacity) + a local harvester/miner —
+        //       room has enough capacity to sustain itself without colonyBuilders.
+        const roomMem = Memory.rooms[targetRoom];
+        const hasContainer = roomMem?.sources?.some((s) => !!s.containerId) ?? false;
+
         const hasLocalProducer = Object.values(Game.creeps).some(
           (c) =>
             c.memory.homeRoom === targetRoom &&
             (c.memory.role === 'harvester' || c.memory.role === 'miner'),
         );
-        if (hasLocalProducer) {
+        const rcl3WithExtensions =
+          (room.controller?.level ?? 0) >= 3 &&
+          room.energyCapacityAvailable >= 550 &&
+          hasLocalProducer;
+
+        if (hasContainer || rcl3WithExtensions) {
           state.status = 'active';
           state.activeAt = Game.time;
-          console.log(`[colony] ${targetRoom} active — local economy online at tick ${Game.time}`);
+          const reason = hasContainer ? 'source container built' : 'RCL 3 + extensions online';
+          console.log(`[colony] ${targetRoom} active — ${reason} at tick ${Game.time}`);
         }
       }
     }

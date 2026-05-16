@@ -229,6 +229,7 @@ describe('hauler terminal logistics', () => {
 describe('hauler lab logistics', () => {
   beforeEach(() => {
     resetGameGlobals();
+    resetTickCache();
   });
 
   it('withdraws lab input mineral from storage when input lab needs filling', () => {

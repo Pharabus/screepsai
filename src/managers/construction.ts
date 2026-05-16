@@ -1,4 +1,5 @@
 import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
+import { getBaseCostMatrixForRoom } from '../utils/trafficManager';
 
 // Max extensions per RCL level (from Screeps docs)
 const MAX_EXTENSIONS: Record<number, number> = {
@@ -242,6 +243,15 @@ export function placeRoads(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 2) return;
 
+  const mem = Memory.rooms[room.name];
+  // Skip expensive pathfinding when all roads are confirmed complete.
+  // Re-validate when roads may have decayed (run every 50 ticks even when complete).
+  if (mem?.roadsComplete && Game.time % 50 !== 0) return;
+  if (mem?.roadsComplete) {
+    // Clear flag so a full re-check happens this tick
+    delete mem.roadsComplete;
+  }
+
   // Limit road construction sites at a time
   const roadSites = room.find(FIND_MY_CONSTRUCTION_SITES, {
     filter: (s) => s.structureType === STRUCTURE_ROAD,
@@ -261,6 +271,7 @@ export function placeRoads(room: Room): void {
     targets.push(room.storage.pos);
   }
 
+  const allComplete = true;
   for (const target of targets) {
     const path = room.findPath(anchor.pos, target, { ignoreCreeps: true, range: 1 });
     if (path.length === 0) continue;
@@ -275,6 +286,10 @@ export function placeRoads(room: Room): void {
         return; // one road site per tick to stay within CPU
       }
     }
+  }
+
+  if (allComplete) {
+    (Memory.rooms[room.name] ??= {}).roadsComplete = true;
   }
 }
 
@@ -598,9 +613,15 @@ export function placeRemoteRoads(room: Room): void {
   const remoteRooms = mem?.remoteRooms;
   if (!remoteRooms || remoteRooms.length === 0) return;
 
+  // When all remote roads were confirmed complete on the last check, re-check
+  // every 50 ticks instead of every 5 to avoid the expensive PathFinder calls.
+  if (mem?.remoteRoadsComplete && Game.time % 50 !== 0) return;
+
   const spawns = room.find(FIND_MY_SPAWNS);
   const anchor = spawns[0];
   if (!anchor) return;
+
+  const allComplete = true;
 
   // Only build roads to rooms with an active reserver
   for (const remoteRoomName of remoteRooms) {
@@ -625,18 +646,9 @@ export function placeRemoteRoads(room: Room): void {
           roomCallback(roomName) {
             const r = Game.rooms[roomName];
             if (!r) return false;
-            const costs = new PathFinder.CostMatrix();
-            for (const struct of r.find(FIND_STRUCTURES)) {
-              if (struct.structureType === STRUCTURE_ROAD) {
-                costs.set(struct.pos.x, struct.pos.y, 1);
-              } else if (
-                struct.structureType !== STRUCTURE_CONTAINER &&
-                struct.structureType !== STRUCTURE_RAMPART
-              ) {
-                costs.set(struct.pos.x, struct.pos.y, 255);
-              }
-            }
-            return costs;
+            // Reuse the heap-cached base matrix (structures only) instead of
+            // rebuilding a CostMatrix from scratch on every call.
+            return getBaseCostMatrixForRoom(r);
           },
         },
       );
@@ -658,6 +670,65 @@ export function placeRemoteRoads(room: Room): void {
       }
     }
   }
+
+  // All paths are fully roaded — slow down future re-checks
+  if (mem) mem.remoteRoadsComplete = allComplete;
+}
+
+/**
+ * Place roads from the first spawn to each source in a newly-claimed colony room
+ * (pre-storage, i.e. RCL 2–3). Without roads, harvesters and colonyBuilders bleed
+ * fatigue on plains/swamp, slowing container construction and the economy flip.
+ *
+ * Mirrors placeRemoteRoads but intra-room only and without the reserver gate.
+ * Returns true when a road site was placed (one per call to stay within CPU),
+ * false when all paths are already roaded (or nothing to do).
+ */
+export function placeColonyBootstrapRoads(room: Room): boolean {
+  // Only pre-storage claimed rooms — main rooms already handled by placeRoads().
+  if (!room.controller?.my || room.storage) return false;
+
+  const spawns = room.find(FIND_MY_SPAWNS);
+  const anchor = spawns[0];
+  if (!anchor) return false;
+
+  const roomMem = Memory.rooms[room.name];
+  const sources = roomMem?.sources;
+  if (!sources || sources.length === 0) return false;
+
+  for (const source of sources) {
+    const targetPos = new RoomPosition(source.x, source.y, room.name);
+    const result = PathFinder.search(
+      anchor.pos,
+      { pos: targetPos, range: 1 },
+      {
+        plainCost: 2,
+        swampCost: 10,
+        roomCallback(roomName) {
+          const r = Game.rooms[roomName];
+          if (!r) return false;
+          return getBaseCostMatrixForRoom(r);
+        },
+      },
+    );
+    if (result.incomplete) continue;
+
+    for (const step of result.path) {
+      // Skip border tiles (not buildable)
+      if (step.x === 0 || step.x === 49 || step.y === 0 || step.y === 49) continue;
+      const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
+      const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
+      const hasRoad =
+        structures.some((s) => s.structureType === STRUCTURE_ROAD) ||
+        sites.some((s) => s.structureType === STRUCTURE_ROAD);
+      if (!hasRoad) {
+        room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+        return true; // one road site per tick
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -731,6 +802,7 @@ export function runConstruction(): void {
     placeExtensions(room);
     placeTowers(room);
     placeRoads(room);
+    placeColonyBootstrapRoads(room);
     placeCorridorRoads(room);
     placeRemoteRoads(room);
     placeTerminal(room);

@@ -8,7 +8,14 @@
  * cleared at the start of every loop and does not touch Memory or RawMemory.
  */
 
-let cache = new Map<string, unknown>();
+// Wrap values in a sentinel object so that `undefined` is a storable result.
+// The previous `hit !== undefined` check caused compute() to re-run whenever
+// it legitimately returned undefined — e.g. getMyUsername() when no spawns exist.
+interface CacheEntry {
+  value: unknown;
+}
+
+let cache = new Map<string, CacheEntry>();
 
 export function resetTickCache(): void {
   cache = new Map();
@@ -16,9 +23,9 @@ export function resetTickCache(): void {
 
 export function cached<T>(key: string, compute: () => T): T {
   const hit = cache.get(key);
-  if (hit !== undefined) return hit as T;
+  if (hit !== undefined) return hit.value as T;
   const value = compute();
-  cache.set(key, value);
+  cache.set(key, { value });
   return value;
 }
 

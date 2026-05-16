@@ -1,4 +1,5 @@
 import { cached } from './tickCache';
+import { getMyUsername } from './identity';
 
 export const PRIORITY_STATIC = 100;
 export const PRIORITY_HAULER = 50;
@@ -56,15 +57,6 @@ export function executeMove(
       vizBuffer.push({ roomName: room, points: localPoints, stroke });
     }
   }
-}
-
-function getMyUsername(): string | undefined {
-  return cached('me:username', () => {
-    for (const name in Game.spawns) {
-      return Game.spawns[name]?.owner.username;
-    }
-    return undefined;
-  });
 }
 
 export function pathRoomCallback(roomName: string): boolean | CostMatrix {
@@ -185,6 +177,10 @@ function buildBaseMatrix(structures: AnyStructure[]): CostMatrix {
     }
   }
   return costs;
+}
+
+export function getBaseCostMatrixForRoom(room: Room): CostMatrix {
+  return getBaseCostMatrix(room);
 }
 
 function getBaseCostMatrix(room: Room): CostMatrix {

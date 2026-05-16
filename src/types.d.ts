@@ -104,6 +104,16 @@ interface RoomMemory {
   };
   // Best spawn position suggestion for a not-yet-claimed room
   suggestedSpawnPos?: { x: number; y: number; score: number };
+  /**
+   * Set when placeRoads() completes a full pass with no unroaded steps found.
+   * Cleared when any new construction site is placed (structures changed).
+   */
+  roadsComplete?: boolean;
+  /**
+   * Set when placeRemoteRoads() completes a full pass with all path steps roaded.
+   * Re-checked every 50 ticks instead of every 5 when true.
+   */
+  remoteRoadsComplete?: boolean;
   // Remote mining
   remoteRooms?: string[];
   remoteType?: 'remote' | 'reserved' | 'claimed';

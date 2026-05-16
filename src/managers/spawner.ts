@@ -12,16 +12,17 @@ import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../util
 import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
+import { REPAIR_THRESHOLD } from '../utils/thresholds';
 import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
 
-interface SpawnRequest {
+type SpawnRequest = {
   role: CreepRoleName;
-  pattern?: BodyPartConstant[];
-  body?: BodyPartConstant[];
-  maxRepeats?: number;
   minCount: number;
   memory?: CreepMemory;
-}
+} & (
+  | { pattern: BodyPartConstant[]; body?: never; maxRepeats?: number }
+  | { body: BodyPartConstant[]; pattern?: never; maxRepeats?: never }
+);
 
 function resolveHomeRoom(c: Creep): string {
   if (c.memory.homeRoom) return c.memory.homeRoom;
@@ -211,7 +212,6 @@ function buildersNeeded(room: Room): number {
  * upgrading), up to 2 when there's significant damage.
  */
 export function repairersNeeded(room: Room): number {
-  const REPAIR_THRESHOLD = 0.75;
   const damaged = cached(
     'spawner:damaged:' + room.name,
     () =>
@@ -355,6 +355,8 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 
   // Priority 1: Hunters for NPC invaders in remote/transit rooms — queued before
   // local economy roles so an invader camping a remote doesn't block indefinitely.
+  // huntersNeeded() uses the same getInvaderTargetRooms() internally; iterate the
+  // list directly here so we can set per-room memory without a second call.
   for (const targetRoom of getInvaderTargetRooms(room)) {
     if (countCreepsByRoleAndTarget('hunter', targetRoom) > 0) continue;
     const hunterBody = buildHunterBody(room.energyCapacityAvailable);
@@ -638,7 +640,10 @@ export function runSpawner(): void {
       if (!spawn) break;
 
       const energy = emergency ? room.energyAvailable : room.energyCapacityAvailable;
-      const body = request.body ?? buildBody(request.pattern!, energy, request.maxRepeats);
+      const body =
+        request.body !== undefined
+          ? request.body
+          : buildBody(request.pattern, energy, request.maxRepeats);
       if (body.length === 0) continue; // can't afford this role, try cheaper ones below
 
       const name = `${request.role}_${Game.time}`;

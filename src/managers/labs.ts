@@ -2,6 +2,7 @@ import {
   buildReactionChain,
   chainMissingInputs,
   findNextChainStep,
+  getReactionProduct,
   REACTION_GOALS,
 } from '../utils/reactions';
 import type { ReactionStep } from '../utils/reactions';
@@ -48,8 +49,8 @@ function findStickyReaction(
   if (!m1 || !m2) return undefined;
 
   // Try both orientations against the REACTIONS table
-  const product1 = (REACTIONS as Record<string, Record<string, string>>)[m1]?.[m2];
-  const product2 = (REACTIONS as Record<string, Record<string, string>>)[m2]?.[m1];
+  const product1 = getReactionProduct(m1, m2);
+  const product2 = getReactionProduct(m2, m1);
 
   let input1: ResourceConstant;
   let input2: ResourceConstant;

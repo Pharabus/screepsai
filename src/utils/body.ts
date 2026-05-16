@@ -1,4 +1,4 @@
-const BODY_COSTS: Record<string, number> = {
+const BODY_COSTS: Partial<Record<BodyPartConstant, number>> = {
   [MOVE]: 50,
   [WORK]: 100,
   [CARRY]: 50,

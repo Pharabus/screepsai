@@ -1,4 +1,10 @@
 export const MINERAL_STORAGE_FLOOR = 5000;
+
+/**
+ * Structure HP fraction below which repairs are triggered.
+ * Used consistently by repairer role, spawner, and towers to avoid drift.
+ */
+export const REPAIR_THRESHOLD = 0.75;
 export const MINERAL_TERMINAL_CEILING = 20_000;
 export const ENERGY_TERMINAL_BUFFER = 5_000;
 export const TERMINAL_ENERGY_FLOOR = 15_000;
