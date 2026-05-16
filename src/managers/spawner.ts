@@ -112,7 +112,7 @@ export function remoteBuilderNeeded(remoteRoom: string): boolean {
   for (const c of Object.values(Game.creeps)) {
     if (c.memory.role === 'remoteBuilder' && c.memory.targetRoom === remoteRoom) return false;
   }
-  const sites = room.find(FIND_CONSTRUCTION_SITES);
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES);
   if (sites.length > 0) return true;
   const damagedRoads = room.find(FIND_STRUCTURES, {
     filter: (s) => s.structureType === STRUCTURE_ROAD && s.hits < s.hitsMax * 0.5,

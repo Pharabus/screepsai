@@ -28,7 +28,7 @@ const states: StateMachineDefinition = {
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';
 
-      const sites = creep.room.find(FIND_CONSTRUCTION_SITES);
+      const sites = creep.room.find(FIND_MY_CONSTRUCTION_SITES);
       sites.sort(
         (a, b) => (BUILD_PRIORITY[a.structureType] ?? 5) - (BUILD_PRIORITY[b.structureType] ?? 5),
       );
