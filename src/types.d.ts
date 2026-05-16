@@ -23,6 +23,8 @@ interface CreepMemory {
     | Source
     | Mineral
     | Resource
+    | Ruin
+    | Tombstone
     | StructureContainer
     | StructureStorage
     | StructureTerminal
@@ -117,6 +119,24 @@ interface RoomMemory {
   scoutedControllerPos?: { x: number; y: number };
   /** Mineral type + position — used to avoid claiming a duplicate mineral and for extractor planning */
   scoutedMineral?: { type: MineralConstant; x: number; y: number };
+  /**
+   * Abandoned loot recorded at scout time — ruins, tombstones, and large
+   * energy drops. Stale within a few thousand ticks (drops decay 1/1000t,
+   * tombstones decay in ~5*body.length ticks, ruins in 500t), so consumers
+   * should compare `recordedAt` against `Game.time` and bail on anything old.
+   */
+  scoutedLoot?: {
+    recordedAt: number;
+    ruins?: { id: Id<Ruin>; x: number; y: number; energy: number; total: number }[];
+    tombstones?: { id: Id<Tombstone>; x: number; y: number; energy: number; total: number }[];
+    drops?: {
+      id: Id<Resource>;
+      x: number;
+      y: number;
+      resourceType: ResourceConstant;
+      amount: number;
+    }[];
+  };
 }
 
 interface ProfilerSample {

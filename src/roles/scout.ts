@@ -66,6 +66,63 @@ function markUnreachable(targetRoom: string): void {
   rmem.scoutedSources = 0;
 }
 
+// 1000 energy drops survive ~1000t at base decay (1/1000 per tick rounded up),
+// long enough for a hauler to be dispatched. Smaller drops are noise — they
+// either get cleared by the local hauler before scout returns, or decay before
+// a remote dispatch could collect them.
+const LOOT_DROP_THRESHOLD = 1000;
+
+function recordLoot(room: Room, rmem: RoomMemory): void {
+  const ruinEntries: NonNullable<RoomMemory['scoutedLoot']>['ruins'] = [];
+  for (const ruin of room.find(FIND_RUINS)) {
+    const total = ruin.store.getUsedCapacity();
+    if (!total) continue;
+    ruinEntries.push({
+      id: ruin.id,
+      x: ruin.pos.x,
+      y: ruin.pos.y,
+      energy: ruin.store.getUsedCapacity(RESOURCE_ENERGY),
+      total,
+    });
+  }
+
+  const tombstoneEntries: NonNullable<RoomMemory['scoutedLoot']>['tombstones'] = [];
+  for (const tomb of room.find(FIND_TOMBSTONES)) {
+    const total = tomb.store.getUsedCapacity();
+    if (!total) continue;
+    tombstoneEntries.push({
+      id: tomb.id,
+      x: tomb.pos.x,
+      y: tomb.pos.y,
+      energy: tomb.store.getUsedCapacity(RESOURCE_ENERGY),
+      total,
+    });
+  }
+
+  const dropEntries: NonNullable<RoomMemory['scoutedLoot']>['drops'] = [];
+  for (const drop of room.find(FIND_DROPPED_RESOURCES)) {
+    if (drop.amount < LOOT_DROP_THRESHOLD) continue;
+    dropEntries.push({
+      id: drop.id,
+      x: drop.pos.x,
+      y: drop.pos.y,
+      resourceType: drop.resourceType,
+      amount: drop.amount,
+    });
+  }
+
+  if (ruinEntries.length === 0 && tombstoneEntries.length === 0 && dropEntries.length === 0) {
+    delete rmem.scoutedLoot;
+    return;
+  }
+  rmem.scoutedLoot = {
+    recordedAt: Game.time,
+    ...(ruinEntries.length ? { ruins: ruinEntries } : {}),
+    ...(tombstoneEntries.length ? { tombstones: tombstoneEntries } : {}),
+    ...(dropEntries.length ? { drops: dropEntries } : {}),
+  };
+}
+
 const states: StateMachineDefinition = {
   SCOUT: {
     run(creep) {
@@ -131,6 +188,8 @@ const states: StateMachineDefinition = {
 
         const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
         rmem.scoutedHostiles = hostiles.length;
+
+        recordLoot(creep.room, rmem);
 
         creep.memory.targetRoom = undefined;
         delete creep.memory._scoutTick;

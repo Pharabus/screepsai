@@ -88,58 +88,152 @@ export function pathRoomCallback(roomName: string): boolean | CostMatrix {
   return getRoomCostMatrix(room);
 }
 
+// Same shape as pathRoomCallback but bumps friendly-creep cost — used by
+// stuck-detection repaths so the new path actually routes around blockers.
+export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMatrix {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+    if (owner && owner !== getMyUsername()) return false;
+    return new PathFinder.CostMatrix();
+  }
+  return getRoomCostMatrixAvoidCreeps(room);
+}
+
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
-  return cached(`traffic:path:${creep.name}`, () => {
-    const crossRoom = creep.pos.roomName !== target.roomName;
-    const result = PathFinder.search(
-      creep.pos,
-      { pos: target, range },
-      {
-        plainCost: 2,
-        swampCost: 10,
-        // Diagonal / multi-hop targets (e.g. depth-3 scout, remote miners)
-        // need to traverse intermediate rooms; the default of 2 is not enough,
-        // and a cluttered room (constructedWalls, etc.) can force a multi-room
-        // detour. 16 matches the Screeps default and hivemind's choice.
-        maxRooms: crossRoom ? 16 : 1,
-        // Cross-room searches need room to breathe; 2000 (the engine default)
-        // is too tight even for a 2-room hop, and tighter caps return partial
-        // paths pointing backward.
-        maxOps: crossRoom ? 10000 : 2000,
-        roomCallback: pathRoomCallback,
-      },
-    );
-    return result.path;
+  return cached(`traffic:path:${creep.name}`, () => searchPath(creep, target, range, false));
+}
+
+function searchPath(
+  creep: Creep,
+  target: RoomPosition,
+  range: number,
+  avoidCreeps: boolean,
+): RoomPosition[] {
+  const crossRoom = creep.pos.roomName !== target.roomName;
+  const result = PathFinder.search(
+    creep.pos,
+    { pos: target, range },
+    {
+      plainCost: 2,
+      swampCost: 10,
+      // Diagonal / multi-hop targets (e.g. depth-3 scout, remote miners)
+      // need to traverse intermediate rooms; the default of 2 is not enough,
+      // and a cluttered room (constructedWalls, etc.) can force a multi-room
+      // detour. 16 matches the Screeps default and hivemind's choice.
+      maxRooms: crossRoom ? 16 : 1,
+      // Cross-room searches need room to breathe; 2000 (the engine default)
+      // is too tight even for a 2-room hop, and tighter caps return partial
+      // paths pointing backward.
+      maxOps: crossRoom ? 10000 : 2000,
+      roomCallback: avoidCreeps ? pathRoomCallbackAvoidCreeps : pathRoomCallback,
+    },
+  );
+  return result.path;
+}
+
+export function executeMoveAvoidCreeps(
+  creep: Creep,
+  target: RoomPosition,
+  range: number,
+  stroke?: string,
+): void {
+  if (creep.pos.inRangeTo(target, range)) return;
+  // Bypass the per-creep tick cache so we don't reuse the path that got us stuck.
+  const path = searchPath(creep, target, range, true);
+  const nextPos = path[0];
+  if (!nextPos) return;
+
+  creep.move(creep.pos.getDirectionTo(nextPos));
+
+  if (stroke && path.length > 0) {
+    const room = creep.room.name;
+    const localPoints = [creep.pos, ...path].filter((p) => p.roomName === room);
+    if (localPoints.length > 1) {
+      vizBuffer.push({ roomName: room, points: localPoints, stroke });
+    }
+  }
+}
+
+// Heap-cached base matrix — terrain + structures only. Walking FIND_STRUCTURES
+// every tick was a meaningful chunk of pathfinding cost, but structures rarely
+// change tick-to-tick, so we cache and only rebuild when the structure count
+// shifts (build/decay/destroy) or the TTL expires. The per-tick overlay below
+// adds friendly creeps and hostiles on top of a clone.
+interface BaseMatrixEntry {
+  matrix: CostMatrix;
+  builtAt: number;
+  structureCount: number;
+}
+const baseMatrixCache = new Map<string, BaseMatrixEntry>();
+const BASE_MATRIX_TTL = 100;
+
+export function resetBaseMatrixCache(): void {
+  baseMatrixCache.clear();
+}
+
+function buildBaseMatrix(structures: AnyStructure[]): CostMatrix {
+  const costs = new PathFinder.CostMatrix();
+  for (const struct of structures) {
+    if (struct.structureType === STRUCTURE_ROAD) {
+      costs.set(struct.pos.x, struct.pos.y, 1);
+    } else if (
+      struct.structureType !== STRUCTURE_CONTAINER &&
+      !(struct.structureType === STRUCTURE_RAMPART && (struct as StructureRampart).my)
+    ) {
+      costs.set(struct.pos.x, struct.pos.y, 255);
+    }
+  }
+  return costs;
+}
+
+function getBaseCostMatrix(room: Room): CostMatrix {
+  // room.find is internally cached by the engine within a tick, so the count
+  // probe is cheap on the cache-hit path; on miss we'd be calling find anyway.
+  const structures = room.find(FIND_STRUCTURES);
+  const cached = baseMatrixCache.get(room.name);
+  if (
+    cached &&
+    Game.time - cached.builtAt < BASE_MATRIX_TTL &&
+    cached.structureCount === structures.length
+  ) {
+    return cached.matrix;
+  }
+  const matrix = buildBaseMatrix(structures);
+  baseMatrixCache.set(room.name, {
+    matrix,
+    builtAt: Game.time,
+    structureCount: structures.length,
   });
+  return matrix;
+}
+
+function applyCreepOverlay(room: Room, costs: CostMatrix, creepCost: number): void {
+  for (const creep of room.find(FIND_MY_CREEPS)) {
+    const current = costs.get(creep.pos.x, creep.pos.y);
+    if (current < 255) {
+      const cost = stationaryCreeps.has(creep.name) ? 255 : Math.max(current, creepCost);
+      costs.set(creep.pos.x, creep.pos.y, cost);
+    }
+  }
+  for (const hostile of room.find(FIND_HOSTILE_CREEPS)) {
+    costs.set(hostile.pos.x, hostile.pos.y, 255);
+  }
 }
 
 export function getRoomCostMatrix(room: Room): CostMatrix {
   return cached('traffic:costs:' + room.name, () => {
-    const costs = new PathFinder.CostMatrix();
-
-    for (const struct of room.find(FIND_STRUCTURES)) {
-      if (struct.structureType === STRUCTURE_ROAD) {
-        costs.set(struct.pos.x, struct.pos.y, 1);
-      } else if (
-        struct.structureType !== STRUCTURE_CONTAINER &&
-        !(struct.structureType === STRUCTURE_RAMPART && (struct as StructureRampart).my)
-      ) {
-        costs.set(struct.pos.x, struct.pos.y, 255);
-      }
-    }
-
-    for (const creep of room.find(FIND_MY_CREEPS)) {
-      const current = costs.get(creep.pos.x, creep.pos.y);
-      if (current < 255) {
-        const cost = stationaryCreeps.has(creep.name) ? 255 : Math.max(current, 15);
-        costs.set(creep.pos.x, creep.pos.y, cost);
-      }
-    }
-
-    for (const hostile of room.find(FIND_HOSTILE_CREEPS)) {
-      costs.set(hostile.pos.x, hostile.pos.y, 255);
-    }
-
+    const costs = getBaseCostMatrix(room).clone();
+    applyCreepOverlay(room, costs, 15);
     return costs;
   });
+}
+
+export function getRoomCostMatrixAvoidCreeps(room: Room): CostMatrix {
+  // Not tick-cached — this is only ever called on a stuck repath, which is rare
+  // enough that an extra pathfinder call per stuck creep is cheaper than a
+  // second cached matrix slot per room.
+  const costs = getBaseCostMatrix(room).clone();
+  applyCreepOverlay(room, costs, 50);
+  return costs;
 }

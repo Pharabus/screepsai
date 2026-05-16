@@ -1,4 +1,4 @@
-import { executeMove } from './trafficManager';
+import { executeMove, executeMoveAvoidCreeps } from './trafficManager';
 
 export interface MoveOpts {
   range?: number;
@@ -6,7 +6,13 @@ export interface MoveOpts {
   visualizePathStyle?: { stroke: string };
 }
 
-const STUCK_THRESHOLD = 3;
+// At REPATH the cached path is discarded and PathFinder reruns with friendly
+// creeps at cost 50 (vs the normal 15) so the new path actually routes around
+// the cluster. NATIVE is the last resort: hand off to the engine's own moveTo
+// in case our PathFinder is wrong about traversability (custom CostMatrix bug,
+// stale base matrix, etc.).
+const STUCK_REPATH_THRESHOLD = 2;
+const STUCK_NATIVE_THRESHOLD = 3;
 const stuckTicks = new Map<string, { x: number; y: number; count: number }>();
 
 export function moveTo(
@@ -20,9 +26,13 @@ export function moveTo(
   const prev = stuckTicks.get(creep.name);
   if (prev && prev.x === creep.pos.x && prev.y === creep.pos.y) {
     prev.count++;
-    if (prev.count >= STUCK_THRESHOLD) {
+    if (prev.count >= STUCK_NATIVE_THRESHOLD) {
       prev.count = 0;
       creep.moveTo(targetPos, { range, reusePath: 0 });
+      return;
+    }
+    if (prev.count >= STUCK_REPATH_THRESHOLD) {
+      executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke);
       return;
     }
   } else {

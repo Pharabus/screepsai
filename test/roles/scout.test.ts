@@ -311,6 +311,134 @@ describe('scout', () => {
       expect(Memory.rooms['W2N1'].scoutedReservation).toBe('ReserverBot');
     });
 
+    it('records ruins, tombstones, and large drops in scoutedLoot', () => {
+      Game.time = 700;
+      const ruin = {
+        id: 'ruin1',
+        pos: { x: 11, y: 12 },
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => {
+            if (r === undefined) return 4500;
+            if (r === RESOURCE_ENERGY) return 4000;
+            return 0;
+          }),
+        },
+      };
+      const tomb = {
+        id: 'tomb1',
+        pos: { x: 21, y: 22 },
+        store: {
+          getUsedCapacity: vi.fn((r?: string) => {
+            if (r === undefined) return 300;
+            if (r === RESOURCE_ENERGY) return 300;
+            return 0;
+          }),
+        },
+      };
+      const bigDrop = {
+        id: 'drop1',
+        pos: { x: 31, y: 32 },
+        amount: 1500,
+        resourceType: RESOURCE_ENERGY,
+      };
+      const smallDrop = {
+        id: 'drop2',
+        pos: { x: 33, y: 34 },
+        amount: 200,
+        resourceType: RESOURCE_ENERGY,
+      };
+
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_RUINS) return [ruin];
+          if (type === FIND_TOMBSTONES) return [tomb];
+          if (type === FIND_DROPPED_RESOURCES) return [bigDrop, smallDrop];
+          return [];
+        }),
+      });
+
+      Memory.rooms['W2N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      const loot = Memory.rooms['W2N1'].scoutedLoot!;
+      expect(loot.recordedAt).toBe(700);
+      expect(loot.ruins).toEqual([{ id: 'ruin1', x: 11, y: 12, energy: 4000, total: 4500 }]);
+      expect(loot.tombstones).toEqual([{ id: 'tomb1', x: 21, y: 22, energy: 300, total: 300 }]);
+      // Only the >=1000 drop should appear
+      expect(loot.drops).toEqual([
+        { id: 'drop1', x: 31, y: 32, resourceType: RESOURCE_ENERGY, amount: 1500 },
+      ]);
+    });
+
+    it('clears scoutedLoot when room has no abandoned resources', () => {
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn(() => []),
+      });
+
+      Memory.rooms['W2N1'] = {
+        scoutedLoot: {
+          recordedAt: 100,
+          ruins: [{ id: 'old' as any, x: 1, y: 1, energy: 0, total: 0 }],
+        },
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutedLoot).toBeUndefined();
+    });
+
+    it('skips empty ruins and tombstones', () => {
+      const emptyRuin = {
+        id: 'ruin1',
+        pos: { x: 11, y: 12 },
+        store: { getUsedCapacity: () => 0 },
+      };
+      const emptyTomb = {
+        id: 'tomb1',
+        pos: { x: 21, y: 22 },
+        store: { getUsedCapacity: () => 0 },
+      };
+
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_RUINS) return [emptyRuin];
+          if (type === FIND_TOMBSTONES) return [emptyTomb];
+          return [];
+        }),
+      });
+
+      Memory.rooms['W2N1'] = {};
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutedLoot).toBeUndefined();
+    });
+
     it('records hostile count', () => {
       const hostiles = [{ id: 'h1' }, { id: 'h2' }, { id: 'h3' }];
       const targetRoom = mockRoom({

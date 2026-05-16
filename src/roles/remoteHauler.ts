@@ -5,6 +5,14 @@ import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { handleRemoteThreat } from '../utils/remoteThreat';
 
+function pickLootResource(target: Ruin | Tombstone): ResourceConstant | undefined {
+  if (target.store.getUsedCapacity(RESOURCE_ENERGY) > 0) return RESOURCE_ENERGY;
+  for (const r of Object.keys(target.store) as ResourceConstant[]) {
+    if (target.store.getUsedCapacity(r) > 0) return r;
+  }
+  return undefined;
+}
+
 function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
   const targetRoom = creep.memory.targetRoom;
   if (!targetRoom) return undefined;
@@ -66,6 +74,34 @@ const states: StateMachineDefinition = {
           });
         }
         return undefined;
+      }
+
+      // Abandoned loot in the remote room — invader ruins, dead-creep tombstones.
+      // Lower priority than energy pickup since this is opportunistic, but better
+      // than waiting idle when there's no source energy to grab.
+      const ruin = creep.pos.findClosestByRange(FIND_RUINS, {
+        filter: (r) => r.store.getUsedCapacity() > 0,
+      });
+      const tomb = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
+        filter: (t) => t.store.getUsedCapacity() > 0,
+      });
+      const lootTarget: Ruin | Tombstone | null =
+        ruin && tomb
+          ? creep.pos.getRangeTo(ruin) <= creep.pos.getRangeTo(tomb)
+            ? ruin
+            : tomb
+          : (ruin ?? tomb);
+      if (lootTarget) {
+        const resource = pickLootResource(lootTarget);
+        if (resource) {
+          if (creep.withdraw(lootTarget, resource) === ERR_NOT_IN_RANGE) {
+            moveTo(creep, lootTarget, {
+              priority: PRIORITY_HAULER,
+              visualizePathStyle: { stroke: resource === RESOURCE_ENERGY ? '#ffaa00' : '#cc66ff' },
+            });
+          }
+          return undefined;
+        }
       }
 
       // Nothing to pick up — deliver what we have, or wait near the source

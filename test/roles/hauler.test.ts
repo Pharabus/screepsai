@@ -972,6 +972,98 @@ describe('hauler pickup priority', () => {
     expect(creep.pickup).toHaveBeenCalledWith(mineralDrop);
   });
 
+  it('picks up ruins between dropped minerals and full source containers', () => {
+    const ruin = {
+      id: 'ruin1' as Id<Ruin>,
+      pos: new RoomPosition(12, 14, 'W1N1'),
+      store: mockStore({ energy: 4000 }, 5000),
+    };
+    const fullSourceContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 1500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_STRUCTURES) {
+          const all = [fullSourceContainer];
+          return opts?.filter ? all.filter(opts.filter) : all;
+        }
+        return [];
+      }),
+    });
+
+    Game.getObjectById = vi.fn(() => null) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(13, 14, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_RUINS) {
+        const items = [ruin];
+        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
+      }
+      return null;
+    }) as any;
+
+    hauler.run(creep);
+
+    // Ruin is collected before the full source container
+    expect(creep.withdraw).toHaveBeenCalledWith(ruin, RESOURCE_ENERGY);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(fullSourceContainer, RESOURCE_ENERGY);
+  });
+
+  it('prefers the closer of a ruin and tombstone', () => {
+    const farRuin = {
+      id: 'ruin1' as Id<Ruin>,
+      pos: new RoomPosition(40, 40, 'W1N1'),
+      store: mockStore({ energy: 4000 }, 5000),
+    };
+    const closeTomb = {
+      id: 'tomb1' as Id<Tombstone>,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100 }, 1000),
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn(() => null) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_RUINS) {
+        const items = [farRuin];
+        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
+      }
+      if (type === FIND_TOMBSTONES) {
+        const items = [closeTomb];
+        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
+      }
+      return null;
+    }) as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(closeTomb, RESOURCE_ENERGY);
+  });
+
   it('picks mineral container before partially-full source containers', () => {
     const lowSourceContainer = {
       id: 'cSrc' as Id<StructureContainer>,

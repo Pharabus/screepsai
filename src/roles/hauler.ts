@@ -250,6 +250,12 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
+  // Abandoned loot — ruins (500t decay) and tombstones (~5*body.length decay).
+  // Sits below ground drops (faster decay) but above source containers, since
+  // containers don't decay below 50% HP without nearby creeps and a full source
+  // container can wait a few ticks while we collect a 4k-energy ruin.
+  if (pickupAbandonedLoot(creep)) return true;
+
   // Full source containers (>= 1000 energy)
   const fullSourceContainer = findFullSourceContainer(creep.room, mem);
   if (fullSourceContainer) {
@@ -319,6 +325,33 @@ function pickup(creep: Creep): boolean {
 
   markIdle(creep);
   return false;
+}
+
+function pickupAbandonedLoot(creep: Creep): boolean {
+  const ruin = creep.pos.findClosestByRange(FIND_RUINS, {
+    filter: (r) => r.store.getUsedCapacity() > 0,
+  });
+  const tomb = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
+    filter: (t) => t.store.getUsedCapacity() > 0,
+  });
+  // Prefer whichever is closer — both decay, but the closer trip costs less.
+  const target: Ruin | Tombstone | null =
+    ruin && tomb
+      ? creep.pos.getRangeTo(ruin) <= creep.pos.getRangeTo(tomb)
+        ? ruin
+        : tomb
+      : (ruin ?? tomb);
+  if (!target) return false;
+  const resource = pickWithdrawResource(target as unknown as AnyStoreStructure);
+  if (!resource) return false;
+  creep.memory.targetId = target.id;
+  if (creep.withdraw(target, resource) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, target, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: resource === RESOURCE_ENERGY ? '#ffaa00' : '#cc66ff' },
+    });
+  }
+  return true;
 }
 
 function pickupLargeDrop(creep: Creep): boolean {

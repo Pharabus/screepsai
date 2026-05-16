@@ -20,6 +20,8 @@
 (globalThis as any).FIND_MY_SPAWNS = 112;
 (globalThis as any).FIND_DROPPED_RESOURCES = 113;
 (globalThis as any).FIND_MINERALS = 110;
+(globalThis as any).FIND_RUINS = 123;
+(globalThis as any).FIND_TOMBSTONES = 118;
 
 // Look constants
 (globalThis as any).LOOK_STRUCTURES = 'structure';
@@ -134,17 +136,24 @@
   rooms: {} as Record<string, any>,
 };
 
+class MockCostMatrix {
+  _data = new Uint8Array(2500);
+  set(x: number, y: number, val: number) {
+    this._data[x * 50 + y] = val;
+  }
+  get(x: number, y: number) {
+    return this._data[x * 50 + y];
+  }
+  clone() {
+    const copy = new MockCostMatrix();
+    copy._data = new Uint8Array(this._data);
+    return copy;
+  }
+}
+
 (globalThis as any).PathFinder = {
   search: () => ({ path: [], ops: 0, cost: 0, incomplete: false }),
-  CostMatrix: class {
-    _data = new Uint8Array(2500);
-    set(x: number, y: number, val: number) {
-      this._data[x * 50 + y] = val;
-    }
-    get(x: number, y: number) {
-      return this._data[x * 50 + y];
-    }
-  },
+  CostMatrix: MockCostMatrix,
 };
 
 (globalThis as any).RoomPosition = class {
