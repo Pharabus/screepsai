@@ -15,6 +15,7 @@ import { reserver } from './reserver';
 import { remoteBuilder } from './remoteBuilder';
 import { claimer } from './claimer';
 import { colonyBuilder } from './colonyBuilder';
+import { hunter } from './hunter';
 
 export type { Role };
 
@@ -35,4 +36,5 @@ export const roles: Record<CreepRoleName, Role> = {
   remoteBuilder,
   claimer,
   colonyBuilder,
+  hunter,
 };

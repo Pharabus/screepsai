@@ -3,6 +3,7 @@ import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { handleRemoteThreat } from '../utils/remoteThreat';
+import { deliverToSpawnOrExtension } from '../utils/delivery';
 
 /**
  * colonyBuilder — bootstraps a newly-claimed room before it has its own spawn.
@@ -109,7 +110,26 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      // Priority 2: any other site (extensions, containers placed for the colony)
+      // Priority 2: prime the new spawn (and extensions) so the colony can
+      // bootstrap its own harvester. Without this the colony deadlocks: the
+      // spawn structure exists but its store is empty, and there are no local
+      // creeps to refill it. Only kicks in when the colony has no local
+      // distributor (harvester/hauler/miner) that can keep the spawn fed.
+      const hasLocalDistributor = creep.room
+        .find(FIND_MY_CREEPS)
+        .some(
+          (c) =>
+            c.memory.homeRoom === creep.room.name &&
+            (c.memory.role === 'harvester' ||
+              c.memory.role === 'hauler' ||
+              c.memory.role === 'miner'),
+        );
+      if (!hasLocalDistributor) {
+        const needsEnergy = creep.room.energyAvailable < creep.room.energyCapacityAvailable;
+        if (needsEnergy && deliverToSpawnOrExtension(creep)) return undefined;
+      }
+
+      // Priority 3: any other site (extensions, containers placed for the colony)
       const otherSite = creep.pos.findClosestByRange(FIND_MY_CONSTRUCTION_SITES);
       if (otherSite) {
         if (creep.build(otherSite) === ERR_NOT_IN_RANGE) {
@@ -122,7 +142,7 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      // Nothing to build — upgrade the controller. Keeps the carried energy
+      // Nothing else to do — upgrade the controller. Keeps the carried energy
       // productive and accelerates RCL2 (which unlocks 5 extensions).
       const controller = creep.room.controller;
       if (controller?.my) {

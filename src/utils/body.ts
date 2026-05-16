@@ -56,6 +56,46 @@ export function buildRemoteMinerBody(energyAvailable: number, maxWork = 5): Body
 }
 
 /**
+ * Build a hunter body for killing NPC invaders in remote/transit rooms.
+ *
+ * Three tiers keyed on energyCapacityAvailable:
+ *   < 790  — can't field a useful fighter; returns [].
+ *   790–1309 — [TOUGH×2, MOVE×4, ATTACK×4, HEAL×1] = 790e, road-speed.
+ *   ≥ 1310 — [TOUGH×3, MOVE×6, ATTACK×6, HEAL×2] = 1310e, beats medium invaders.
+ *
+ * Body order: TOUGH first (absorbs hits), MOVE, ATTACK, HEAL last (most valuable).
+ * Road-speed in both tiers (enough MOVE for 1 MOVE per 2 non-MOVE on roads).
+ * Only targets Invader-owned NPC creeps — player combat is out of scope.
+ */
+export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
+  if (energyCapacity >= 1310) {
+    return [
+      TOUGH,
+      TOUGH,
+      TOUGH,
+      MOVE,
+      MOVE,
+      MOVE,
+      MOVE,
+      MOVE,
+      MOVE,
+      ATTACK,
+      ATTACK,
+      ATTACK,
+      ATTACK,
+      ATTACK,
+      ATTACK,
+      HEAL,
+      HEAL,
+    ];
+  }
+  if (energyCapacity >= 790) {
+    return [TOUGH, TOUGH, MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK, HEAL];
+  }
+  return [];
+}
+
+/**
  * Build the largest creep body that fits within the available energy,
  * repeating a pattern of body parts up to a maximum number of repetitions.
  *

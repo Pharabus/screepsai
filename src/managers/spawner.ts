@@ -1,4 +1,10 @@
-import { buildBody, buildMinerBody, buildRemoteMinerBody, buildUpgraderBody } from '../utils/body';
+import {
+  buildBody,
+  buildHunterBody,
+  buildMinerBody,
+  buildRemoteMinerBody,
+  buildUpgraderBody,
+} from '../utils/body';
 import { cached } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
@@ -279,6 +285,47 @@ export function defenderComposition(room: Room): DefenderComposition {
   return { melee, ranged, healer };
 }
 
+/** Ticks after last Invader sighting before the target room is considered clear. */
+const INVADER_MEMORY_TICKS = 500;
+
+function hasActiveInvader(roomName: string): boolean {
+  const mem = Memory.rooms[roomName];
+  if (!mem?.invaderSeenAt) return false;
+  return Game.time - mem.invaderSeenAt < INVADER_MEMORY_TICKS;
+}
+
+/**
+ * Rooms containing active NPC Invaders that this colony should dispatch a
+ * hunter to: includes every remoteRoom and every transit room on the path to
+ * a colony that hasn't gone active yet.
+ */
+function getInvaderTargetRooms(homeRoom: Room): string[] {
+  const mem = Memory.rooms[homeRoom.name];
+  const targets: string[] = [];
+
+  for (const remote of mem?.remoteRooms ?? []) {
+    if (hasActiveInvader(remote) && !targets.includes(remote)) targets.push(remote);
+  }
+
+  if (Memory.colonies) {
+    for (const [, state] of Object.entries(Memory.colonies)) {
+      if (state.homeRoom !== homeRoom.name) continue;
+      // Always watch transit rooms regardless of colony status — inter-colony
+      // traffic continues to traverse them after the colony goes active.
+      for (const transit of state.transitRooms ?? []) {
+        if (hasActiveInvader(transit) && !targets.includes(transit)) targets.push(transit);
+      }
+    }
+  }
+
+  return targets;
+}
+
+/** Count of unique invader-infested rooms that still need a hunter. */
+export function huntersNeeded(homeRoom: Room): number {
+  return getInvaderTargetRooms(homeRoom).length;
+}
+
 export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
@@ -304,6 +351,25 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       maxRepeats: 4,
       minCount: comp.healer,
     });
+  }
+
+  // Priority 1: Hunters for NPC invaders in remote/transit rooms — queued before
+  // local economy roles so an invader camping a remote doesn't block indefinitely.
+  for (const targetRoom of getInvaderTargetRooms(room)) {
+    if (countCreepsByRoleAndTarget('hunter', targetRoom) > 0) continue;
+    const hunterBody = buildHunterBody(room.energyCapacityAvailable);
+    if (hunterBody.length > 0) {
+      queue.push({
+        role: 'hunter',
+        body: hunterBody,
+        minCount: countCreepsByRole('hunter', room.name) + 1,
+        memory: {
+          role: 'hunter' as CreepRoleName,
+          homeRoom: room.name,
+          targetRoom,
+        },
+      });
+    }
   }
 
   if (isMinerEconomy) {

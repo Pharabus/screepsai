@@ -128,6 +128,14 @@ export function startClaim(
     status: 'claiming',
     selectedAt: Game.time,
   };
+
+  // Record transit rooms so the spawner can send hunters to unblock the path.
+  const route = Game.map.findRoute(homeRoomName, targetRoomName);
+  if (Array.isArray(route)) {
+    const transit = route.map((step) => step.room).filter((r) => r !== targetRoomName);
+    if (transit.length > 0) state.transitRooms = transit;
+  }
+
   Memory.colonies[targetRoomName] = state;
   return { ok: true, state };
 }
@@ -137,7 +145,9 @@ export function startClaim(
  * Called once per tick from the spawner before queue construction.
  *
  *   claiming      → bootstrapping  when controller.my === true
- *   bootstrapping → active         when at least one spawn structure exists
+ *   bootstrapping → active         when a spawn exists AND a local harvester
+ *                                  or miner exists (so the colony can refill
+ *                                  its own spawn without parent support)
  *
  * Does not delete entries — operators can inspect the historical record via the
  * console. To remove, set Memory.colonies[room] = undefined manually.
@@ -158,9 +168,19 @@ export function updateColonyStates(): void {
     if (state.status === 'bootstrapping') {
       const spawns = room.find(FIND_MY_SPAWNS);
       if (spawns.length > 0) {
-        state.status = 'active';
-        state.activeAt = Game.time;
-        console.log(`[colony] ${targetRoom} active — first spawn built at tick ${Game.time}`);
+        // Wait for a self-sustaining local creep before cutting parent support.
+        // Flipping on first-spawn deadlocked W44N57: spawn built with 0 energy,
+        // colonyBuilders retired, nothing left to refill the spawn.
+        const hasLocalProducer = Object.values(Game.creeps).some(
+          (c) =>
+            c.memory.homeRoom === targetRoom &&
+            (c.memory.role === 'harvester' || c.memory.role === 'miner'),
+        );
+        if (hasLocalProducer) {
+          state.status = 'active';
+          state.activeAt = Game.time;
+          console.log(`[colony] ${targetRoom} active — local economy online at tick ${Game.time}`);
+        }
       }
     }
   }

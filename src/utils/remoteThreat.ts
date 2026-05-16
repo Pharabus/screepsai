@@ -40,6 +40,9 @@ function fleeToHome(creep: Creep): void {
  * DELIVER state — only empty haulers are parked.
  */
 export function handleRemoteThreat(creep: Creep): boolean {
+  // Hunters seek out invaders — retreat logic is the opposite of what they need.
+  if (creep.memory.role === 'hunter') return false;
+
   const targetRoom = creep.memory.targetRoom;
   if (!targetRoom) return false;
 

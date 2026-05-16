@@ -67,11 +67,21 @@ function tryActivateSafeMode(room: Room): void {
 
 export function runDefense(): void {
   for (const room of Object.values(Game.rooms)) {
+    const mem = (Memory.rooms[room.name] ??= {});
+    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+
+    // Track NPC Invader presence in every visible room so the spawner can
+    // queue hunters for remote/transit rooms regardless of who owns them.
+    const hasInvaderNpc = hostiles.some((c) => c.owner?.username === 'Invader');
+    if (hasInvaderNpc) {
+      mem.invaderSeenAt = Game.time;
+    } else {
+      // Visibility confirmed clear — remove the flag so the hunter stands down.
+      delete mem.invaderSeenAt;
+    }
+
     if (!room.controller?.my) continue;
 
-    const mem = (Memory.rooms[room.name] ??= {});
-
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
     const threat = hostiles.reduce((sum, h) => sum + threatScore(h), 0);
     if (threat > 0 || hostiles.length > 0) {
       mem.threatLastSeen = Game.time;

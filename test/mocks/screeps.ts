@@ -129,6 +129,7 @@
     getRoomTerrain: () => ({ get: () => 0 }),
     describeExits: () => ({}),
     findExit: () => -2,
+    findRoute: () => [],
   },
 };
 
@@ -230,6 +231,7 @@ export function mockCreep(overrides: Record<string, any> = {}): any {
     pickup: vi.fn(() => 0),
     upgradeController: vi.fn(() => 0),
     attack: vi.fn(() => 0),
+    heal: vi.fn(() => 0),
     move: vi.fn(() => 0),
     moveTo: vi.fn(() => 0),
     getActiveBodyparts: vi.fn((type: string) => {
@@ -263,6 +265,7 @@ export function resetGameGlobals(): void {
       getRoomTerrain: () => ({ get: () => 0 }),
       describeExits: () => ({}),
       findExit: () => -2,
+      findRoute: () => [],
     },
   };
   (globalThis as any).Memory = {

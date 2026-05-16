@@ -1,5 +1,6 @@
 import {
   buildBody,
+  buildHunterBody,
   buildMinerBody,
   buildRemoteMinerBody,
   buildUpgraderBody,
@@ -126,5 +127,40 @@ describe('buildRemoteMinerBody', () => {
     // At 1500 energy: (1500-100)/150 = 9.33 → 9 WORK
     const body = buildRemoteMinerBody(1500, 10);
     expect(body.filter((p) => p === WORK).length).toBe(9);
+  });
+});
+
+describe('buildHunterBody', () => {
+  it('returns empty when energy too low', () => {
+    expect(buildHunterBody(700)).toEqual([]);
+  });
+
+  it('returns tier-1 body at 790 energy', () => {
+    const body = buildHunterBody(790);
+    expect(body.filter((p) => p === TOUGH).length).toBe(2);
+    expect(body.filter((p) => p === ATTACK).length).toBe(4);
+    expect(body.filter((p) => p === HEAL).length).toBe(1);
+    expect(body.filter((p) => p === MOVE).length).toBe(4);
+  });
+
+  it('returns tier-1 body between 790 and 1309', () => {
+    const body = buildHunterBody(1000);
+    expect(body.filter((p) => p === ATTACK).length).toBe(4);
+    expect(body.filter((p) => p === HEAL).length).toBe(1);
+  });
+
+  it('returns tier-2 body at 1310+ energy', () => {
+    const body = buildHunterBody(1310);
+    expect(body.filter((p) => p === TOUGH).length).toBe(3);
+    expect(body.filter((p) => p === ATTACK).length).toBe(6);
+    expect(body.filter((p) => p === HEAL).length).toBe(2);
+    expect(body.filter((p) => p === MOVE).length).toBe(6);
+  });
+
+  it('places TOUGH parts first for damage absorption', () => {
+    const body = buildHunterBody(1310);
+    expect(body[0]).toBe(TOUGH);
+    expect(body[1]).toBe(TOUGH);
+    expect(body[2]).toBe(TOUGH);
   });
 });

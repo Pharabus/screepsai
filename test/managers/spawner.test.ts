@@ -1,5 +1,6 @@
 import {
   buildSpawnQueue,
+  huntersNeeded,
   minersNeeded,
   haulersNeeded,
   upgradersNeeded,
@@ -900,5 +901,88 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
       const queue = buildSpawnQueue(room);
       expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
     });
+  });
+});
+
+describe('huntersNeeded', () => {
+  it('returns 0 when no invaders present', () => {
+    (Memory as any).rooms = { W1N1: { remoteRooms: ['W2N1'] }, W2N1: {} };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when invaderSeenAt is stale (>500 ticks)', () => {
+    (Game as any).time = 1000;
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { invaderSeenAt: 400 }, // 600 ticks ago — stale
+    };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 when a remote room has a recent invader', () => {
+    (Game as any).time = 1000;
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { invaderSeenAt: 900 }, // 100 ticks ago — active
+    };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(1);
+  });
+
+  it('returns 1 when a transit room for an active colony has an invader', () => {
+    (Game as any).time = 1000;
+    (Memory as any).rooms = {
+      W1N1: {},
+      W1N2: { invaderSeenAt: 950 },
+    };
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, transitRooms: ['W1N2'] },
+    };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(1);
+  });
+
+  it('watches transit rooms for active colonies (inter-colony traffic still uses them)', () => {
+    (Game as any).time = 1000;
+    (Memory as any).rooms = {
+      W1N1: {},
+      W1N2: { invaderSeenAt: 950 },
+    };
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1, transitRooms: ['W1N2'] },
+    };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(1);
+  });
+
+  it('counts distinct infested rooms (not duplicate targets)', () => {
+    (Game as any).time = 1000;
+    // Both a remote and a transit room have invaders — 2 targets
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W3N1'] },
+      W3N1: { invaderSeenAt: 900 },
+      W1N2: { invaderSeenAt: 950 },
+    };
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1, transitRooms: ['W1N2'] },
+    };
+    const room = mockRoom({ name: 'W1N1' });
+    expect(huntersNeeded(room)).toBe(2);
+  });
+
+  it('queues hunter in buildSpawnQueue when invader is present', () => {
+    (Game as any).time = 1000;
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W2N1'] },
+      W2N1: { invaderSeenAt: 900 },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1500 });
+    const queue = buildSpawnQueue(room);
+    const hunterEntry = queue.find((r) => r.role === 'hunter');
+    expect(hunterEntry).toBeDefined();
+    expect(hunterEntry?.memory?.targetRoom).toBe('W2N1');
   });
 });

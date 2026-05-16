@@ -14,7 +14,8 @@ type CreepRoleName =
   | 'reserver'
   | 'remoteBuilder'
   | 'claimer'
-  | 'colonyBuilder';
+  | 'colonyBuilder'
+  | 'hunter';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -60,6 +61,9 @@ interface RoomMemory {
   // Remote room threat — set by any creep that spots a hostile in this room.
   // Used by remote roles to flee and stay home until the threat clears.
   hostileLastSeen?: number;
+  // NPC Invader presence — set/cleared by defense manager and hunter role.
+  // Used by spawner to queue hunters for remote/transit rooms.
+  invaderSeenAt?: number;
   // Room planning (src/managers/spawner.ts, construction.ts)
   sources?: {
     id: Id<Source>;
@@ -165,6 +169,8 @@ interface ColonyState {
   claimedAt?: number;
   /** Tick when the first spawn finished. */
   activeAt?: number;
+  /** Rooms the claimer/colonyBuilder passes through en route (home→target), excluding home and target. */
+  transitRooms?: string[];
 }
 
 interface Memory {

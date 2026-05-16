@@ -287,7 +287,7 @@ describe('colonyPlanner', () => {
       expect(Memory.colonies['W2N1']!.status).toBe('claiming');
     });
 
-    it('flips bootstrapping → active when a spawn exists', () => {
+    it('flips bootstrapping → active when a spawn exists AND a local producer is alive', () => {
       Game.time = 700;
       Memory.colonies = {
         W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
@@ -297,9 +297,35 @@ describe('colonyPlanner', () => {
         controller: { my: true },
         find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
       } as any;
+      Game.creeps['h1'] = {
+        name: 'h1',
+        memory: { role: 'harvester', homeRoom: 'W2N1' },
+      } as any;
       updateColonyStates();
       expect(Memory.colonies['W2N1']!.status).toBe('active');
       expect(Memory.colonies['W2N1']!.activeAt).toBe(700);
+    });
+
+    it('stays in bootstrapping when a spawn exists but no local producer yet', () => {
+      Game.time = 700;
+      Memory.colonies = {
+        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
+      };
+      Game.rooms['W2N1'] = {
+        name: 'W2N1',
+        controller: { my: true },
+        find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
+      } as any;
+      // Only a colonyBuilder is alive — the spawn has nothing to refill it once
+      // the builder dies. Parent must keep spawning support until a local
+      // harvester or miner takes over.
+      Game.creeps['cb1'] = {
+        name: 'cb1',
+        memory: { role: 'colonyBuilder', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      } as any;
+      updateColonyStates();
+      expect(Memory.colonies['W2N1']!.status).toBe('bootstrapping');
+      expect(Memory.colonies['W2N1']!.activeAt).toBeUndefined();
     });
 
     it('does nothing when target room has no visibility', () => {
