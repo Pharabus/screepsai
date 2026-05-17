@@ -196,6 +196,18 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
+      // Record ownership for transit rooms. Scouts die in owned rooms before
+      // reaching their target, so scoutedOwner never gets set for that room,
+      // and the pathfinder keeps routing future scouts through it. Recording
+      // here ensures the first death is also the last for any given owned room.
+      // Creep code runs before tower fire, so this executes even on the death tick.
+      const transitRmem = (Memory.rooms[creep.room.name] ??= {});
+      const transitCtrl = creep.room.controller;
+      if (transitCtrl?.owner?.username && !transitRmem.scoutedOwner) {
+        transitRmem.scoutedOwner = transitCtrl.owner.username;
+        transitRmem.scoutedAt = Game.time;
+      }
+
       // Path to center of target room — PathFinder handles cross-room routing
       const targetPos = new RoomPosition(25, 25, targetRoom);
       moveTo(creep, targetPos, {

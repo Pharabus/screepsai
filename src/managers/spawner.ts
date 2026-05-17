@@ -625,13 +625,13 @@ export function runSpawner(): void {
 
     const queue = buildSpawnQueue(room);
 
-    // Emergency recovery: if in miner economy but no haulers or harvesters alive,
-    // extensions can't be filled so energyAvailable stays at spawn-only levels.
-    // Build bodies from energyAvailable instead of capacity to break the deadlock.
-    const mem = Memory.rooms[room.name];
+    // Emergency recovery: if no energy distributors are alive, extensions can't be
+    // filled so energyAvailable stays at spawn-only levels. Build bodies from
+    // energyAvailable instead of capacity to break the deadlock. Applies to both
+    // miner economy (no haulers/harvesters) and bootstrap (no harvesters).
     const hasDistributor =
       countCreepsByRole('hauler', room.name) > 0 || countCreepsByRole('harvester', room.name) > 0;
-    const emergency = (mem?.minerEconomy ?? false) && !hasDistributor;
+    const emergency = !hasDistributor;
 
     for (const request of queue) {
       if (countCreepsByRole(request.role, room.name) >= request.minCount) continue;
