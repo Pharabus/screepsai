@@ -646,7 +646,7 @@ export function runSpawner(): void {
           : buildBody(request.pattern, energy, request.maxRepeats);
       if (body.length === 0) continue; // can't afford this role, try cheaper ones below
 
-      const name = `${request.role}_${Game.time}`;
+      const name = `${request.role}_${spawn.name}_${Game.time}`;
       const result = spawn.spawnCreep(body, name, {
         memory: request.memory ?? { role: request.role, homeRoom: room.name },
       });
