@@ -591,11 +591,11 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       });
     }
   } else {
-    // Bootstrap economy: original patterns
+    // Bootstrap economy: builders before upgraders so containers get built quickly
     queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });
-    queue.push({ role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 2 });
     queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE], minCount: buildersNeeded(room) });
     queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
+    queue.push({ role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 1 });
   }
 
   return queue;
