@@ -1,9 +1,9 @@
 import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
 import { getBaseCostMatrixForRoom } from '../utils/trafficManager';
 
-// Max extensions per RCL level (from Screeps docs).
-// At RCL 7+ extension energy capacity increases (100 at RCL 7, 200 at RCL 8),
-// so total spawning energy rises sharply even without new slots.
+// Max extensions per RCL level (from Screeps CONTROLLER_STRUCTURES).
+// At RCL 7 each extension holds 100 energy (up from 50), at RCL 8 it's 200,
+// so spawning capacity rises sharply even though the slot count grows slowly.
 const MAX_EXTENSIONS: Record<number, number> = {
   0: 0,
   1: 0,
@@ -11,9 +11,9 @@ const MAX_EXTENSIONS: Record<number, number> = {
   3: 10,
   4: 20,
   5: 30,
-  6: 60,
-  7: 70,
-  8: 70,
+  6: 40,
+  7: 50,
+  8: 60,
 };
 
 const MAX_TOWERS: Record<number, number> = {
@@ -99,10 +99,11 @@ export function placeExtensions(room: Room): void {
         return;
       }
     }
-    return;
+    // Plan exhausted (all positions built or road-blocked) — fall through to overflow search.
   }
 
-  // Fallback: stamp relative to spawn (no layout plan yet)
+  // Overflow / fallback: stamp relative to spawn, then any open position.
+  // Handles both pre-plan rooms and cases where roads consumed plan slots.
   const spawn = room.find(FIND_MY_SPAWNS)[0];
   if (!spawn) return;
   const terrain = room.getTerrain();

@@ -245,7 +245,9 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   const towerPositions = pickTowerPositions(spawn.pos, reserved, terrain, 6);
   for (const t of towerPositions) reserved.add(`${t.x},${t.y}`);
 
-  // Step 5: Extension positions — stamp minus reserved, with overflow
+  // Step 5: Extension positions — stamp minus reserved and road-blocked, with overflow.
+  // Roads block extension placement permanently, so exclude them at plan-generation time
+  // so the overflow can fill in with road-free positions instead.
   const extensionPositions: { x: number; y: number }[] = [];
   for (const [dx, dy] of EXTENSION_STAMP) {
     const x = spawn.pos.x + dx;
@@ -253,11 +255,14 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     if (!inBounds(x, y)) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
     if (reserved.has(`${x},${y}`)) continue;
+    const pos = new RoomPosition(x, y, room.name);
+    if (pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD)) continue;
     extensionPositions.push({ x, y });
   }
 
-  // Overflow positions to fill up to RCL 7 max (70). Runs even when the stamp
-  // gave all 60 positions — the extra 10 land at Chebyshev distance 5+ from spawn.
+  // Overflow to 70 planned slots so road-blocked stamp positions don't leave the plan
+  // short. The game only builds up to the RCL cap (40/50/60 at RCL 6/7/8), so extra
+  // slots sit unused until needed. Overflow positions land at Chebyshev distance 5+.
   if (extensionPositions.length < 70) {
     const inPlan = new Set(extensionPositions.map((p) => `${p.x},${p.y}`));
     for (let r = 5; r <= 9 && extensionPositions.length < 70; r++) {
@@ -270,6 +275,9 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
           if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
           const key = `${x},${y}`;
           if (reserved.has(key) || inPlan.has(key)) continue;
+          const pos = new RoomPosition(x, y, room.name);
+          if (pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD))
+            continue;
           extensionPositions.push({ x, y });
           inPlan.add(key);
         }
@@ -283,7 +291,12 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     const rp = new RoomPosition(pos.x, pos.y, room.name);
     const blocking = rp
       .lookFor(LOOK_STRUCTURES)
-      .filter((s) => s.structureType !== STRUCTURE_RAMPART && s.structureType !== STRUCTURE_ROAD);
+      .filter(
+        (s) =>
+          s.structureType !== STRUCTURE_RAMPART &&
+          s.structureType !== STRUCTURE_ROAD &&
+          s.structureType !== STRUCTURE_LAB,
+      );
     if (blocking.length > 0) {
       blockedLabs.push(`(${pos.x},${pos.y}:${blocking[0]!.structureType})`);
     }
