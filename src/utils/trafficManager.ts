@@ -113,6 +113,23 @@ export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMat
   return getRoomCostMatrixAvoidCreeps(room);
 }
 
+// Used for the very first path a freshly-spawned creep computes. Moving
+// friendly creeps cost 0 (treated as open tiles) so a cluster of idle
+// haulers near the spawn doesn't inflate the cost of the optimal corridor
+// and push PathFinder onto a longer detour. Stationary creeps (miners) and
+// hostile creeps still cost 255 — hard obstacles are always respected.
+function pathRoomCallbackFirstPath(roomName: string): boolean | CostMatrix {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+    if (owner && owner !== getMyUsername()) return false;
+    return new PathFinder.CostMatrix();
+  }
+  const costs = getBaseCostMatrix(room).clone();
+  applyCreepOverlay(room, costs, 0);
+  return costs;
+}
+
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
   return cached(`traffic:path:${creep.name}`, () => {
@@ -131,7 +148,11 @@ function getPath(creep: Creep, target: RoomPosition, range: number): RoomPositio
       }
       if (serial.path.length > 0) return serial.path;
     }
-    const path = searchPath(creep, target, range, false);
+    // On the very first path for this creep (no serial entry yet), ignore
+    // moving-friendly-creep cost so idle haulers near spawn don't inflate
+    // the optimal corridor and push PathFinder onto a longer detour.
+    const firstPath = serial === undefined;
+    const path = searchPath(creep, target, range, false, firstPath);
     pathSerialCache.set(creep.name, { path: [...path], targetKey, builtAt: Game.time });
     return path;
   });
@@ -142,6 +163,7 @@ function searchPath(
   target: RoomPosition,
   range: number,
   avoidCreeps: boolean,
+  firstPath = false,
 ): RoomPosition[] {
   const crossRoom = creep.pos.roomName !== target.roomName;
   const result = PathFinder.search(
@@ -159,7 +181,11 @@ function searchPath(
       // is too tight even for a 2-room hop, and tighter caps return partial
       // paths pointing backward.
       maxOps: crossRoom ? 10000 : 2000,
-      roomCallback: avoidCreeps ? pathRoomCallbackAvoidCreeps : pathRoomCallback,
+      roomCallback: firstPath
+        ? pathRoomCallbackFirstPath
+        : avoidCreeps
+          ? pathRoomCallbackAvoidCreeps
+          : pathRoomCallback,
     },
   );
   return result.path;
