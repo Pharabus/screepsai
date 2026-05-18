@@ -10,7 +10,7 @@ import { runTerminal } from './managers/terminal';
 import { runLabs } from './managers/labs';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
-import { resetTraffic, resolveTraffic } from './utils/trafficManager';
+import { resetTraffic, resolveTraffic, cleanPathSerialCache } from './utils/trafficManager';
 import { resetIdle } from './utils/idle';
 import { cleanStuckTracker } from './utils/movement';
 import { flushSegments } from './utils/segments';
@@ -144,6 +144,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     resetTraffic();
     resetIdle();
     cleanStuckTracker();
+    cleanPathSerialCache();
 
     // Defense first: refreshes threat state before spawner decides whether to
     // build defenders and before towers pick their focus-fire target.

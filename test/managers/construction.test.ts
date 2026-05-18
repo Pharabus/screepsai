@@ -13,6 +13,7 @@ import {
   placeMineralContainer,
   placeLabs,
   placeRemoteRoads,
+  placeColonyBootstrapRoads,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -405,5 +406,61 @@ describe('placeRemoteRoads', () => {
     placeRemoteRoads(room);
 
     expect(remoteRoom.createConstructionSite).not.toHaveBeenCalled();
+  });
+});
+
+describe('placeColonyBootstrapRoads', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  function bootstrapRoom(roadSiteCount: number, hasStorage = false): any {
+    const roadSites = Array.from({ length: roadSiteCount }, () => ({
+      structureType: STRUCTURE_ROAD,
+    }));
+    return mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 2, pos: new RoomPosition(30, 30, 'W1N1') },
+      storage: hasStorage ? {} : undefined,
+      find: vi.fn((type: number) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return roadSites;
+        return [];
+      }),
+      lookForAt: vi.fn(() => []),
+      createConstructionSite: vi.fn(() => 0),
+    });
+  }
+
+  it('does nothing when room has storage (handled by placeRoads)', () => {
+    const room = bootstrapRoom(0, true);
+    Memory.rooms = { W1N1: { sources: [{ id: 's1' as any, x: 10, y: 10 }] } };
+    const result = placeColonyBootstrapRoads(room);
+    expect(result).toBe(false);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('does not place a road site when road site count exceeds cap', () => {
+    const room = bootstrapRoom(4);
+    Memory.rooms = { W1N1: { sources: [{ id: 's1' as any, x: 10, y: 10 }] } };
+    (PathFinder as any).search = vi.fn(() => ({
+      path: [new RoomPosition(26, 25, 'W1N1')],
+      incomplete: false,
+    }));
+    const result = placeColonyBootstrapRoads(room);
+    expect(result).toBe(false);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('places a road site when below the cap', () => {
+    const room = bootstrapRoom(2);
+    Memory.rooms = { W1N1: { sources: [{ id: 's1' as any, x: 10, y: 10 }] } };
+    (PathFinder as any).search = vi.fn(() => ({
+      path: [new RoomPosition(26, 25, 'W1N1')],
+      incomplete: false,
+    }));
+    const result = placeColonyBootstrapRoads(room);
+    expect(result).toBe(true);
+    expect(room.createConstructionSite).toHaveBeenCalledWith(26, 25, STRUCTURE_ROAD);
   });
 });

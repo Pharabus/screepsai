@@ -688,6 +688,13 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
   const anchor = spawns[0];
   if (!anchor) return false;
 
+  // Share the road-site cap with placeRoads to prevent accumulation of dozens
+  // of unbuilt road sites that push the room against the 90-site global limit.
+  const roadSites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_ROAD,
+  });
+  if (roadSites.length > 3) return false;
+
   const roomMem = Memory.rooms[room.name];
   const sources = roomMem?.sources;
   if (!sources || sources.length === 0) return false;

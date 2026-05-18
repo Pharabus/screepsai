@@ -15,6 +15,27 @@ interface PathVis {
 const stationaryCreeps = new Set<string>();
 let vizBuffer: PathVis[] = [];
 
+// Cross-tick path cache — prevents PathFinder from running every tick and
+// eliminates route-flipping when multiple equal-cost paths exist (common in
+// crowded rooms without roads). Invalidated by stuck repaths and native moveTo.
+interface SerialPath {
+  path: RoomPosition[];
+  targetKey: string;
+  builtAt: number;
+}
+const pathSerialCache = new Map<string, SerialPath>();
+const PATH_SERIAL_TTL = 50;
+
+export function cleanPathSerialCache(): void {
+  for (const name of pathSerialCache.keys()) {
+    if (!Game.creeps[name]) pathSerialCache.delete(name);
+  }
+}
+
+export function invalidateSerialPath(creepName: string): void {
+  pathSerialCache.delete(creepName);
+}
+
 export function registerStationary(creep: Creep, _priority: number): void {
   stationaryCreeps.add(creep.name);
 }
@@ -93,7 +114,27 @@ export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMat
 }
 
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
-  return cached(`traffic:path:${creep.name}`, () => searchPath(creep, target, range, false));
+  const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
+  return cached(`traffic:path:${creep.name}`, () => {
+    const serial = pathSerialCache.get(creep.name);
+    if (serial && serial.targetKey === targetKey && Game.time - serial.builtAt < PATH_SERIAL_TTL) {
+      // Advance past any step the creep has already reached (handles normal
+      // movement and the case where the creep was pushed forward by the engine).
+      let head: RoomPosition | undefined;
+      while (
+        (head = serial.path[0]) !== undefined &&
+        head.x === creep.pos.x &&
+        head.y === creep.pos.y &&
+        head.roomName === creep.room.name
+      ) {
+        serial.path.shift();
+      }
+      if (serial.path.length > 0) return serial.path;
+    }
+    const path = searchPath(creep, target, range, false);
+    pathSerialCache.set(creep.name, { path: [...path], targetKey, builtAt: Game.time });
+    return path;
+  });
 }
 
 function searchPath(
@@ -133,6 +174,10 @@ export function executeMoveAvoidCreeps(
   if (creep.pos.inRangeTo(target, range)) return;
   // Bypass the per-creep tick cache so we don't reuse the path that got us stuck.
   const path = searchPath(creep, target, range, true);
+  // Store the repath result so executeMove commits to it going forward instead
+  // of immediately reverting to the original path on the next tick.
+  const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
+  pathSerialCache.set(creep.name, { path: [...path], targetKey, builtAt: Game.time });
   const nextPos = path[0];
   if (!nextPos) return;
 

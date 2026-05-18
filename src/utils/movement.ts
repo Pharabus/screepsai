@@ -1,4 +1,4 @@
-import { executeMove, executeMoveAvoidCreeps } from './trafficManager';
+import { executeMove, executeMoveAvoidCreeps, invalidateSerialPath } from './trafficManager';
 
 export interface MoveOpts {
   range?: number;
@@ -28,6 +28,9 @@ export function moveTo(
     prev.count++;
     if (prev.count >= STUCK_NATIVE_THRESHOLD) {
       prev.count = 0;
+      // Native moveTo manages its own path internally — drop ours so we don't
+      // fight it on the next tick when control returns to executeMove.
+      invalidateSerialPath(creep.name);
       creep.moveTo(targetPos, { range, reusePath: 0 });
       return;
     }
