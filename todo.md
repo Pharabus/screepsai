@@ -228,6 +228,39 @@ Claiming a second room gives a full autonomous colony. Requires GCL 2 (earned by
 - [ ] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming. `[Phase 3]`
 - [ ] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`. `[Phase 3]`
 
+### Source Keeper room exploitation (RCL 7+)
+
+SK rooms have 3 sources (3000 energy capacity each, same as a reserved source) + 1 mineral with no extraction limit. Triple the yield of a normal remote room, but guarded by permanent NPCs. Source Keepers are not Invaders — they respawn from lairs 300 ticks after death, attack any creep within range 3 of the lair, and cannot be outlasted or dodged.
+
+Infrastructure already in place:
+- Scout records `scoutedHasKeepers` when it finds `STRUCTURE_KEEPER_LAIR` in a room.
+- `evaluateRemoteRoom` permanently rejects keeper rooms from normal remote mining.
+
+#### Phase 1 — Keeper Killer role (RCL 7)
+
+- [ ] **Add `keeperKiller` role** — State machine: `TRAVEL` paths to target room center; `PATROL` cycles between the 3 keeper lair positions, attacking any Source Keeper in range and self-healing each tick; `RETREAT` paths home to recycle when TTL < travel time. Body: `buildKeeperKillerBody`, 3 tiers gated by `energyCapacityAvailable`:
+  - < 5300 energy: not spawned (RCL 7 minimum)
+  - 5300–6999: `[TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]` (~3800 energy) — kills SK in ~18 ticks, minimal self-healing, relies on TOUGH absorbing ranged hits cheaply
+  - ≥ 7000: `[TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]` — more sustainable; drops an SK in ~14 ticks, heals 96/tick
+
+- [ ] **Store lair positions in room memory** — When a keeper killer enters the target room, use `room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_KEEPER_LAIR })` to record lair positions into `RoomMemory.keeperLairPositions` (array of `{x, y}`). Patrol visits them in order, closest-first from current position.
+
+- [ ] **Spawner integration** — Add `keeperKillersNeeded(room)` in `spawner.ts`: returns 1 per SK remote room that has an assigned keeper killer with TTL > travel time. Spawn at Priority 2 (after defenders, before miners) so the room is never mined without killer coverage. Gate on `room.energyCapacityAvailable >= 5300`.
+
+#### Phase 2 — SK room remote mining (RCL 7)
+
+- [ ] **Opt-in SK rooms in remote planner** — Add `allowKeeperRooms` flag to `evaluateRemoteRoom` (default false). When a room `scoutedHasKeepers` AND a keeper killer is assigned and alive, return a score of `sourceCount * 3` (premium for the extra yield). `selectRemoteRooms` opts in when `energyCapacityAvailable >= 5300`.
+
+- [ ] **Defense policy for SK rooms** — Set `defensePolicy: 'flee'` (miners flee on hostile sighting as normal), but do NOT flee from Source Keepers (hostility check is `owner.username === 'Invader'` for creep invaders, Source Keepers owned by `'Source Keeper'`). Miners should ignore Source Keeper entries in the hostile scan — the killer handles them.
+
+- [ ] **Remote miner body for SK rooms** — SK source containers decay at the same rate as reserved sources. Use the existing `buildRemoteMinerBody` with `maxWork: 10` (same as reserved). No CARRY needed in SK rooms (no container self-build required — killer presence means miners can path freely).
+
+- [ ] **Hauler count for SK rooms** — 3 sources × 2 haulers = 6 per room (same formula as reserved). Distance-aware scaling (see Phase 1 economy rebalancing todo) matters more here since SK rooms are typically further away.
+
+#### Phase 3 — Boosted killer (RCL 8)
+
+- [ ] **Boost keeper killer with T3 attack compound** — When `XUH2O` (ultrafast ATTACK boost, ×4 damage) stockpile > 30 doses, boost the keeper killer before dispatch via `lab.boostCreep()`. A 10-ATTACK boosted body (equivalent to 40 unboosted) kills SK in ~4 ticks. Allows a much smaller, cheaper body and reduces risk of being caught between lair spawns. Requires boost dispatch infrastructure (see Stage 3 labs todo).
+
 ### Advanced defense
 
 Current defense: tower focus-fire, safe mode, melee defenders. Sufficient for NPC invaders but not player attacks.

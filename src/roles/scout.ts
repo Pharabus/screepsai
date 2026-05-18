@@ -189,6 +189,11 @@ const states: StateMachineDefinition = {
         const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
         rmem.scoutedHostiles = hostiles.length;
 
+        const keeperLairs = creep.room.find(FIND_STRUCTURES, {
+          filter: (s) => s.structureType === STRUCTURE_KEEPER_LAIR,
+        });
+        rmem.scoutedHasKeepers = keeperLairs.length > 0;
+
         recordLoot(creep.room, rmem);
 
         creep.memory.targetRoom = undefined;

@@ -514,7 +514,10 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       const isReserved = remoteMem?.remoteType === 'reserved';
       const remoteBody = buildRemoteMinerBody(room.energyCapacityAvailable, isReserved ? 10 : 5);
       if (remoteBody.length === 0) continue;
-      const sourceCount = remoteMem?.sources?.length ?? remoteMem?.scoutedSources ?? 0;
+      const scoutedCount =
+        remoteMem?.scoutedSourceData?.length ??
+        (typeof remoteMem?.scoutedSources === 'number' ? remoteMem.scoutedSources : 0);
+      const sourceCount = remoteMem?.sources?.length ?? scoutedCount;
       if (sourceCount === 0) continue;
 
       const existingRemoteMiners = countRemoteMiners(remoteRoom);

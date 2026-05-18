@@ -33,6 +33,9 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   // Reject rooms with no sources
   if ((rmem.scoutedSources ?? 0) === 0) return -1;
 
+  // Reject Source Keeper rooms — keepers are permanent, unkillable without dedicated SK-killers
+  if (rmem.scoutedHasKeepers) return -1;
+
   // Score: more sources = better
   return rmem.scoutedSources ?? 0;
 }
@@ -45,6 +48,11 @@ function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' {
 }
 
 export function selectRemoteRooms(homeRoom: Room): void {
+  // Remote mining only pays off once there's storage to accumulate the energy.
+  // Before that the room's 550-cap spawn/extensions fill quickly and the remote
+  // spawn costs outweigh the gain.
+  if (!homeRoom.storage) return;
+
   const exits = Game.map.describeExits(homeRoom.name);
   if (!exits) return;
 

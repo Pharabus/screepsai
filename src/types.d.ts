@@ -131,6 +131,8 @@ interface RoomMemory {
   scoutedReservation?: string;
   scoutedHostiles?: number;
   scoutedHasController?: boolean;
+  /** True when the room contains Source Keeper Lairs — permanently hostile, never remote-mine */
+  scoutedHasKeepers?: boolean;
   /** Controller position — drives base-layout viability when evaluating a claim */
   scoutedControllerPos?: { x: number; y: number };
   /** Mineral type + position — used to avoid claiming a duplicate mineral and for extractor planning */
