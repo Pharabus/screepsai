@@ -7,6 +7,8 @@ import {
   getRoomCostMatrixAvoidCreeps,
   pathRoomCallback,
   PRIORITY_STATIC,
+  PRIORITY_WORKER,
+  PRIORITY_DEFAULT,
 } from '../../src/utils/trafficManager';
 import { resetTickCache } from '../../src/utils/tickCache';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
@@ -76,7 +78,7 @@ describe('trafficManager', () => {
       expect(matrix.get(20, 20)).toBe(0);
     });
 
-    it('sets regular creeps to cost 15', () => {
+    it('leaves moving creeps at cost 0 (not added to default matrix)', () => {
       const creep = mockCreep({ name: 'worker1', pos: new RoomPosition(10, 10, 'W1N1') });
       const room = mockRoom({
         find: vi.fn((type: number) => {
@@ -86,7 +88,7 @@ describe('trafficManager', () => {
       });
 
       const matrix = getRoomCostMatrix(room);
-      expect(matrix.get(10, 10)).toBe(15);
+      expect(matrix.get(10, 10)).toBe(0);
     });
 
     it('sets stationary creeps to cost 255', () => {
@@ -116,7 +118,9 @@ describe('trafficManager', () => {
       resetTraffic();
       resetTickCache();
       const matrix = getRoomCostMatrix(room);
-      expect(matrix.get(10, 10)).toBe(15);
+      // After reset, creep is no longer stationary — cost falls back to 0 (moving creeps
+      // are not added to the default matrix).
+      expect(matrix.get(10, 10)).toBe(0);
     });
 
     it('sets hostile creeps to cost 255', () => {
@@ -217,8 +221,8 @@ describe('trafficManager', () => {
       getRoomCostMatrixAvoidCreeps(room);
       resetTickCache();
       const normal = getRoomCostMatrix(room);
-      // Normal matrix should reapply at cost 15, not have the leftover 50.
-      expect(normal.get(10, 10)).toBe(15);
+      // Normal matrix does not add moving creeps — cost should be 0, not the leftover 50.
+      expect(normal.get(10, 10)).toBe(0);
     });
   });
 
@@ -297,6 +301,176 @@ describe('trafficManager', () => {
 
       executeMove(creep, new RoomPosition(26, 25, 'W1N1'), 1);
       expect(creep.move).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pushBlocker', () => {
+    it('moves a blocking creep to a free adjacent tile', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'blocker1',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      // Room returns blocker when looked up at the next position, and an open
+      // structure list (so cost matrix has a clear tile for the push direction).
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn((_type: any, _x: number, _y: number) => [blocker]),
+      });
+      blocker.room = room;
+
+      const mover = mockCreep({
+        name: 'miner1',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      // The blocker should have received a move() call to clear the tile.
+      expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not push a stationary creep', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const stationary = mockCreep({
+        name: 'stationaryMiner',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'miner' },
+      });
+      stationary.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [stationary];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [stationary]),
+      });
+      stationary.room = room;
+
+      const mover = mockCreep({
+        name: 'hauler1',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'hauler' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      registerStationary(stationary, PRIORITY_STATIC);
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(stationary.move).not.toHaveBeenCalled();
+    });
+
+    it('does not push a blocker with higher movePriority', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const highPriorityBlocker = mockCreep({
+        name: 'highPriority1',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'miner', movePriority: PRIORITY_WORKER }, // 30 > PRIORITY_DEFAULT (10)
+      });
+      highPriorityBlocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [highPriorityBlocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [highPriorityBlocker]),
+      });
+      highPriorityBlocker.room = room;
+
+      const mover = mockCreep({
+        name: 'lowPriority1',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'hauler', movePriority: PRIORITY_DEFAULT }, // 10
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(highPriorityBlocker.move).not.toHaveBeenCalled();
+    });
+
+    it('only pushes a blocker once per tick', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'blocker2',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [blocker]),
+      });
+      blocker.room = room;
+
+      const moverA = mockCreep({
+        name: 'minerA',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+      const moverB = mockCreep({
+        name: 'minerB',
+        pos: new RoomPosition(25, 26, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      executeMove(moverA, new RoomPosition(30, 25, 'W1N1'), 0);
+      executeMove(moverB, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      // Blocker should only be pushed once even though two mover paths cross it.
+      expect(blocker.move).toHaveBeenCalledTimes(1);
     });
   });
 });

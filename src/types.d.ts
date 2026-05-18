@@ -50,6 +50,8 @@ interface CreepMemory {
   idleSince?: number;
   /** Last tick markIdle was called — detects streak breaks without touching role code */
   _idleLastTick?: number;
+  /** Movement priority used by pushBlocker — higher priority creeps may push lower-priority blockers */
+  movePriority?: number;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data

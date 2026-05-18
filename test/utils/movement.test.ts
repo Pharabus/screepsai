@@ -62,15 +62,16 @@ describe('movement stuck handling', () => {
     expect(creep.moveTo).not.toHaveBeenCalled();
   });
 
-  it('falls back to native moveTo after 3 stuck ticks', () => {
+  it('forces a fresh repath (not native moveTo) after 3 stuck ticks', () => {
     const creep = mockCreep({ name: 'c1', pos: new RoomPosition(10, 10, 'W1N1') });
 
     moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // baseline
     moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // count = 1
-    moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // count = 2 (repath)
-    moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // count = 3 (native)
+    moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // count = 2 → repath
+    moveTo(creep, new RoomPosition(20, 20, 'W1N1')); // count = 3 → forced repath
 
-    expect(creep.moveTo).toHaveBeenCalledTimes(1);
+    expect(executeMoveAvoidCreeps).toHaveBeenCalledTimes(2);
+    expect(creep.moveTo).not.toHaveBeenCalled();
   });
 
   it('resets the stuck counter once the creep moves', () => {

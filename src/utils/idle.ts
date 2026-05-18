@@ -96,13 +96,44 @@ export function markIdle(creep: Creep): void {
     return;
   }
 
-  // Fallback (controller too close to spawn or no spawn yet): park 5 tiles from
-  // storage or spawn — outside the extension cluster.
+  // Fallback (controller too close to spawn or no spawn yet): park away from the
+  // spawn/extension/storage cluster. Prefer a position near the nearest source
+  // container so idle creeps clear spawn-to-source corridors. Fall back to
+  // range 8 from storage or spawn when no source positions are available.
+  const roomMem = Memory.rooms[creep.room.name];
+  const sources = roomMem?.sources;
+  if (sources && sources.length > 0) {
+    // Pick the closest source position and park at range 6 from it.
+    let bestSource: { x: number; y: number } | undefined;
+    let bestDist = Infinity;
+    for (const s of sources) {
+      const dist = Math.max(Math.abs(creep.pos.x - s.x), Math.abs(creep.pos.y - s.y));
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestSource = s;
+      }
+    }
+    if (bestSource) {
+      const [dx, dy] = SPREAD_OFFSETS[nameHash(creep.name) % SPREAD_OFFSETS.length]!;
+      const x = Math.max(2, Math.min(47, bestSource.x + dx));
+      const y = Math.max(2, Math.min(47, bestSource.y + dy));
+      const target = new RoomPosition(x, y, creep.room.name);
+      if (!creep.pos.isEqualTo(target)) {
+        moveTo(creep, target, {
+          range: 6,
+          priority: PRIORITY_DEFAULT,
+          visualizePathStyle: { stroke: '#888888' },
+        });
+      }
+      return;
+    }
+  }
+
   const anchor =
     creep.room.storage ?? (creep.room.find(FIND_MY_SPAWNS) as { pos: RoomPosition }[])[0];
-  if (anchor && !creep.pos.inRangeTo(anchor, 5)) {
+  if (anchor && !creep.pos.inRangeTo(anchor, 8)) {
     moveTo(creep, anchor, {
-      range: 5,
+      range: 8,
       priority: PRIORITY_DEFAULT,
       visualizePathStyle: { stroke: '#888888' },
     });

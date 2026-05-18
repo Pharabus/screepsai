@@ -6,6 +6,10 @@ export const PRIORITY_HAULER = 50;
 export const PRIORITY_WORKER = 30;
 export const PRIORITY_DEFAULT = 10;
 
+// Tracks which blocker creeps have already been nudged this tick so we don't
+// double-push a creep that was already moved.
+const pushedThisTick = new Set<string>();
+
 interface PathVis {
   roomName: string;
   points: RoomPosition[];
@@ -43,6 +47,7 @@ export function registerStationary(creep: Creep, _priority: number): void {
 export function resetTraffic(): void {
   stationaryCreeps.clear();
   vizBuffer = [];
+  pushedThisTick.clear();
 }
 
 export function resolveTraffic(): void {
@@ -57,6 +62,45 @@ export function resolveTraffic(): void {
   }
 }
 
+// Nudge a non-stationary friendly creep off the tile our creep wants to step
+// onto. Only fires once per blocker per tick (pushedThisTick guard). Picks
+// any adjacent tile whose cost matrix value is < 255. Best-effort: if no free
+// neighbour exists the push is silently skipped.
+function pushBlocker(mover: Creep, nextPos: RoomPosition): void {
+  if (nextPos.roomName !== mover.room.name) return;
+  const blockers = mover.room.lookForAt(LOOK_CREEPS, nextPos.x, nextPos.y);
+  for (const blocker of blockers) {
+    if (
+      blocker.name === mover.name ||
+      !blocker.my ||
+      stationaryCreeps.has(blocker.name) ||
+      pushedThisTick.has(blocker.name)
+    )
+      continue;
+    if (
+      (blocker.memory.movePriority ?? PRIORITY_DEFAULT) >
+      (mover.memory.movePriority ?? PRIORITY_DEFAULT)
+    )
+      continue;
+    // Find a free adjacent tile to push the blocker toward.
+    const costs = getRoomCostMatrix(blocker.room);
+    const dirs: DirectionConstant[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    for (const dir of dirs) {
+      const nx = blocker.pos.x + (DX[dir] ?? 0);
+      const ny = blocker.pos.y + (DY[dir] ?? 0);
+      if (nx < 0 || nx > 49 || ny < 0 || ny > 49) continue;
+      if (costs.get(nx, ny) >= 255) continue;
+      blocker.move(dir);
+      pushedThisTick.add(blocker.name);
+      break;
+    }
+  }
+}
+
+// Chebyshev direction offsets indexed by DirectionConstant (1–8).
+const DX: Record<number, number> = { 1: 0, 2: 1, 3: 1, 4: 1, 5: 0, 6: -1, 7: -1, 8: -1 };
+const DY: Record<number, number> = { 1: -1, 2: -1, 3: 0, 4: 1, 5: 1, 6: 1, 7: 0, 8: -1 };
+
 export function executeMove(
   creep: Creep,
   target: RoomPosition,
@@ -69,6 +113,7 @@ export function executeMove(
   const nextPos = path[0];
   if (!nextPos) return;
 
+  pushBlocker(creep, nextPos);
   creep.move(creep.pos.getDirectionTo(nextPos));
 
   if (stroke && path.length > 0) {
@@ -113,46 +158,30 @@ export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMat
   return getRoomCostMatrixAvoidCreeps(room);
 }
 
-// Used for the very first path a freshly-spawned creep computes. Moving
-// friendly creeps cost 0 (treated as open tiles) so a cluster of idle
-// haulers near the spawn doesn't inflate the cost of the optimal corridor
-// and push PathFinder onto a longer detour. Stationary creeps (miners) and
-// hostile creeps still cost 255 — hard obstacles are always respected.
-function pathRoomCallbackFirstPath(roomName: string): boolean | CostMatrix {
-  const room = Game.rooms[roomName];
-  if (!room) {
-    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
-    if (owner && owner !== getMyUsername()) return false;
-    return new PathFinder.CostMatrix();
-  }
-  const costs = getBaseCostMatrix(room).clone();
-  applyCreepOverlay(room, costs, 0);
-  return costs;
-}
-
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
   return cached(`traffic:path:${creep.name}`, () => {
     const serial = pathSerialCache.get(creep.name);
-    if (serial && serial.targetKey === targetKey && Game.time - serial.builtAt < PATH_SERIAL_TTL) {
+    // Invalidate cache when the target has changed.
+    if (serial && serial.targetKey !== targetKey) {
+      pathSerialCache.delete(creep.name);
+    }
+    const fresh = pathSerialCache.get(creep.name);
+    if (fresh && Game.time - fresh.builtAt < PATH_SERIAL_TTL) {
       // Advance past any step the creep has already reached (handles normal
       // movement and the case where the creep was pushed forward by the engine).
       let head: RoomPosition | undefined;
       while (
-        (head = serial.path[0]) !== undefined &&
+        (head = fresh.path[0]) !== undefined &&
         head.x === creep.pos.x &&
         head.y === creep.pos.y &&
         head.roomName === creep.room.name
       ) {
-        serial.path.shift();
+        fresh.path.shift();
       }
-      if (serial.path.length > 0) return serial.path;
+      if (fresh.path.length > 0) return fresh.path;
     }
-    // On the very first path for this creep (no serial entry yet), ignore
-    // moving-friendly-creep cost so idle haulers near spawn don't inflate
-    // the optimal corridor and push PathFinder onto a longer detour.
-    const firstPath = serial === undefined;
-    const path = searchPath(creep, target, range, false, firstPath);
+    const path = searchPath(creep, target, range, false);
     pathSerialCache.set(creep.name, { path: [...path], targetKey, builtAt: Game.time });
     return path;
   });
@@ -163,7 +192,6 @@ function searchPath(
   target: RoomPosition,
   range: number,
   avoidCreeps: boolean,
-  firstPath = false,
 ): RoomPosition[] {
   const crossRoom = creep.pos.roomName !== target.roomName;
   const result = PathFinder.search(
@@ -177,15 +205,10 @@ function searchPath(
       // and a cluttered room (constructedWalls, etc.) can force a multi-room
       // detour. 16 matches the Screeps default and hivemind's choice.
       maxRooms: crossRoom ? 16 : 1,
-      // Cross-room searches need room to breathe; 2000 (the engine default)
-      // is too tight even for a 2-room hop, and tighter caps return partial
-      // paths pointing backward.
-      maxOps: crossRoom ? 10000 : 2000,
-      roomCallback: firstPath
-        ? pathRoomCallbackFirstPath
-        : avoidCreeps
-          ? pathRoomCallbackAvoidCreeps
-          : pathRoomCallback,
+      // Raise in-room ops budget — 2000 is too tight for cluttered rooms and
+      // can produce partial paths that point backward. Cross-room stays at 10000.
+      maxOps: crossRoom ? 10000 : 5000,
+      roomCallback: avoidCreeps ? pathRoomCallbackAvoidCreeps : pathRoomCallback,
     },
   );
   return result.path;
@@ -291,7 +314,11 @@ function applyCreepOverlay(room: Room, costs: CostMatrix, creepCost: number): vo
 export function getRoomCostMatrix(room: Room): CostMatrix {
   return cached('traffic:costs:' + room.name, () => {
     const costs = getBaseCostMatrix(room).clone();
-    applyCreepOverlay(room, costs, 15);
+    // Moving friendly creeps are NOT added to the default matrix — their
+    // soft-avoid cost was inflating corridors near idle hauler clusters and
+    // pushing PathFinder onto longer detours. Stationary creeps (255) and
+    // hostile creeps (255) are still hard obstacles.
+    applyCreepOverlay(room, costs, 0);
     return costs;
   });
 }

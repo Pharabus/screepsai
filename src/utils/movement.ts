@@ -7,12 +7,11 @@ export interface MoveOpts {
 }
 
 // At REPATH the cached path is discarded and PathFinder reruns with friendly
-// creeps at cost 50 (vs the normal 15) so the new path actually routes around
-// the cluster. NATIVE is the last resort: hand off to the engine's own moveTo
-// in case our PathFinder is wrong about traversability (custom CostMatrix bug,
-// stale base matrix, etc.).
+// creeps at cost 50 so the new path actually routes around the cluster.
+// A second forced repath replaces the old native-moveTo fallback — keeping all
+// movement inside our traffic system and avoiding the engine's inferior pathfinder.
 const STUCK_REPATH_THRESHOLD = 2;
-const STUCK_NATIVE_THRESHOLD = 3;
+const STUCK_FORCE_THRESHOLD = 3;
 const stuckTicks = new Map<string, { x: number; y: number; count: number }>();
 
 export function moveTo(
@@ -26,12 +25,12 @@ export function moveTo(
   const prev = stuckTicks.get(creep.name);
   if (prev && prev.x === creep.pos.x && prev.y === creep.pos.y) {
     prev.count++;
-    if (prev.count >= STUCK_NATIVE_THRESHOLD) {
+    if (prev.count >= STUCK_FORCE_THRESHOLD) {
+      // Force a fresh repath with elevated creep cost and reset the counter so
+      // we keep retrying every STUCK_FORCE_THRESHOLD ticks until unstuck.
       prev.count = 0;
-      // Native moveTo manages its own path internally — drop ours so we don't
-      // fight it on the next tick when control returns to executeMove.
       invalidateSerialPath(creep.name);
-      creep.moveTo(targetPos, { range, reusePath: 0 });
+      executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke);
       return;
     }
     if (prev.count >= STUCK_REPATH_THRESHOLD) {

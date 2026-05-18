@@ -25,6 +25,7 @@
 (globalThis as any).FIND_TOMBSTONES = 118;
 
 // Look constants
+(globalThis as any).LOOK_CREEPS = 'creep';
 (globalThis as any).LOOK_STRUCTURES = 'structure';
 (globalThis as any).LOOK_CONSTRUCTION_SITES = 'constructionSite';
 
@@ -252,6 +253,7 @@ export function mockRoom(overrides: Record<string, any> = {}): any {
     energyCapacityAvailable: overrides.energyCapacityAvailable ?? 300,
     storage: overrides.storage ?? undefined,
     find: overrides.find ?? vi.fn(() => []),
+    lookForAt: overrides.lookForAt ?? vi.fn(() => []),
     ...overrides,
   };
 }
