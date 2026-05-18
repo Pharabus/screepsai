@@ -185,12 +185,12 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(2);
     });
 
-    it('treats missing storage as 0 (cap stays at 1)', () => {
+    it('treats empty storage as 0 energy (cap stays at 1)', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
       Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 2 } as any;
 
-      const room = mockRoom({ name: 'W1N1' }); // no storage
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -240,7 +240,7 @@ describe('remotePlanner', () => {
         scoutedHasController: true,
       } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 
@@ -255,7 +255,7 @@ describe('remotePlanner', () => {
         scoutedHasController: false,
       } as any;
 
-      const room = mockRoom({ name: 'W1N1' });
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(0) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
 

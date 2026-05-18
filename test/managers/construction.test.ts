@@ -14,6 +14,7 @@ import {
   placeLabs,
   placeRemoteRoads,
   placeColonyBootstrapRoads,
+  clearLabBlockers,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -462,5 +463,68 @@ describe('placeColonyBootstrapRoads', () => {
     const result = placeColonyBootstrapRoads(room);
     expect(result).toBe(true);
     expect(room.createConstructionSite).toHaveBeenCalledWith(26, 25, STRUCTURE_ROAD);
+  });
+});
+
+describe('clearLabBlockers', () => {
+  beforeEach(() => resetGameGlobals());
+
+  function labRoom(rcl: number, labPositions: { x: number; y: number }[]): any {
+    const room = roomAt(rcl);
+    Memory.rooms = { W1N1: { layoutPlan: { labPositions } } as any };
+    return room;
+  }
+
+  it('does nothing below RCL 6', () => {
+    const room = labRoom(5, [{ x: 10, y: 10 }]);
+    room.lookForAt = vi.fn().mockReturnValue([]);
+    clearLabBlockers(room);
+    expect(room.lookForAt).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when no layout plan exists', () => {
+    const room = roomAt(6);
+    Memory.rooms = { W1N1: {} };
+    room.lookForAt = vi.fn().mockReturnValue([]);
+    clearLabBlockers(room);
+    expect(room.lookForAt).not.toHaveBeenCalled();
+  });
+
+  it('destroys an extension blocking a planned lab position', () => {
+    const room = labRoom(6, [{ x: 10, y: 10 }]);
+    const blocker = { structureType: STRUCTURE_EXTENSION, destroy: vi.fn() };
+    room.lookForAt = vi.fn((type: string) => (type === LOOK_STRUCTURES ? [blocker] : []));
+    clearLabBlockers(room);
+    expect(blocker.destroy).toHaveBeenCalled();
+  });
+
+  it('cancels an extension construction site blocking a planned lab position', () => {
+    const room = labRoom(6, [{ x: 10, y: 10 }]);
+    const site = { structureType: STRUCTURE_EXTENSION, remove: vi.fn() };
+    room.lookForAt = vi.fn((type: string) => (type === LOOK_STRUCTURES ? [] : [site]));
+    clearLabBlockers(room);
+    expect(site.remove).toHaveBeenCalled();
+  });
+
+  it('does nothing when lab positions are clear', () => {
+    const room = labRoom(6, [{ x: 10, y: 10 }]);
+    room.lookForAt = vi.fn().mockReturnValue([]);
+    clearLabBlockers(room);
+    expect(room.lookForAt).toHaveBeenCalled();
+  });
+
+  it('only demolishes one blocker per call', () => {
+    const room = labRoom(6, [
+      { x: 10, y: 10 },
+      { x: 11, y: 10 },
+    ]);
+    const blocker1 = { structureType: STRUCTURE_EXTENSION, destroy: vi.fn() };
+    const blocker2 = { structureType: STRUCTURE_EXTENSION, destroy: vi.fn() };
+    room.lookForAt = vi.fn((type: string, x: number) =>
+      type === LOOK_STRUCTURES ? (x === 10 ? [blocker1] : [blocker2]) : [],
+    );
+    clearLabBlockers(room);
+    expect(blocker1.destroy).toHaveBeenCalledTimes(1);
+    expect(blocker2.destroy).not.toHaveBeenCalled();
   });
 });

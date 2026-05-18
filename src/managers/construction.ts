@@ -467,6 +467,29 @@ export function placeLinks(room: Room): void {
   }
 }
 
+export function clearLabBlockers(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return;
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  if (!plan) return;
+  for (const { x, y } of plan.labPositions) {
+    const blocker = room
+      .lookForAt(LOOK_STRUCTURES, x, y)
+      .find((s) => s.structureType === STRUCTURE_EXTENSION);
+    if (blocker) {
+      blocker.destroy();
+      return;
+    }
+    const site = room
+      .lookForAt(LOOK_CONSTRUCTION_SITES, x, y)
+      .find((s) => s.structureType === STRUCTURE_EXTENSION);
+    if (site) {
+      site.remove();
+      return;
+    }
+  }
+}
+
 export function placeLabs(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_LABS[rcl] ?? 0;
@@ -813,6 +836,7 @@ export function runConstruction(): void {
     placeTerminal(room);
     placeExtractor(room);
     placeMineralContainer(room);
+    clearLabBlockers(room);
     placeLabs(room);
     placeRamparts(room);
   }
