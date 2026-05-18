@@ -70,7 +70,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Extend `CreepRoleName` and memory for energy logistics** — Added `miner` and `hauler` to `CreepRoleName`. Extended `CreepMemory` with `targetId`, `working`. Extended `RoomMemory` with `sources[]` (id, containerId, minerName), `controllerContainerId`, `minerEconomy`. Remaining non-energy roles (`depositMiner`, `powerMiner`, `powerHealer`, `powerHauler`) and fields (`resource`, `home`) deferred to later stages.
 - [x] **Per-role body patterns in spawner** — Spawner now uses role-specific patterns: miner `[WORK×5, MOVE]`, hauler `[CARRY×2, MOVE×2]`, upgrader `[WORK×3, CARRY, MOVE×2]`, builder `[WORK×2, CARRY, MOVE×2]` in miner economy. Bootstrap economy retains `[WORK, CARRY, MOVE]` for all roles. `buildBody` util unchanged; patterns passed per-role via the spawn queue.
 - [x] **RCL-gated construction planner extensions (RCL 5-6)** — Added `placeLinks` (RCL 5+: storage link, source links, controller link at RCL 6), `placeExtractor` + `placeMineralContainer` (RCL 6), `placeTerminal` (RCL 6). Remaining: factory (RCL 7), labs cluster (RCL 6+), power spawn + observer (RCL 8).
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Stage 4 (factory), Stage 6 (power), and Advanced defense / Offensive sections for detailed plans.
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn (RCL 7), Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Stage 4 (2nd spawn, factory), Stage 6 (power), and Advanced defense / Offensive sections for detailed plans.
 - [x] **Room memory & planning layer** — `src/utils/roomPlanner.ts` caches source IDs, container assignments, miner assignments, and controller container ID into `RoomMemory`. `ensureRoomPlan(room)` validates each tick (cheap after first scan). Auto-detects miner economy transition when first source container is built.
 
 ##### Stage 1 — Storage + hauler logistics (RCL 4)
@@ -109,6 +109,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 ##### Stage 4 — Commodity production (RCL 7)
 
+- [ ] **Place 2nd spawn** — `construction.ts` at RCL ≥ 7. Pick a position from `layoutPlan` (needs a `spawnPositions` entry — add to `computeLayout` and `LayoutPlan`). Register the new spawn ID in `RoomMemory` so `runSpawner` uses both. Spawner already iterates `Object.values(Game.spawns)` so spawn discovery is free; the main work is placement and avoiding collisions with extensions/labs in the plan.
 - [ ] **Place Factory** — Construction manager at RCL ≥ 7. Placed adjacent to storage + terminal.
 - [ ] **Add `factoryManager`** — `src/managers/factory.ts`. Pick a target commodity from a configurable list, check inputs in storage/terminal, haul in via hauler, run `factory.produce`, push outputs back. Level the factory (0–5) based on inputs we can sustain.
 

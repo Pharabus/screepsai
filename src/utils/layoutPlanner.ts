@@ -256,12 +256,13 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     extensionPositions.push({ x, y });
   }
 
-  // Overflow positions if stamp was insufficient (reserved positions ate slots)
-  if (extensionPositions.length < 60) {
+  // Overflow positions to fill up to RCL 7 max (70). Runs even when the stamp
+  // gave all 60 positions — the extra 10 land at Chebyshev distance 5+ from spawn.
+  if (extensionPositions.length < 70) {
     const inPlan = new Set(extensionPositions.map((p) => `${p.x},${p.y}`));
-    for (let r = 5; r <= 9 && extensionPositions.length < 60; r++) {
-      for (let dx = -r; dx <= r && extensionPositions.length < 60; dx++) {
-        for (let dy = -r; dy <= r && extensionPositions.length < 60; dy++) {
+    for (let r = 5; r <= 9 && extensionPositions.length < 70; r++) {
+      for (let dx = -r; dx <= r && extensionPositions.length < 70; dx++) {
+        for (let dy = -r; dy <= r && extensionPositions.length < 70; dy++) {
           if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
           const x = spawn.pos.x + dx;
           const y = spawn.pos.y + dy;

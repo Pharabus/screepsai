@@ -1,7 +1,9 @@
 import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
 import { getBaseCostMatrixForRoom } from '../utils/trafficManager';
 
-// Max extensions per RCL level (from Screeps docs)
+// Max extensions per RCL level (from Screeps docs).
+// At RCL 7+ extension energy capacity increases (100 at RCL 7, 200 at RCL 8),
+// so total spawning energy rises sharply even without new slots.
 const MAX_EXTENSIONS: Record<number, number> = {
   0: 0,
   1: 0,
@@ -9,9 +11,9 @@ const MAX_EXTENSIONS: Record<number, number> = {
   3: 10,
   4: 20,
   5: 30,
-  6: 40,
-  7: 50,
-  8: 60,
+  6: 60,
+  7: 70,
+  8: 70,
 };
 
 const MAX_TOWERS: Record<number, number> = {
