@@ -254,10 +254,9 @@ function mineralMinersNeeded(room: Room): number {
       filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
     }).length > 0;
   if (!hasExtractor) return 0;
-  // Don't mine minerals until energy reserves are healthy and labs are running
+  // Don't mine minerals until energy reserves are healthy
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  const mem = Memory.rooms[room.name];
-  if (stored < 100_000 || !mem?.activeReaction) return 0;
+  if (stored < 100_000) return 0;
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
