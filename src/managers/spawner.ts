@@ -421,13 +421,17 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       minCount: haulersNeeded(room),
     });
     // Scale upgrader body to storage reserves: 5W below 15k, 10W below 50k, full above.
+    // Cap at energyCapacityAvailable so the body never exceeds what the room can afford
+    // (e.g. RCL 1 after a downgrade has 300 cap, below the 600 floor tier).
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-    const upgraderEnergyCap =
+    const upgraderEnergyCap = Math.min(
       storedEnergy < 15_000
         ? 600 // 5 WORK
         : storedEnergy < 50_000
           ? 1100 // 10 WORK
-          : room.energyCapacityAvailable;
+          : room.energyCapacityAvailable,
+      room.energyCapacityAvailable,
+    );
     queue.push({
       role: 'upgrader',
       body: buildUpgraderBody(upgraderEnergyCap),
