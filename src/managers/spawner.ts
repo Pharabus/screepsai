@@ -122,6 +122,24 @@ export function remoteBuilderNeeded(remoteRoom: string): boolean {
 }
 
 /**
+ * True when at least one local miner (no targetRoom) is in HARVEST state.
+ * A miner in POSITION (travelling to container) produces no energy; the spawn
+ * cannot fill up waiting for it, so callers treat this the same as "no producer".
+ */
+function hasActiveLocalMiner(room: Room): boolean {
+  for (const c of Object.values(Game.creeps)) {
+    if (
+      c.memory.role === 'miner' &&
+      c.memory.homeRoom === room.name &&
+      !c.memory.targetRoom &&
+      c.memory.state === 'HARVEST'
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
  * Count how many sources in a room have containers and still need a miner.
  */
 export function minersNeeded(room: Room): number {
@@ -387,13 +405,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     }
     // Emergency bootstrap harvester: queued before hauler so the first creep
     // spawned during recovery has WORK parts and can actually harvest from
-    // sources. A hauler alone cannot generate energy. In normal operation
-    // minersNeeded()=0 so minCount=0 and this entry is skipped immediately.
+    // sources. A hauler alone cannot generate energy. Fires when a source
+    // lacks a miner OR when no local miner is actively harvesting (e.g. the
+    // only miner is still travelling to its container and the spawn is stuck
+    // below capacity with nothing filling it).
     queue.push({
       role: 'harvester',
       pattern: [WORK, CARRY, MOVE],
       maxRepeats: 4,
-      minCount: minersNeeded(room) > 0 ? 1 : 0,
+      minCount: minersNeeded(room) > 0 || !hasActiveLocalMiner(room) ? 1 : 0,
     });
     queue.push({
       role: 'hauler',
@@ -627,13 +647,19 @@ export function runSpawner(): void {
 
     const queue = buildSpawnQueue(room);
 
-    // Emergency recovery: if no energy distributors are alive, extensions can't be
-    // filled so energyAvailable stays at spawn-only levels. Build bodies from
-    // energyAvailable instead of capacity to break the deadlock. Applies to both
-    // miner economy (no haulers/harvesters) and bootstrap (no harvesters).
+    // Emergency recovery: build bodies from energyAvailable instead of capacity
+    // when the spawn cannot accumulate to capacity on its own.
+    // Case 1 — no distributors: haulers/harvesters fill extensions; without them
+    //   energyAvailable is permanently capped at spawn-only levels.
+    // Case 2 — no active producer: haulers exist but nothing is harvesting (e.g.
+    //   the only miner is still travelling to its container), so the spawn itself
+    //   will never fill. Harvesters count as both distributor and producer; a miner
+    //   in POSITION state counts as neither.
     const hasDistributor =
       countCreepsByRole('hauler', room.name) > 0 || countCreepsByRole('harvester', room.name) > 0;
-    const emergency = !hasDistributor;
+    const hasActiveProducer =
+      countCreepsByRole('harvester', room.name) > 0 || hasActiveLocalMiner(room);
+    const emergency = !hasDistributor || !hasActiveProducer;
 
     for (const request of queue) {
       if (countCreepsByRole(request.role, room.name) >= request.minCount) continue;

@@ -196,7 +196,7 @@ describe('buildSpawnQueue', () => {
     expect(harvester?.minCount).toBe(2);
   });
 
-  it('miner economy retires harvester when all miners are alive', () => {
+  it('miner economy retires harvester when all miners are alive and harvesting', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
@@ -205,13 +205,37 @@ describe('buildSpawnQueue', () => {
         ],
       },
     };
-    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+    // Miner must be in HARVEST state — a miner in POSITION (transit) still
+    // produces no energy and should leave the emergency harvester active.
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner', homeRoom: 'W1N1', state: 'HARVEST' } },
+    };
 
     const room = mockRoom({ name: 'W1N1' });
     const queue = buildSpawnQueue(room);
     const harvester = queue.find((r) => r.role === 'harvester');
 
     expect(harvester?.minCount).toBe(0);
+  });
+
+  it('miner economy keeps emergency harvester when miner is in transit (POSITION state)', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner', homeRoom: 'W1N1', state: 'POSITION' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    expect(harvester?.minCount).toBe(1);
   });
 
   it('miner economy keeps emergency harvester when a source lacks a miner', () => {
