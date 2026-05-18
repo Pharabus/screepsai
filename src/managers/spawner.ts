@@ -385,19 +385,21 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         minCount: miners + countCreepsByRole('miner', room.name),
       });
     }
-    queue.push({
-      role: 'hauler',
-      pattern: [CARRY, CARRY, MOVE, MOVE],
-      maxRepeats: 8,
-      minCount: haulersNeeded(room),
-    });
-    // Emergency bootstrap harvester: only needed while at least one source lacks a miner.
-    // Retires automatically once all container sources are covered.
+    // Emergency bootstrap harvester: queued before hauler so the first creep
+    // spawned during recovery has WORK parts and can actually harvest from
+    // sources. A hauler alone cannot generate energy. In normal operation
+    // minersNeeded()=0 so minCount=0 and this entry is skipped immediately.
     queue.push({
       role: 'harvester',
       pattern: [WORK, CARRY, MOVE],
       maxRepeats: 4,
       minCount: minersNeeded(room) > 0 ? 1 : 0,
+    });
+    queue.push({
+      role: 'hauler',
+      pattern: [CARRY, CARRY, MOVE, MOVE],
+      maxRepeats: 8,
+      minCount: haulersNeeded(room),
     });
     // Scale upgrader body to storage reserves: 5W below 15k, 10W below 50k, full above.
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
@@ -655,6 +657,10 @@ export function runSpawner(): void {
         console.log(`Spawning ${request.role} (${body.length} parts): ${name}`);
         break; // one spawn per room per tick
       } else if (result === ERR_NOT_ENOUGH_ENERGY) {
+        // In emergency mode extensions can't be filled (no distributors), so
+        // energyAvailable is permanently capped at spawn-only levels. Skip to
+        // the next (cheaper) request instead of waiting forever.
+        if (emergency) continue;
         break;
       } else {
         console.log(`Spawn error for ${request.role}: ${result}`);
