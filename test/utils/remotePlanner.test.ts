@@ -335,4 +335,186 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(1);
     });
   });
+
+  describe('remoteDistance caching', () => {
+    it('populates remoteDistance and remoteDistanceUpdated after selectRemoteRooms', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        scoutedSourceData: [{ id: 'src1' as any, x: 20, y: 30 }],
+      } as any;
+
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(0),
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [mockSpawn];
+          return [];
+        }),
+      });
+      Memory.rooms['W1N1'] = {};
+
+      const origSearch = (globalThis as any).PathFinder.search;
+      (globalThis as any).PathFinder.search = vi.fn(() => ({
+        path: Array(30).fill({}),
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      }));
+
+      selectRemoteRooms(room);
+      (globalThis as any).PathFinder.search = origSearch;
+
+      // roundTripTicks = 30 × 4 = 120
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(120);
+      expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W2N1']).toBe(Game.time);
+    });
+
+    it('does not recompute a fresh entry (remoteDistanceUpdated within 5000 ticks)', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(0),
+        find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
+      });
+      // updatedAt = Game.time (1) → delta = 0 → not stale
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 999 },
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+
+      const searchSpy = vi.fn(() => ({
+        path: Array(30).fill({}),
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      }));
+      const origSearch = (globalThis as any).PathFinder.search;
+      (globalThis as any).PathFinder.search = searchSpy;
+
+      selectRemoteRooms(room);
+      (globalThis as any).PathFinder.search = origSearch;
+
+      expect(searchSpy).not.toHaveBeenCalled();
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(999);
+    });
+
+    it('recomputes when entry is stale (>5000 ticks since last update)', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(0),
+        find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
+      });
+      // updatedAt = 0, Game.time = 5002 → delta = 5002 > 5000 → stale
+      (Game as any).time = 5002;
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 999 },
+        remoteDistanceUpdated: { W2N1: 0 },
+      } as any;
+
+      const searchSpy = vi.fn(() => ({
+        path: Array(25).fill({}),
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      }));
+      const origSearch = (globalThis as any).PathFinder.search;
+      (globalThis as any).PathFinder.search = searchSpy;
+
+      selectRemoteRooms(room);
+      (globalThis as any).PathFinder.search = origSearch;
+
+      expect(searchSpy).toHaveBeenCalled();
+      // 25 × 4 = 100, old value 999 replaced
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(100);
+      expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W2N1']).toBe(5002);
+    });
+
+    it('evicts remoteDistance and remoteDistanceUpdated for deselected rooms', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(100_000),
+        find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
+      });
+      // Both fresh so no recomputation
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 200, W1N2: 160 },
+        remoteDistanceUpdated: { W2N1: (Game as any).time, W1N2: (Game as any).time },
+      } as any;
+
+      // Drop storage so only W2N1 (score 2) is selected
+      (room.storage as any).store.getUsedCapacity = () => 50_000;
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(200);
+      expect(Memory.rooms['W1N1'].remoteDistance!['W1N2']).toBeUndefined();
+      expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W1N2']).toBeUndefined();
+    });
+
+    it('uses center position (25,25) when no scoutedSourceData is available', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any; // no scoutedSourceData
+
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(0),
+        find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
+      });
+      Memory.rooms['W1N1'] = {};
+
+      const searchSpy = vi.fn(() => ({
+        path: Array(20).fill({}),
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      }));
+      const origSearch = (globalThis as any).PathFinder.search;
+      (globalThis as any).PathFinder.search = searchSpy;
+
+      selectRemoteRooms(room);
+
+      (globalThis as any).PathFinder.search = origSearch;
+
+      expect(searchSpy).toHaveBeenCalled();
+      // The goal pos should be (25,25) in W2N1
+      const callArgs = searchSpy.mock.calls[0];
+      expect(callArgs[1].pos.x).toBe(25);
+      expect(callArgs[1].pos.y).toBe(25);
+      expect(callArgs[1].pos.roomName).toBe('W2N1');
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(80); // 20 × 4
+    });
+
+    it('skips distance computation when no spawn is present', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(0),
+        find: vi.fn(() => []), // no spawns
+      });
+      Memory.rooms['W1N1'] = {};
+
+      selectRemoteRooms(room);
+
+      // remoteDistance should be initialised but empty (no spawn = no PathFinder call)
+      expect(Memory.rooms['W1N1'].remoteDistance).toBeDefined();
+      expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBeUndefined();
+    });
+  });
 });

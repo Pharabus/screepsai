@@ -118,6 +118,10 @@ interface RoomMemory {
   remoteRoadsComplete?: boolean;
   // Remote mining
   remoteRooms?: string[];
+  /** Cached round-trip travel ticks (path × 2 × fatigue) keyed by remote room name */
+  remoteDistance?: Record<string, number>;
+  /** Tick when each remoteDistance entry was last computed (for staleness checks) */
+  remoteDistanceUpdated?: Record<string, number>;
   remoteType?: 'remote' | 'reserved' | 'claimed';
   defensePolicy?: 'flee' | 'defend' | 'abandon';
   // Scout data (populated by scouts visiting unowned rooms)

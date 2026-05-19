@@ -88,4 +88,42 @@ export function selectRemoteRooms(homeRoom: Room): void {
       rmem.defensePolicy = rmem.remoteType === 'reserved' ? 'defend' : 'flee';
     }
   }
+
+  // Cache round-trip distance for each selected remote room.
+  // roundTripTicks = pathLength × 2 (round trip) × 2 (conservative: no roads yet)
+  // Recomputed on first selection or when >5000 ticks stale.
+  if (!mem.remoteDistance) mem.remoteDistance = {};
+  if (!mem.remoteDistanceUpdated) mem.remoteDistanceUpdated = {};
+  // Evict entries for rooms that are no longer selected
+  for (const key of Object.keys(mem.remoteDistance)) {
+    if (!mem.remoteRooms.includes(key)) {
+      delete mem.remoteDistance[key];
+      delete mem.remoteDistanceUpdated[key];
+    }
+  }
+  const homeSpawn = homeRoom.find(FIND_MY_SPAWNS)[0] as StructureSpawn | undefined;
+  if (homeSpawn) {
+    for (const { name } of selected) {
+      const updatedAt = mem.remoteDistanceUpdated[name];
+      const isStale = updatedAt === undefined || Game.time - updatedAt > 5000;
+      if (!isStale) continue;
+      const remoteMem = Memory.rooms[name];
+      const sources = remoteMem?.scoutedSourceData;
+      let targetPos: RoomPosition;
+      if (sources && sources.length > 0) {
+        const avgX = Math.floor(sources.reduce((s, p) => s + p.x, 0) / sources.length);
+        const avgY = Math.floor(sources.reduce((s, p) => s + p.y, 0) / sources.length);
+        targetPos = new RoomPosition(avgX, avgY, name);
+      } else {
+        targetPos = new RoomPosition(25, 25, name);
+      }
+      const result = PathFinder.search(
+        homeSpawn.pos,
+        { pos: targetPos, range: 1 },
+        { maxRooms: 3, maxOps: 2000 },
+      );
+      mem.remoteDistance[name] = result.path.length * 4;
+      mem.remoteDistanceUpdated[name] = Game.time;
+    }
+  }
 }

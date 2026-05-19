@@ -7,6 +7,7 @@ import {
   repairersNeeded,
   remoteBuilderNeeded,
   defenderComposition,
+  remoteHaulersWanted,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -1008,5 +1009,64 @@ describe('huntersNeeded', () => {
     const hunterEntry = queue.find((r) => r.role === 'hunter');
     expect(hunterEntry).toBeDefined();
     expect(hunterEntry?.memory?.targetRoom).toBe('W2N1');
+  });
+});
+
+describe('remoteHaulersWanted', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('falls back to flat formula (3 per source) when remoteDistance is missing for reserved', () => {
+    (Memory as any).rooms = { W1N1: {} };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
+  });
+
+  it('falls back to flat formula (2 per source) when remoteDistance is missing for non-reserved', () => {
+    (Memory as any).rooms = { W1N1: {} };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
+  });
+
+  it('preserves lower bound (3) for short distance (~30 tiles) reserved room', () => {
+    // roundTripTicks = 30 tiles × 4 = 120
+    // haulerBody at 2300e: [CARRY×2, MOVE×2] × 8 = 16 CARRY → 800 carry capacity
+    // ceil(120 × 10 / 800) = ceil(1.5) = 2; Math.max(3, 2) = 3 (lower bound wins)
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
+  });
+
+  it('scales above lower bound for long distance (~70 tiles) reserved room', () => {
+    // roundTripTicks = 70 tiles × 4 = 280
+    // haulerBody at 2300e: 16 CARRY → 800 carry capacity
+    // ceil(280 × 10 / 800) = ceil(3.5) = 4; Math.max(3, 4) = 4
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBeGreaterThanOrEqual(4);
+  });
+
+  it('scales with sourceCount (2 sources at long distance)', () => {
+    // haulersPerSource = 4 (Math.max(3, ceil(3.5))), × 2 sources = 8
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 2, true)).toBe(8);
+  });
+
+  it('uses lower sourceRate and preserves lower bound for non-reserved room', () => {
+    // roundTripTicks = 200, sourceRate = 5, carryCapacity = 800
+    // ceil(200 × 5 / 800) = ceil(1.25) = 2; Math.max(2, 2) = 2
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 200 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
+  });
+
+  it('never returns below flat lower bound even for trivially short distance', () => {
+    // roundTripTicks = 4 → ceil(4 × 5 / 800) = 1; Math.max(2, 1) = 2
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 4 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
   });
 });

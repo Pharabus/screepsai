@@ -302,6 +302,38 @@ export function defenderComposition(room: Room): DefenderComposition {
   return { melee, ranged, healer };
 }
 
+/**
+ * How many remoteHaulers are needed for a single remote room.
+ * Uses cached round-trip distance (ticks) to scale beyond the flat baseline.
+ * Falls back to the flat formula when distance has not been cached yet.
+ *
+ * Formula: Math.max(flat, ceil(roundTripTicks × sourceRate / carryCapacity)) × sourceCount
+ *   flat         : existing lower bound (3 reserved, 2 unreserved) — never regress
+ *   sourceRate   : energy/tick per source (10 reserved, 5 unreserved)
+ *   carryCapacity: total CARRY from the actual hauler body built for this room
+ */
+export function remoteHaulersWanted(
+  room: Room,
+  remoteRoom: string,
+  sourceCount: number,
+  isReserved: boolean,
+): number {
+  const flatPerSource = isReserved ? 3 : 2;
+  const roundTripTicks = Memory.rooms[room.name]?.remoteDistance?.[remoteRoom];
+  if (roundTripTicks === undefined) {
+    return sourceCount * flatPerSource; // flat fallback — distance not cached yet
+  }
+  const sourceRate = isReserved ? 10 : 5;
+  const haulerBody = buildBody([CARRY, CARRY, MOVE, MOVE], room.energyCapacityAvailable, 8);
+  const carryCapacity = haulerBody.filter((p) => p === CARRY).length * 50;
+  if (carryCapacity === 0) return sourceCount * flatPerSource;
+  const haulersPerSource = Math.max(
+    flatPerSource,
+    Math.ceil((roundTripTicks * sourceRate) / carryCapacity),
+  );
+  return haulersPerSource * sourceCount;
+}
+
 /** Ticks after last Invader sighting before the target room is considered clear. */
 const INVADER_MEMORY_TICKS = 500;
 
@@ -560,10 +592,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      // Reserved rooms run 10-WORK miners (20 e/t) and are typically further away;
-      // 3 haulers per source saturates throughput for ~100-tick round trips.
-      // Plain remotes stay at 2 (shorter range, lower yield).
-      const haulersWanted = sourceCount * (isReserved ? 3 : 2);
+      const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isReserved);
       if (existingRemoteHaulers < haulersWanted) {
         queue.push({
           role: 'remoteHauler',
