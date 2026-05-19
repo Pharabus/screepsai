@@ -54,14 +54,23 @@ const states: StateMachineDefinition = {
           });
         }
       } else {
-        const controller = creep.room.controller;
-        if (controller) {
-          if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-            moveTo(creep, controller, {
-              range: 3,
-              priority: PRIORITY_WORKER,
-              visualizePathStyle: { stroke: '#3333ff' },
-            });
+        const homeRoomName = creep.memory.homeRoom ?? creep.room.name;
+        if (creep.room.name !== homeRoomName) {
+          // No sites in this room and it's not home — return rather than upgrading a foreign controller
+          moveTo(creep, new RoomPosition(25, 25, homeRoomName), {
+            range: 20,
+            priority: PRIORITY_WORKER,
+          });
+        } else {
+          const controller = creep.room.controller;
+          if (controller) {
+            if (creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
+              moveTo(creep, controller, {
+                range: 3,
+                priority: PRIORITY_WORKER,
+                visualizePathStyle: { stroke: '#3333ff' },
+              });
+            }
           }
         }
       }

@@ -158,6 +158,46 @@ export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMat
   return getRoomCostMatrixAvoidCreeps(room);
 }
 
+// Sets all passable border tiles (exit tiles) to 255 in the given matrix.
+// Used by in-room path searches so PathFinder never routes a creep onto an exit
+// tile as a stopping point — the Screeps engine auto-evicts creeps that end a
+// tick on a border exit tile to the adjacent room.
+function blockExitTiles(costs: CostMatrix, room: Room): void {
+  const terrain = room.getTerrain();
+  for (let i = 0; i <= 49; i++) {
+    if (terrain.get(0, i) !== TERRAIN_MASK_WALL) costs.set(0, i, 255);
+    if (terrain.get(49, i) !== TERRAIN_MASK_WALL) costs.set(49, i, 255);
+    if (terrain.get(i, 0) !== TERRAIN_MASK_WALL) costs.set(i, 0, 255);
+    if (terrain.get(i, 49) !== TERRAIN_MASK_WALL) costs.set(i, 49, 255);
+  }
+}
+
+// In-room callback: like pathRoomCallback but with exit tiles blocked.
+function pathRoomCallbackNoExits(roomName: string): boolean | CostMatrix {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+    if (owner && owner !== getMyUsername()) return false;
+    return new PathFinder.CostMatrix();
+  }
+  const costs = getRoomCostMatrix(room).clone();
+  blockExitTiles(costs, room);
+  return costs;
+}
+
+// In-room callback: like pathRoomCallbackAvoidCreeps but with exit tiles blocked.
+function pathRoomCallbackAvoidCreepsNoExits(roomName: string): boolean | CostMatrix {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+    if (owner && owner !== getMyUsername()) return false;
+    return new PathFinder.CostMatrix();
+  }
+  const costs = getRoomCostMatrixAvoidCreeps(room);
+  blockExitTiles(costs, room);
+  return costs;
+}
+
 function getPath(creep: Creep, target: RoomPosition, range: number): RoomPosition[] {
   const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
   return cached(`traffic:path:${creep.name}`, () => {
@@ -208,7 +248,16 @@ function searchPath(
       // Raise in-room ops budget — 2000 is too tight for cluttered rooms and
       // can produce partial paths that point backward. Cross-room stays at 10000.
       maxOps: crossRoom ? 10000 : 5000,
-      roomCallback: avoidCreeps ? pathRoomCallbackAvoidCreeps : pathRoomCallback,
+      // For in-room paths, block exit tiles so PathFinder never picks a border
+      // exit tile as a stopping point (which would trigger Screeps auto-eviction).
+      // Cross-room paths must use exit tiles so they keep the normal callback.
+      roomCallback: crossRoom
+        ? avoidCreeps
+          ? pathRoomCallbackAvoidCreeps
+          : pathRoomCallback
+        : avoidCreeps
+          ? pathRoomCallbackAvoidCreepsNoExits
+          : pathRoomCallbackNoExits,
     },
   );
   return result.path;
