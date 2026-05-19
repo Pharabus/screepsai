@@ -5,6 +5,7 @@ import {
   executeMove,
   getRoomCostMatrix,
   getRoomCostMatrixAvoidCreeps,
+  getRoomCostMatrixNoExits,
   pathRoomCallback,
   PRIORITY_STATIC,
   PRIORITY_WORKER,
@@ -471,6 +472,110 @@ describe('trafficManager', () => {
 
       // Blocker should only be pushed once even though two mover paths cross it.
       expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getRoomCostMatrixNoExits', () => {
+    // Helper: returns a terrain mock where the given border tiles are passable
+    // (terrain=0) and all other border tiles are walls.
+    function makeTerrain(passableExits: Array<[number, number]>) {
+      return {
+        get(x: number, y: number): number {
+          const onBorder = x === 0 || x === 49 || y === 0 || y === 49;
+          if (!onBorder) return 0; // interior = plain
+          const isExit = passableExits.some(([px, py]) => px === x && py === y);
+          return isExit ? 0 : TERRAIN_MASK_WALL;
+        },
+      };
+    }
+
+    it('sets passable border tiles to 255', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () =>
+          makeTerrain([
+            [0, 10],
+            [0, 15],
+          ]),
+      });
+
+      const matrix = getRoomCostMatrixNoExits(room);
+
+      expect(matrix.get(0, 10)).toBe(255);
+      expect(matrix.get(0, 15)).toBe(255);
+    });
+
+    it('does not modify wall border tiles', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTerrain([]), // all border tiles are walls
+      });
+
+      const matrix = getRoomCostMatrixNoExits(room);
+
+      // Wall tiles were not set by blockExitTiles — they stay at cost 0 in the
+      // CostMatrix (impassable via terrain, not via cost matrix).
+      expect(matrix.get(0, 10)).toBe(0);
+    });
+
+    it('does not modify interior tiles', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTerrain([[0, 10]]),
+      });
+
+      const matrix = getRoomCostMatrixNoExits(room);
+
+      expect(matrix.get(25, 25)).toBe(0);
+      expect(matrix.get(10, 10)).toBe(0);
+    });
+
+    it('preserves interior structure costs alongside exit blocking', () => {
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_STRUCTURES)
+            return [{ structureType: STRUCTURE_ROAD, pos: { x: 10, y: 10 } }];
+          return [];
+        }),
+        getTerrain: () => makeTerrain([[0, 10]]),
+      });
+
+      const matrix = getRoomCostMatrixNoExits(room);
+
+      expect(matrix.get(10, 10)).toBe(1); // road cost preserved
+      expect(matrix.get(0, 10)).toBe(255); // exit blocked
+    });
+
+    it('blocks passable exits on all four walls', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () =>
+          makeTerrain([
+            [0, 10],
+            [49, 10],
+            [10, 0],
+            [10, 49],
+          ]),
+      });
+
+      const matrix = getRoomCostMatrixNoExits(room);
+
+      expect(matrix.get(0, 10)).toBe(255); // left
+      expect(matrix.get(49, 10)).toBe(255); // right
+      expect(matrix.get(10, 0)).toBe(255); // top
+      expect(matrix.get(10, 49)).toBe(255); // bottom
+    });
+
+    it('does not mutate the underlying cached base matrix', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTerrain([[0, 10]]),
+      });
+
+      getRoomCostMatrixNoExits(room);
+      // The tick-cached overlay should not see the exit tile cost.
+      const normal = getRoomCostMatrix(room);
+      expect(normal.get(0, 10)).toBe(0);
     });
   });
 });

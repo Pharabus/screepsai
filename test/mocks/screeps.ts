@@ -181,6 +181,7 @@ class MockCostMatrix {
   }
   inRangeTo(other: any, range: number) {
     const pos = other.pos ?? other;
+    if (pos.roomName && pos.roomName !== this.roomName) return false;
     return Math.abs(this.x - pos.x) <= range && Math.abs(this.y - pos.y) <= range;
   }
   getRangeTo(other: any) {

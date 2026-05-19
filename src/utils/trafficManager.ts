@@ -326,6 +326,13 @@ export function getBaseCostMatrixForRoom(room: Room): CostMatrix {
   return getBaseCostMatrix(room);
 }
 
+// Exported for testing: in-room cost matrix with passable border (exit) tiles blocked.
+export function getRoomCostMatrixNoExits(room: Room): CostMatrix {
+  const costs = getRoomCostMatrix(room).clone();
+  blockExitTiles(costs, room);
+  return costs;
+}
+
 function getBaseCostMatrix(room: Room): CostMatrix {
   // room.find is internally cached by the engine within a tick, so the count
   // probe is cheap on the cache-hit path; on miss we'd be calling find anyway.

@@ -130,4 +130,90 @@ describe('builder', () => {
       expect(creep.dismantle).not.toHaveBeenCalled();
     });
   });
+
+  describe('foreign room handling', () => {
+    it('does not upgrade a foreign controller when stranded in another room', () => {
+      const foreignRoom = mockRoom({
+        name: 'W2N1',
+        controller: { level: 3, my: false },
+        find: vi.fn(() => []),
+      });
+      const creep = mockCreep({
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W2N1'),
+        room: foreignRoom,
+        memory: { role: 'builder', state: 'BUILD', homeRoom: 'W1N1' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+
+      builder.run(creep);
+
+      expect(creep.upgradeController).not.toHaveBeenCalled();
+      expect(creep.build).not.toHaveBeenCalled();
+    });
+
+    it('moves toward homeRoom when in a foreign room with no sites', () => {
+      const foreignRoom = mockRoom({
+        name: 'W2N1',
+        find: vi.fn(() => []),
+      });
+      const creep = mockCreep({
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W2N1'),
+        room: foreignRoom,
+        memory: { role: 'builder', state: 'BUILD', homeRoom: 'W1N1' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+      // PathFinder returns a step so moveTo issues a move() call
+      (globalThis as any).PathFinder.search = () => ({
+        path: [new (globalThis as any).RoomPosition(24, 25, 'W2N1')],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      builder.run(creep);
+
+      expect(creep.move).toHaveBeenCalled();
+      expect(creep.upgradeController).not.toHaveBeenCalled();
+    });
+
+    it('upgrades the home controller when in homeRoom with no sites', () => {
+      const controller = { level: 2, my: true };
+      const homeRoom = mockRoom({
+        name: 'W1N1',
+        controller,
+        find: vi.fn(() => []),
+      });
+      const creep = mockCreep({
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+        room: homeRoom,
+        memory: { role: 'builder', state: 'BUILD', homeRoom: 'W1N1' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+      creep.upgradeController = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      expect(creep.upgradeController).toHaveBeenCalledWith(controller);
+    });
+
+    it('treats creep with no homeRoom set as being home', () => {
+      const controller = { level: 2, my: true };
+      const room = mockRoom({
+        name: 'W1N1',
+        controller,
+        find: vi.fn(() => []),
+      });
+      const creep = mockCreep({
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'builder', state: 'BUILD' }, // no homeRoom field
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+      });
+      creep.upgradeController = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      expect(creep.upgradeController).toHaveBeenCalledWith(controller);
+    });
+  });
 });
