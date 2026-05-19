@@ -70,7 +70,6 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Extend `CreepRoleName` and memory for energy logistics** — Added `miner` and `hauler` to `CreepRoleName`. Extended `CreepMemory` with `targetId`, `working`. Extended `RoomMemory` with `sources[]` (id, containerId, minerName), `controllerContainerId`, `minerEconomy`. Remaining non-energy roles (`depositMiner`, `powerMiner`, `powerHealer`, `powerHauler`) and fields (`resource`, `home`) deferred to later stages.
 - [x] **Per-role body patterns in spawner** — Spawner now uses role-specific patterns: miner `[WORK×5, MOVE]`, hauler `[CARRY×2, MOVE×2]`, upgrader `[WORK×3, CARRY, MOVE×2]`, builder `[WORK×2, CARRY, MOVE×2]` in miner economy. Bootstrap economy retains `[WORK, CARRY, MOVE]` for all roles. `buildBody` util unchanged; patterns passed per-role via the spawn queue.
 - [x] **RCL-gated construction planner extensions (RCL 5-6)** — Added `placeLinks` (RCL 5+: storage link, source links, controller link at RCL 6), `placeExtractor` + `placeMineralContainer` (RCL 6), `placeTerminal` (RCL 6). Remaining: factory (RCL 7), labs cluster (RCL 6+), power spawn + observer (RCL 8).
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn (RCL 7), Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Stage 4 (2nd spawn, factory), Stage 6 (power), and Advanced defense / Offensive sections for detailed plans.
 - [x] **Room memory & planning layer** — `src/utils/roomPlanner.ts` caches source IDs, container assignments, miner assignments, and controller container ID into `RoomMemory`. `ensureRoomPlan(room)` validates each tick (cheap after first scan). Auto-detects miner economy transition when first source container is built.
 
 ##### Stage 1 — Storage + hauler logistics (RCL 4)
@@ -102,29 +101,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 - [x] **Lab manager** — `src/managers/labs.ts` `runLabs()` selects the best viable reaction (most available input materials) from `REACTIONS`, stores as `activeReaction` in `RoomMemory` (re-evaluated every 500 ticks). Runs `outputLab.runReaction(inputLab1, inputLab2)` on all non-input labs each tick. Hauler handles logistics: fills input labs from storage, collects output compounds from output labs, delivers to terminal or storage.
 - [x] **Input lab flushing** — When `activeReaction` changes, `labs.ts` detects stale minerals in input labs and sets `labFlushing` flag. Hauler's `pickupLabFlush()` withdraws wrong minerals before loading new inputs. Flag auto-clears when labs are clean.
 - [x] **Reaction chaining** — `src/utils/reactions.ts` provides `buildReactionChain`, `findNextChainStep`, `chainMissingInputs`, `REACTION_GOALS`. Labs now pick the highest viable step from a priority-ordered goal list (XGHO2→XLHO2→XGH2O→XZHO2 and tier-2 precursors), falling back to greedy if no goal chain is achievable.
-- [ ] **Boost application (stretch)** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders at RCL 8.
-- [ ] **Expand labs 3 → 9 at RCL 7** — Update the lab count gate in `construction.ts` (`MAX_LABS` table entry for RCL 7). With 9 labs we can run multi-step chains (XGHO2, XLHO2) instead of being stuck on tier-1 ZH2O. `[Phase 2]`
-- [ ] **Upgrader boost dispatch wiring** — Wire `lab.boostCreep()` into the upgrader spawn→dispatch flow for XGH2O (+100% upgrade). Skip if compound stockpile < 30 × WORK parts. Requires a "boosting" state on spawned upgraders + lab reservation logic so the chosen lab isn't consumed by reactions while a creep is inbound. `src/roles/upgrader.ts`, `src/managers/labs.ts`. `[Phase 2]`
 - [x] **Investigate `role.scout` CPU spike** — Long-run avg confirmed at 0.54 CPU/tick; the 3.65 reading was a stale EMA artifact from historical spikes. Path result is tick-cached via `cached('traffic:path:${creep.name}')`. No code change needed.
-
-##### Stage 4 — Commodity production (RCL 7)
-
-- [ ] **Place 2nd spawn** — `construction.ts` at RCL ≥ 7. Pick a position from `layoutPlan` (needs a `spawnPositions` entry — add to `computeLayout` and `LayoutPlan`). Register the new spawn ID in `RoomMemory` so `runSpawner` uses both. Spawner already iterates `Object.values(Game.spawns)` so spawn discovery is free; the main work is placement and avoiding collisions with extensions/labs in the plan.
-- [ ] **Place Factory** — Construction manager at RCL ≥ 7. Placed adjacent to storage + terminal.
-- [ ] **Add `factoryManager`** — `src/managers/factory.ts`. Pick a target commodity from a configurable list, check inputs in storage/terminal, haul in via hauler, run `factory.produce`, push outputs back. Level the factory (0–5) based on inputs we can sustain.
-
-##### Stage 5 — Deposit mining (RCL 7+, highway rooms)
-
-- [ ] **Scout highway rooms for deposits** — Use Observer (RCL 8) or scout creeps (1 MOVE) to find `FIND_DEPOSITS`. Track `lastCooldown` per deposit — abandon when cooldown exceeds a threshold (e.g. 100).
-- [ ] **Add `depositMiner` + dedicated hauler** — Deposit miners harvest until cooldown climbs, then return; haulers shuttle the resource back to a home-room terminal. Bodies need enough MOVE to handle remote travel at 1:1 fatigue on roadless terrain.
-- [ ] **Feed deposit output into the factory** — Deposits produce commodity inputs (silicon, biomass, metal, mist). Factory manager consumes them at level-appropriate recipes.
-
-##### Stage 6 — Power mining (RCL 8)
-
-- [ ] **Place Power Spawn** — Construction manager at RCL 8, adjacent to storage (needs energy + power input).
-- [ ] **Scan highway rooms for Power Banks** — Via Observer. Filter by `power >= 2000`, `ticksToDecay >= 3000`, and 2+ free adjacent tiles (banks need multiple attackers).
-- [ ] **Power squad: `powerAttacker` + `powerHealer` + `powerHauler`** — Attacker is pure ATTACK + MOVE; healer sticks on range 1 with HEAL + MOVE; hauler arrives as the bank breaks to scoop the drop and run it home. All three scale bodies to room `energyCapacityAvailable`.
-- [ ] **Power processing loop** — Once power is in storage, feed `powerSpawn.processPower()` (100 energy + 1 power per call, up to 50/tick) to convert into global power level (GPL).
 
 ##### Cross-cutting
 
@@ -177,10 +154,7 @@ Observed in W43N58: spawn area is heavily congested, haulers and remote haulers 
 Energy starvation analysis (May 2026) surfaced structural issues that need a second pass once Tier 1 changes stabilise (monitor for ~5000 ticks after deploy):
 
 - [x] **Remote miner WORK cap for reserved sources** — `spawner.ts` now passes `isReserved ? 10 : 5` to `buildRemoteMinerBody`; reserved sources get 10-WORK miners for full 3000-energy saturation.
-- [ ] **Distance-aware remote hauler count** — `spawner.ts:285` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2. Cache path length in `RoomMemory.remoteDistance`. `[Phase 1]`
 - [x] **Stop spawning idle repairers** — `repairersNeeded` returns 0 when no structure is below 75% HP (excluding walls/ramparts), 1 for minor damage, 2 when 5+ structures are damaged. Fixed in commit `27dc6c3`.
-- [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput). `[Phase 1]`
-- [ ] **Place missing 3rd tower at W43N58** — Only 2/3 RCL 6-allowed towers have been built. Trace the layout slot collision in `layoutPlanner.ts` / `construction.ts` that is preventing the 3rd tower site from being placed. `[Phase 1]`
 - [x] **Bootstrap road for W44N57** — `placeColonyBootstrapRoads()` added to `construction.ts`: gates on `controller.my && !room.storage`, reads source positions from `Memory.rooms[room.name].sources`, PathFinds from spawn to each source, places one road site per tick.
 - [x] **W44N57 bootstrap stall — status tracking** — Root cause was premature `bootstrapping → active` transition (fired on first harvester, retired colonyBuilder support). Fixed in `colonyPlanner.ts` to require a built source container OR RCL 3 + extensions. Bootstrap road placement added in `construction.ts`.
 
@@ -226,8 +200,6 @@ Claiming a second room gives a full autonomous colony. Requires GCL 2 (earned by
 - [x] **Target room selection** — `scoreClaimTarget(target, home)`: rejects unscouted, controller-less, owned, foreign-reserved, hostile-recent, aggressive-neighbor, sourceless, and >3-distance rooms. Scores by `sources × 10 - distance × 2`. Console commands `claim(roomName)`, `evaluateClaim(roomName)`, `colonies()` for inspection and operator override.
 - [x] **Inter-room energy transfer** — `sendEnergyToColonies` in `terminal.ts` runs every 100 ticks: when home storage ≥ 80k and a colony has its own terminal but storage < 30k, sends 10k energy. Stays inert for pre-RCL6 colonies (no terminal yet — colonyBuilder handles those locally via direct source harvest).
 - [x] **Remote defense policy** — `RoomMemory.defensePolicy: 'flee' | 'defend' | 'abandon'` added. `selectRemoteRooms()` sets default: `'defend'` for `reserved` rooms, `'flee'` for `remote`. Does not overwrite an existing policy (allows manual `'abandon'` override). Field is placeholder for future reactive defense logic (remote creep retreat, defender dispatch to remote).
-- [ ] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming. `[Phase 3]`
-- [ ] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`. `[Phase 3]`
 
 ### Source Keeper room exploitation (RCL 7+)
 
@@ -237,62 +209,21 @@ Infrastructure already in place:
 - Scout records `scoutedHasKeepers` when it finds `STRUCTURE_KEEPER_LAIR` in a room.
 - `evaluateRemoteRoom` permanently rejects keeper rooms from normal remote mining.
 
-#### Phase 1 — Keeper Killer role (RCL 7)
-
-- [ ] **Add `keeperKiller` role** — State machine: `TRAVEL` paths to target room center; `PATROL` cycles between the 3 keeper lair positions, attacking any Source Keeper in range and self-healing each tick; `RETREAT` paths home to recycle when TTL < travel time. Body: `buildKeeperKillerBody`, 3 tiers gated by `energyCapacityAvailable`:
-  - < 5300 energy: not spawned (RCL 7 minimum)
-  - 5300–6999: `[TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]` (~3800 energy) — kills SK in ~18 ticks, minimal self-healing, relies on TOUGH absorbing ranged hits cheaply
-  - ≥ 7000: `[TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]` — more sustainable; drops an SK in ~14 ticks, heals 96/tick
-
-- [ ] **Store lair positions in room memory** — When a keeper killer enters the target room, use `room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_KEEPER_LAIR })` to record lair positions into `RoomMemory.keeperLairPositions` (array of `{x, y}`). Patrol visits them in order, closest-first from current position.
-
-- [ ] **Spawner integration** — Add `keeperKillersNeeded(room)` in `spawner.ts`: returns 1 per SK remote room that has an assigned keeper killer with TTL > travel time. Spawn at Priority 2 (after defenders, before miners) so the room is never mined without killer coverage. Gate on `room.energyCapacityAvailable >= 5300`.
-
-#### Phase 2 — SK room remote mining (RCL 7)
-
-- [ ] **Opt-in SK rooms in remote planner** — Add `allowKeeperRooms` flag to `evaluateRemoteRoom` (default false). When a room `scoutedHasKeepers` AND a keeper killer is assigned and alive, return a score of `sourceCount * 3` (premium for the extra yield). `selectRemoteRooms` opts in when `energyCapacityAvailable >= 5300`.
-
-- [ ] **Defense policy for SK rooms** — Set `defensePolicy: 'flee'` (miners flee on hostile sighting as normal), but do NOT flee from Source Keepers (hostility check is `owner.username === 'Invader'` for creep invaders, Source Keepers owned by `'Source Keeper'`). Miners should ignore Source Keeper entries in the hostile scan — the killer handles them.
-
-- [ ] **Remote miner body for SK rooms** — SK source containers decay at the same rate as reserved sources. Use the existing `buildRemoteMinerBody` with `maxWork: 10` (same as reserved). No CARRY needed in SK rooms (no container self-build required — killer presence means miners can path freely).
-
-- [ ] **Hauler count for SK rooms** — 3 sources × 2 haulers = 6 per room (same formula as reserved). Distance-aware scaling (see Phase 1 economy rebalancing todo) matters more here since SK rooms are typically further away.
-
-#### Phase 3 — Boosted killer (RCL 8)
-
-- [ ] **Boost keeper killer with T3 attack compound** — When `XUH2O` (ultrafast ATTACK boost, ×4 damage) stockpile > 30 doses, boost the keeper killer before dispatch via `lab.boostCreep()`. A 10-ATTACK boosted body (equivalent to 40 unboosted) kills SK in ~4 ticks. Allows a much smaller, cheaper body and reduces risk of being caught between lair spawns. Requires boost dispatch infrastructure (see Stage 3 labs todo).
-
 ### Advanced defense
 
 Current defense: tower focus-fire, safe mode, melee defenders. Sufficient for NPC invaders but not player attacks.
 
-#### Towers & walls
-
-- [ ] **Rampart maze / bunker layout** — Design a base layout where all critical structures are behind ramparts, with a maze entrance that forces attackers to walk under multiple towers. Requires rethinking the extension stamp and structure placement to fit within a walled perimeter.
-- [ ] **Active wall repair under siege** — During an attack, prioritize repairing the rampart being targeted over other repair work. Towers already focus-fire; add logic to detect which rampart is taking damage and have multiple towers repair it simultaneously when not shooting.
-
-#### Defender improvements
+#### Defender improvements (completed)
 
 - [x] **Ranged defender role** — `src/roles/rangedDefender.ts`. KITE state: kites at range 3, uses `rangedMassAttack` when 2+ hostiles in range 3, retreats when gap drops to ≤1. RALLY state: moves toward spawn when no hostiles. `defenderComposition()` in spawner returns melee/ranged/healer mix: ≤200 threat = melee only; 201–600 = melee+ranged; >600 = melee+2ranged+healer (bumps ranged +1 if any enemy has HEAL parts, capped at 4 total).
 - [x] **Healer role** — `src/roles/healer.ts`. FOLLOW state: moves adjacent to `partnerName` creep (cached from `creep.memory.partnerName`), uses `heal()` at range 1 or `rangedHeal()` within range 3. RALLY state: moves to spawn when partner absent. Paired with melee defender in high-threat compositions.
-- [ ] **Boosted defenders** — At RCL 7+ with lab compounds available, boost defenders with TOUGH (damage reduction) and ATTACK/RANGED_ATTACK compounds before dispatching. Requires boost application infrastructure (see Stage 3 labs todo).
-- [ ] **Boosted defender dispatch — aggressive-player gate** — When the attacker is classified `aggressive` (per `neighbors.ts`), request XUH2O/XKHO2/XGHO2 boosts for defenders via `lab.boostCreep()`. Skip for NPC invaders (unboosted is fine). Gate on lab stockpile > threshold to avoid draining compounds on weak threats. `src/managers/defense.ts`, `src/managers/labs.ts`. `[Phase 3]`
-- [ ] **Defender duo/quad formations** — Coordinated movement of 2-4 creeps as a unit (attacker+healer, or ranged+healer pairs). Requires a formation manager that moves all creeps in lockstep. End-game PvP capability.
 
-#### Intel & strategic
+#### Intel & strategic (completed)
 
-- [ ] **Observer placement and scanning** — Place observer at RCL 8. Scan a queue of rooms each tick (`observer.observeRoom()`). Use for: scouting highway rooms for deposits/power banks, monitoring hostile neighbors, checking remote room status without sending creeps. Add `src/managers/observer.ts` with a scan queue in Memory.
 - [x] **Threat memory and neighbor tracking** — `src/utils/neighbors.ts`. Segment-backed (segment 5) `NeighborRecord` stores firstSeen/lastSeen/attacks/seenRooms/maxThreatScore/bodies/hostility per player username. `recordHostile(creep, room)` called from `runDefense` for each hostile. Hostility classifier: `passive` (0 attacks or low threat), `unknown` (1–2 attacks, moderate threat), `aggressive` (3+ attacks OR maxThreatScore ≥ 500). `hostilesSeen(roomName, maxAge)` used in `evaluateRemoteRoom` to reject rooms with recent aggressive-player sightings. Console commands: `neighbors()` (summary table), `suggestSpawn(roomName)`.
 
-### Offensive capabilities
+### Offensive capabilities (completed infrastructure)
 
-All offensive operations are end-game (RCL 7-8) and require significant economy to sustain.
-
-- [ ] **Nuker placement and targeting** — Place nuker at RCL 8 near storage (needs 300k energy + 5k G to load). Add `src/managers/nuker.ts`: auto-load when resources available, select targets via console command (`nuke(roomName, x, y)`). 50k tick cooldown (~14 hours). Primary use: break walls/ramparts in hostile rooms before sending an attack squad.
-- [ ] **Scout/harass role** — Cheap `[MOVE]` creep sent to hostile rooms to gather intel: layout, tower positions, wall HP, creep composition. Store in Memory for attack planning. Can also be `[MOVE, MOVE, WORK]` to dismantle undefended structures.
-- [ ] **Dismantler role** — `[WORK×N, MOVE×N]` body. Targets hostile walls/ramparts with `creep.dismantle()` (50 HP per WORK per tick, ignores rampart protection). Used after nukes soften walls. Needs healer support to survive tower fire.
-- [ ] **Attack squad manager** — Coordinates multi-creep attacks on hostile rooms. Phases: (1) scout target, (2) nuke walls, (3) send dismantler+healer pairs to breach, (4) send attackers to destroy spawn/storage. Requires formation movement, heal coordination, and retreat logic. Complex — defer until other systems are mature.
-- [ ] **Drain attack** — Send a single boosted `[TOUGH×N, MOVE×N]` creep to sit at a hostile room's edge, tanking tower damage while healing. Towers drain energy faster than the room can refill. Cheap, effective against rooms with limited tower count or poor energy income. Retreat and re-send when HP drops.
 - [x] **Add resource logistics (phase 1)** - Static miner + hauler + container mining economy with automatic transition from bootstrap. Link networks and terminal trading deferred to later stages.
 - [x] **Add a state machine for creeps** - All 8 roles use `src/utils/stateMachine.ts` FSM. Each role defines named states (`GATHER`/`WORK`, `PICKUP`/`DELIVER`, `POSITION`/`HARVEST`, `ATTACK`/`RALLY`) with explicit transitions. State persists in `creep.memory.state` for in-game debugging. `onEnter` hooks handle cleanup on transition.
 - [x] **Add a traffic manager** - `src/utils/trafficManager.ts` collects movement intents from all creeps during `runRooms`, then `resolveTraffic()` resolves conflicts. Priority-based: STATIC (100, miners) > HAULER (50) > WORKER (30) > DEFAULT (10). Handles swap detection, idle creep shoving, and alternative tile selection. CostMatrix cached per room per tick. Replaces the old `ignoreCreeps: true` approach. `moveTo()` wrapper registers intents instead of calling `creep.moveTo()` directly.
@@ -308,17 +239,8 @@ Techniques surfaced by reviewing the hivemind bot. Not direct copies — impleme
 ### Worth doing soon (small effort, real CPU win)
 
 - [x] **Split base CostMatrix from per-tick overlay** `lessonlearned` — `src/utils/trafficManager.ts`. `getBaseCostMatrix(room)` heap-caches the structures-only matrix with a 100-tick TTL and `FIND_STRUCTURES.length` invalidation so newly-built or decayed structures trigger a rebuild. `getRoomCostMatrix` clones the base and overlays creeps/hostiles per tick via `applyCreepOverlay`. The count probe on cache hits is essentially free because Screeps internally caches `find` results within a tick. `resetBaseMatrixCache()` is exported for tests.
-- [ ] **Structures-by-type tick cache** `lessonlearned` — Add `getStructuresByType(room)` to `src/utils/tickCache.ts` returning `Record<StructureConstant, Structure[]>` from a single `room.find(FIND_STRUCTURES)` per tick. Replace ad-hoc filters in `runLinks`, `runTowers`, `runLabs`, `runTerminal`, `runConstruction`, and the roles that scan structures. Pattern from hivemind's `src/prototype/room.structures.ts:97-128` `room.structuresByType[STRUCTURE_LINK]`. `[Phase 3]`
 - [x] **Stuck-detection: repath with higher creep cost** `lessonlearned` — `src/utils/movement.ts`. Two-stage threshold: at count ≥ 2 we call `executeMoveAvoidCreeps` which runs a fresh `PathFinder.search` against `getRoomCostMatrixAvoidCreeps` (friendly creeps at cost 50 instead of 15) and bypasses the per-creep tick cache so we don't reuse the path that got us stuck. At count ≥ 3 we still fall back to native `creep.moveTo(reusePath: 0)` as a last resort. The earlier diagnosis that "native moveTo uses the same matrix" was wrong — native moveTo uses no `roomCallback` at all; the real reason it didn't help was the lack of any creep-cost adjustment.
 - [x] **Scout records abandoned loot** `lessonlearned` — `src/roles/scout.ts` (`recordLoot`). On arrival in a target room, scout records non-empty ruins, tombstones, and ≥1000-energy drops into `RoomMemory.scoutedLoot` with a `recordedAt` timestamp. Hauler (`pickupAbandonedLoot`) and remoteHauler (in target room) both pick up live ruins/tombstones at low priority — between dropped resources and source containers, choosing whichever of ruin/tombstone is closer. Cross-room dispatch (sending a home hauler to a scouted-but-not-current remote room based on `scoutedLoot`) is **not yet implemented** — consumers of `scoutedLoot` should compare `recordedAt` against `Game.time` since drops decay 1/1000t, tombstones in ~5×body.length ticks, and ruins in 500t.
-- [ ] **Process debug overlay** `lessonlearned` — Add a `Memory.profileOverlay` toggle that draws sorted `Memory.stats` entries as a `RoomVisual()` on the owned room — shows what ran this tick and what was skipped, alongside the existing `stats()` table. ~30 lines in `runVisuals`. Pattern from hivemind's `drawProcessDebug()` in `src/hivemind.ts:435-464`.
-
-### Worth defining now, defer implementation
-
-- [ ] **CPU bucket throttling with priority/interval** `lessonlearned` — Wrap each profiled manager with a `shouldRun({interval, priority, throttleAt, stopAt})` predicate. When bucket < `throttleAt`, low-priority work slips an interval; below `stopAt` it's skipped entirely. Use a Van der Corput sequence to spread throttled work across ticks instead of bunching. Suggested tiers: below 7k skip visuals/neighbors/remote re-evaluation; below 3k run only defense + spawner + critical hauler dispatch. Pattern from hivemind's `src/hivemind.ts:295-370` and `src/utils/throttle.ts:78-86`. Not urgent at our current load — important once we have 2 rooms and 4+ remotes. `[Phase 3]`
-- [ ] **NavMesh for cross-room hops** `lessonlearned` — Pre-compute per-room "exit regions" plus intra-room paths between exits, regenerate every ~10k ticks. Inter-room movement does coarse BFS over the mesh first, then `PathFinder.search` only within the current room. Justifies its complexity at 2+ colonies with 3+ remotes — defer until then. Pattern from hivemind's `src/utils/nav-mesh.ts` (804 lines).
-- [ ] **`isOperational` check for RCL-capped structures** `lessonlearned` — Add a helper wrapping `structure.isActive()` with a 500-tick heap cache, used by link selection, tower targeting, and lab planner. Silent killer at RCL 7→6 downgrade and rare overbuild scenarios where structures past the `CONTROLLER_STRUCTURES[type][rcl]` cap stop working. Add when we claim our 2nd room. Pattern from hivemind's `src/prototype/structure.ts:77-104`.
-- [ ] **Funnel/expansion scoring for multi-room energy** `lessonlearned` — Once we have a 2nd colony, the spawner has no notion of "this room is the priority for energy/spawn time right now." Hivemind's `funnel-manager.ts:19-56` heap-caches a prioritization-by-score-divided-by-progress-needed for 500 ticks. Useful for upgrader body sizing and remote-hauler delivery preference post-claim.
 
 ### Skipped
 
@@ -328,8 +250,151 @@ Already absorbed: `roomCallback` always returns a `CostMatrix` (fixed scout-boun
 
 ## Testing & Quality
 
-- [ ] **Extend test mocks to stub `Game.gcl` and `Game.shard`** — `resetGameGlobals()` in `test/mocks/screeps.ts` doesn't set these globals, so removing the unnecessary `?.` optional chains on `Game.gcl?.level` (`colonyPlanner.ts`) and `Game.shard?.name` (`thresholds.ts`) would crash tests. Once the mocks stub both globals with sensible defaults, remove the `?.` operators — both are non-optional in `@types/screeps` and the guards mislead readers into thinking they can be absent at runtime.
-
 - [x] **Add unit tests** - Vitest with hand-rolled Screeps mocks (`test/mocks/screeps.ts`). 48 tests covering `buildBody`, `tickCache`, `stateMachine`, `threatScore`/`pickPriorityTarget`, and `spawner` (buildSpawnQueue, minersNeeded, haulersNeeded, upgradersNeeded). Run via `npm test`, watch mode via `npm run test:watch`, coverage via `npm run test:coverage`.
 - [x] **Add a CI pipeline** - GitHub Actions (`.github/workflows/ci.yml`) runs tsc, lint, format:check, test, and build on push/PR to main.
 - [x] **Add pre-commit hooks** - husky + lint-staged runs `prettier --check` and `eslint --max-warnings=0` on staged `.ts` files. `tsc --noEmit` only in CI (too slow for pre-commit).
+
+---
+
+## Roadmap
+
+Outstanding work organized into phases by RCL gate and economic impact. Items within each phase are ordered highest-impact first.
+
+---
+
+### Phase 1: Immediate Stability (RCL 6, now)
+
+Fix throughput gaps and missing infrastructure in the current room. These items have the highest immediate energy-income and defense payoff with no RCL gate.
+
+#### Economy throughput fixes
+
+- [ ] **Distance-aware remote hauler count** — `spawner.ts` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2. Cache path length in `RoomMemory.remoteDistance`.
+- [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
+
+#### Base infrastructure
+
+- [ ] **Place missing 3rd tower at W43N58** — Only 2/3 RCL 6-allowed towers have been built. Trace the layout slot collision in `layoutPlanner.ts` / `construction.ts` that is preventing the 3rd tower site from being placed.
+
+#### Testing quality
+
+- [ ] **Extend test mocks to stub `Game.gcl` and `Game.shard`** — `resetGameGlobals()` in `test/mocks/screeps.ts` doesn't set these globals, so removing the unnecessary `?.` optional chains on `Game.gcl?.level` (`colonyPlanner.ts`) and `Game.shard?.name` (`thresholds.ts`) would crash tests. Once the mocks stub both globals with sensible defaults, remove the `?.` operators — both are non-optional in `@types/screeps` and the guards mislead readers into thinking they can be absent at runtime.
+
+---
+
+### Phase 2: RCL 7 Core Infrastructure
+
+The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs to tier-2 chains, wire up the factory, and enable Source Keeper rooms (3× remote-source yield).
+
+#### Spawning capacity
+
+- [ ] **Place 2nd spawn** — `construction.ts` at RCL ≥ 7. Pick a position from `layoutPlan` (needs a `spawnPositions` entry — add to `computeLayout` and `LayoutPlan`). Register the new spawn ID in `RoomMemory` so `runSpawner` uses both. Spawner already iterates `Object.values(Game.spawns)` so spawn discovery is free; the main work is placement and avoiding collisions with extensions/labs in the plan.
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn (RCL 7), Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
+
+#### Lab expansion & boost infrastructure
+
+- [ ] **Expand labs 3 → 9 at RCL 7** — Update the lab count gate in `construction.ts` (`MAX_LABS` table entry for RCL 7). With 9 labs we can run multi-step chains (XGHO2, XLHO2) instead of being stuck on tier-1 ZH2O.
+- [ ] **Upgrader boost dispatch wiring** — Wire `lab.boostCreep()` into the upgrader spawn→dispatch flow for XGH2O (+100% upgrade). Skip if compound stockpile < 30 × WORK parts. Requires a "boosting" state on spawned upgraders + lab reservation logic so the chosen lab isn't consumed by reactions while a creep is inbound. `src/roles/upgrader.ts`, `src/managers/labs.ts`.
+- [ ] **Boost application framework** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders. Prerequisite for boosted defenders (Phase 3) and boosted keeper killer (Phase 4).
+
+#### Factory pipeline
+
+- [ ] **Place Factory** — Construction manager at RCL ≥ 7. Placed adjacent to storage + terminal.
+- [ ] **Add `factoryManager`** — `src/managers/factory.ts`. Pick a target commodity from a configurable list, check inputs in storage/terminal, haul in via hauler, run `factory.produce`, push outputs back. Level the factory (0–5) based on inputs we can sustain.
+
+#### Source Keeper rooms — Killer role (RCL 7)
+
+- [ ] **Add `keeperKiller` role** — State machine: `TRAVEL` paths to target room center; `PATROL` cycles between the 3 keeper lair positions, attacking any Source Keeper in range and self-healing each tick; `RETREAT` paths home to recycle when TTL < travel time. Body: `buildKeeperKillerBody`, 3 tiers gated by `energyCapacityAvailable`:
+  - < 5300 energy: not spawned (RCL 7 minimum)
+  - 5300–6999: `[TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]` (~3800 energy) — kills SK in ~18 ticks, minimal self-healing, relies on TOUGH absorbing ranged hits cheaply
+  - ≥ 7000: `[TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]` — more sustainable; drops an SK in ~14 ticks, heals 96/tick
+- [ ] **Store lair positions in room memory** — When a keeper killer enters the target room, use `room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_KEEPER_LAIR })` to record lair positions into `RoomMemory.keeperLairPositions` (array of `{x, y}`). Patrol visits them in order, closest-first from current position.
+- [ ] **Spawner integration for keeperKiller** — Add `keeperKillersNeeded(room)` in `spawner.ts`: returns 1 per SK remote room that has an assigned keeper killer with TTL > travel time. Spawn at Priority 2 (after defenders, before miners) so the room is never mined without killer coverage. Gate on `room.energyCapacityAvailable >= 5300`.
+
+#### Source Keeper rooms — SK remote mining (RCL 7, after killer is stable)
+
+- [ ] **Opt-in SK rooms in remote planner** — Add `allowKeeperRooms` flag to `evaluateRemoteRoom` (default false). When a room `scoutedHasKeepers` AND a keeper killer is assigned and alive, return a score of `sourceCount * 3` (premium for the extra yield). `selectRemoteRooms` opts in when `energyCapacityAvailable >= 5300`.
+- [ ] **Defense policy for SK rooms** — Set `defensePolicy: 'flee'` (miners flee on hostile sighting as normal), but do NOT flee from Source Keepers (`owner.username === 'Source Keeper'`). Miners should ignore Source Keeper entries in the hostile scan — the killer handles them.
+- [ ] **Remote miner body for SK rooms** — Use the existing `buildRemoteMinerBody` with `maxWork: 10` (same as reserved). No CARRY needed in SK rooms (no container self-build required — killer presence means miners can path freely).
+- [ ] **Hauler count for SK rooms** — 3 sources × 2 haulers = 6 per room (same formula as reserved). Distance-aware scaling (Phase 1 economy fix) matters more here since SK rooms are typically further away.
+
+---
+
+### Phase 3: Multi-Room Growth & Performance (RCL 7+)
+
+Claim a third room, improve colony coordination, and add the CPU-management infrastructure needed to run 3+ rooms without bucket drain.
+
+#### Multi-room expansion
+
+- [ ] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming.
+- [ ] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`.
+- [ ] **Funnel/expansion scoring for multi-room energy** `lessonlearned` — Once we have a 2nd colony, the spawner has no notion of "this room is the priority for energy/spawn time right now." Hivemind's `funnel-manager.ts:19-56` heap-caches a prioritization-by-score-divided-by-progress-needed for 500 ticks. Useful for upgrader body sizing and remote-hauler delivery preference post-claim.
+
+#### CPU management
+
+- [ ] **CPU bucket throttling with priority/interval** `lessonlearned` — Wrap each profiled manager with a `shouldRun({interval, priority, throttleAt, stopAt})` predicate. When bucket < `throttleAt`, low-priority work slips an interval; below `stopAt` it's skipped entirely. Use a Van der Corput sequence to spread throttled work across ticks instead of bunching. Suggested tiers: below 7k skip visuals/neighbors/remote re-evaluation; below 3k run only defense + spawner + critical hauler dispatch. Pattern from hivemind's `src/hivemind.ts:295-370` and `src/utils/throttle.ts:78-86`. Not urgent at current load — important once we have 2 rooms and 4+ remotes.
+- [ ] **Structures-by-type tick cache** `lessonlearned` — Add `getStructuresByType(room)` to `src/utils/tickCache.ts` returning `Record<StructureConstant, Structure[]>` from a single `room.find(FIND_STRUCTURES)` per tick. Replace ad-hoc filters in `runLinks`, `runTowers`, `runLabs`, `runTerminal`, `runConstruction`, and the roles that scan structures. Pattern from hivemind's `src/prototype/room.structures.ts:97-128` `room.structuresByType[STRUCTURE_LINK]`.
+- [ ] **`isOperational` check for RCL-capped structures** `lessonlearned` — Add a helper wrapping `structure.isActive()` with a 500-tick heap cache, used by link selection, tower targeting, and lab planner. Silent killer at RCL 7→6 downgrade and rare overbuild scenarios where structures past the `CONTROLLER_STRUCTURES[type][rcl]` cap stop working. Add when we claim our 2nd room. Pattern from hivemind's `src/prototype/structure.ts:77-104`.
+
+#### Boosted defense (requires Phase 2 boost infrastructure)
+
+- [ ] **Boosted defenders** — At RCL 7+ with lab compounds available, boost defenders with TOUGH (damage reduction) and ATTACK/RANGED_ATTACK compounds before dispatching. Requires boost application framework (Phase 2 labs).
+- [ ] **Boosted defender dispatch — aggressive-player gate** — When the attacker is classified `aggressive` (per `neighbors.ts`), request XUH2O/XKHO2/XGHO2 boosts for defenders via `lab.boostCreep()`. Skip for NPC invaders (unboosted is fine). Gate on lab stockpile > threshold to avoid draining compounds on weak threats. `src/managers/defense.ts`, `src/managers/labs.ts`.
+
+#### Debug tooling
+
+- [ ] **Process debug overlay** `lessonlearned` — Add a `Memory.profileOverlay` toggle that draws sorted `Memory.stats` entries as a `RoomVisual()` on the owned room — shows what ran this tick and what was skipped, alongside the existing `stats()` table. ~30 lines in `runVisuals`. Pattern from hivemind's `drawProcessDebug()` in `src/hivemind.ts:435-464`.
+
+---
+
+### Phase 4: RCL 8 End-Game Infrastructure
+
+Full build-out of the RCL 8 structure set: Observer (eyes everywhere), Power Spawn (GPL), deposit mining (commodity income), and a cheaper boosted keeper killer body.
+
+#### Observer (prerequisite for all highway work)
+
+- [ ] **Observer placement and scanning** — Place observer at RCL 8. Scan a queue of rooms each tick (`observer.observeRoom()`). Use for: scouting highway rooms for deposits/power banks, monitoring hostile neighbors, checking remote room status without sending creeps. Add `src/managers/observer.ts` with a scan queue in Memory. Prerequisite for deposit and power bank detection.
+
+#### Power mining
+
+- [ ] **Place Power Spawn** — Construction manager at RCL 8, adjacent to storage (needs energy + power input).
+- [ ] **Scan highway rooms for Power Banks** — Via Observer. Filter by `power >= 2000`, `ticksToDecay >= 3000`, and 2+ free adjacent tiles (banks need multiple attackers).
+- [ ] **Power squad: `powerAttacker` + `powerHealer` + `powerHauler`** — Attacker is pure ATTACK + MOVE; healer sticks on range 1 with HEAL + MOVE; hauler arrives as the bank breaks to scoop the drop and run it home. All three scale bodies to room `energyCapacityAvailable`.
+- [ ] **Power processing loop** — Once power is in storage, feed `powerSpawn.processPower()` (100 energy + 1 power per call, up to 50/tick) to convert into global power level (GPL).
+
+#### Deposit mining
+
+- [ ] **Scout highway rooms for deposits** — Use Observer (RCL 8) or scout creeps (1 MOVE) to find `FIND_DEPOSITS`. Track `lastCooldown` per deposit — abandon when cooldown exceeds a threshold (e.g. 100).
+- [ ] **Add `depositMiner` + dedicated hauler** — Deposit miners harvest until cooldown climbs, then return; haulers shuttle the resource back to a home-room terminal. Bodies need enough MOVE to handle remote travel at 1:1 fatigue on roadless terrain.
+- [ ] **Feed deposit output into the factory** — Deposits produce commodity inputs (silicon, biomass, metal, mist). Factory manager consumes them at level-appropriate recipes.
+
+#### Boosted keeper killer (requires Phase 2 boost infrastructure)
+
+- [ ] **Boost keeper killer with T3 attack compound** — When `XUH2O` (ultrafast ATTACK boost, ×4 damage) stockpile > 30 doses, boost the keeper killer before dispatch via `lab.boostCreep()`. A 10-ATTACK boosted body (equivalent to 40 unboosted) kills SK in ~4 ticks. Allows a much smaller, cheaper body and reduces risk of being caught between lair spawns. Requires boost dispatch infrastructure (Phase 2 labs).
+
+---
+
+### Phase 5: Advanced Defense & Offense (RCL 8)
+
+End-game military capability. Requires full structure set and compound stockpiles from Phase 4.
+
+#### Active defense upgrades
+
+- [ ] **Rampart maze / bunker layout** — Design a base layout where all critical structures are behind ramparts, with a maze entrance that forces attackers to walk under multiple towers. Requires rethinking the extension stamp and structure placement to fit within a walled perimeter.
+- [ ] **Active wall repair under siege** — During an attack, prioritize repairing the rampart being targeted over other repair work. Towers already focus-fire; add logic to detect which rampart is taking damage and have multiple towers repair it simultaneously when not shooting.
+- [ ] **Defender duo/quad formations** — Coordinated movement of 2-4 creeps as a unit (attacker+healer, or ranged+healer pairs). Requires a formation manager that moves all creeps in lockstep. End-game PvP capability.
+
+#### Offensive operations
+
+- [ ] **Nuker placement and targeting** — Place nuker at RCL 8 near storage (needs 300k energy + 5k G to load). Add `src/managers/nuker.ts`: auto-load when resources available, select targets via console command (`nuke(roomName, x, y)`). 50k tick cooldown (~14 hours). Primary use: break walls/ramparts in hostile rooms before sending an attack squad.
+- [ ] **Scout/harass role** — Cheap `[MOVE]` creep sent to hostile rooms to gather intel: layout, tower positions, wall HP, creep composition. Store in Memory for attack planning. Can also be `[MOVE, MOVE, WORK]` to dismantle undefended structures.
+- [ ] **Drain attack** — Send a single boosted `[TOUGH×N, MOVE×N]` creep to sit at a hostile room's edge, tanking tower damage while healing. Towers drain energy faster than the room can refill. Cheap, effective against rooms with limited tower count or poor energy income. Retreat and re-send when HP drops.
+- [ ] **Dismantler role** — `[WORK×N, MOVE×N]` body. Targets hostile walls/ramparts with `creep.dismantle()` (50 HP per WORK per tick, ignores rampart protection). Used after nukes soften walls. Needs healer support to survive tower fire.
+- [ ] **Attack squad manager** — Coordinates multi-creep attacks on hostile rooms. Phases: (1) scout target, (2) nuke walls, (3) send dismantler+healer pairs to breach, (4) send attackers to destroy spawn/storage. Requires formation movement, heal coordination, and retreat logic. Complex — defer until other systems are mature.
+
+---
+
+### Phase 6: Scale & Navigation (2+ colonies)
+
+Infrastructure that only pays off at scale. Defer until the 2nd or 3rd colony is established and CPU pressure becomes real.
+
+- [ ] **NavMesh for cross-room hops** `lessonlearned` — Pre-compute per-room "exit regions" plus intra-room paths between exits, regenerate every ~10k ticks. Inter-room movement does coarse BFS over the mesh first, then `PathFinder.search` only within the current room. Justifies its complexity at 2+ colonies with 3+ remotes — defer until then. Pattern from hivemind's `src/utils/nav-mesh.ts` (804 lines).
