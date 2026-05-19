@@ -179,6 +179,10 @@ export function haulersNeeded(room: Room): number {
     if (mineral && mineral.mineralAmount > 0) count += 1;
   }
 
+  // +1 per active remote room: energy from remotes arrives in bulk and needs
+  // dedicated bandwidth to distribute before the source containers fill up.
+  count += mem.remoteRooms?.length ?? 0;
+
   return count;
 }
 

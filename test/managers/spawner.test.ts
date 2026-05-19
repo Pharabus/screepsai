@@ -414,6 +414,36 @@ describe('haulersNeeded', () => {
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(2);
   });
+
+  it('does not add remote bonus when no remoteRooms set', () => {
+    (Memory as any).rooms = {
+      W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(2); // baseline, no bonus
+  });
+
+  it('adds +1 hauler when 1 remote room is active', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+        remoteRooms: ['W2N1'],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(3); // 2 baseline + 1 remote
+  });
+
+  it('adds +2 haulers when 2 remote rooms are active', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+        remoteRooms: ['W2N1', 'W1N2'],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(4); // 2 baseline + 2 remotes
+  });
 });
 
 describe('upgradersNeeded', () => {
