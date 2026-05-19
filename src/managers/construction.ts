@@ -80,6 +80,23 @@ function findOpenPosition(
   return undefined;
 }
 
+/**
+ * Returns the set of "x,y" tile keys that the room's layout plan has reserved for
+ * permanent structures (towers, labs, extensions, storage, terminal). Road-placement
+ * functions use this to route paths around reserved tiles and skip stray steps.
+ */
+export function getPlannedReserved(room: Room): Set<string> {
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  const set = new Set<string>();
+  if (!plan) return set;
+  set.add(`${plan.storagePos.x},${plan.storagePos.y}`);
+  set.add(`${plan.terminalPos.x},${plan.terminalPos.y}`);
+  for (const p of plan.towerPositions) set.add(`${p.x},${p.y}`);
+  for (const p of plan.labPositions) set.add(`${p.x},${p.y}`);
+  for (const p of plan.extensionPositions) set.add(`${p.x},${p.y}`);
+  return set;
+}
+
 export function placeExtensions(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_EXTENSIONS[rcl] ?? 0;
@@ -142,14 +159,26 @@ export function placeTowers(room: Room): void {
         return;
       }
     }
-    return;
+    // All planned positions are blocked — fall through to overflow search.
   }
 
-  // Fallback: first open position near spawn
+  // Overflow / fallback: first open position near spawn.
+  // Handles both pre-plan rooms and cases where a planned slot is occupied by
+  // a previously-built extension or other structure.
   const spawn = room.find(FIND_MY_SPAWNS)[0];
   if (!spawn) return;
   const pos = findOpenPosition(room, spawn.pos, 3, 6);
-  if (pos) room.createConstructionSite(pos, STRUCTURE_TOWER);
+  if (pos) {
+    const key = `${pos.x},${pos.y}`;
+    const roomMem = (Memory.rooms[room.name] ??= {});
+    if (!roomMem.overflowedTowers?.includes(key)) {
+      console.log(
+        `[construction] ${room.name}: all planned tower slots blocked, placing overflow tower at (${pos.x},${pos.y})`,
+      );
+      (roomMem.overflowedTowers ??= []).push(key);
+    }
+    room.createConstructionSite(pos, STRUCTURE_TOWER);
+  }
 }
 
 export function placeSourceContainers(room: Room): void {
@@ -274,10 +303,25 @@ export function placeRoads(room: Room): void {
     targets.push(room.storage.pos);
   }
 
+  const reserved = getPlannedReserved(room);
+
   for (const target of targets) {
-    const path = room.findPath(anchor.pos, target, { ignoreCreeps: true, range: 1 });
+    const path = room.findPath(anchor.pos, target, {
+      ignoreCreeps: true,
+      range: 1,
+      costCallback(_roomName, costMatrix) {
+        if (!reserved.size) return costMatrix;
+        const matrix = costMatrix.clone();
+        for (const key of reserved) {
+          const comma = key.indexOf(',');
+          matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
+        }
+        return matrix;
+      },
+    });
     if (path.length === 0) continue;
     for (const step of path) {
+      if (reserved.has(`${step.x},${step.y}`)) continue; // belt-and-braces: skip reserved tiles
       const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
       const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
       const hasRoad =
@@ -649,10 +693,7 @@ export function placeCorridorRoads(room: Room): void {
 
   const terrain = room.getTerrain();
   const maxRing = Math.min(rcl - 1, 4);
-  const labPositions = Memory.rooms[room.name]?.layoutPlan?.labPositions;
-  const isLabTile = labPositions
-    ? (x: number, y: number) => labPositions.some((p) => p.x === x && p.y === y)
-    : () => false;
+  const reserved = getPlannedReserved(room);
 
   for (let offset = -maxRing; offset <= maxRing; offset++) {
     if (offset === 0) continue;
@@ -662,7 +703,7 @@ export function placeCorridorRoads(room: Room): void {
     ] as [number, number][]) {
       if (x < 2 || x > 47 || y < 2 || y > 47) continue;
       if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-      if (isLabTile(x, y)) continue;
+      if (reserved.has(`${x},${y}`)) continue; // skip planned structure tiles
 
       const structs = room.lookForAt(LOOK_STRUCTURES, x, y);
       const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
@@ -732,6 +773,9 @@ export function placeRemoteRoads(room: Room): void {
   const anchor = spawns[0];
   if (!anchor) return;
 
+  const reserved = getPlannedReserved(room);
+  const homeRoomName = room.name;
+
   // Only build roads to rooms with an active reserver
   for (const remoteRoomName of remoteRooms) {
     const remoteMem = Memory.rooms[remoteRoomName];
@@ -755,9 +799,17 @@ export function placeRemoteRoads(room: Room): void {
           roomCallback(roomName) {
             const r = Game.rooms[roomName];
             if (!r) return false;
-            // Reuse the heap-cached base matrix (structures only) instead of
-            // rebuilding a CostMatrix from scratch on every call.
-            return getBaseCostMatrixForRoom(r);
+            const base = getBaseCostMatrixForRoom(r);
+            // Set reserved home-room tiles to impassable so roads route around them.
+            if (roomName === homeRoomName && reserved.size > 0) {
+              const matrix = base.clone();
+              for (const key of reserved) {
+                const comma = key.indexOf(',');
+                matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
+              }
+              return matrix;
+            }
+            return base;
           },
         },
       );
@@ -765,6 +817,8 @@ export function placeRemoteRoads(room: Room): void {
 
       for (const step of result.path) {
         if (step.x === 0 || step.x === 49 || step.y === 0 || step.y === 49) continue;
+        // Belt-and-braces: skip any home-room step that landed on a reserved tile.
+        if (step.roomName === homeRoomName && reserved.has(`${step.x},${step.y}`)) continue;
         const stepRoom = Game.rooms[step.roomName];
         if (!stepRoom) continue;
         const structures = stepRoom.lookForAt(LOOK_STRUCTURES, step.x, step.y);
@@ -812,6 +866,8 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
   const sources = roomMem?.sources;
   if (!sources || sources.length === 0) return false;
 
+  const reserved = getPlannedReserved(room);
+
   for (const source of sources) {
     const targetPos = new RoomPosition(source.x, source.y, room.name);
     const result = PathFinder.search(
@@ -823,7 +879,17 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
         roomCallback(roomName) {
           const r = Game.rooms[roomName];
           if (!r) return false;
-          return getBaseCostMatrixForRoom(r);
+          const base = getBaseCostMatrixForRoom(r);
+          // Set reserved tiles to impassable so roads route around planned structures.
+          if (reserved.size > 0) {
+            const matrix = base.clone();
+            for (const key of reserved) {
+              const comma = key.indexOf(',');
+              matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
+            }
+            return matrix;
+          }
+          return base;
         },
       },
     );
@@ -832,6 +898,7 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
     for (const step of result.path) {
       // Skip border tiles (not buildable)
       if (step.x === 0 || step.x === 49 || step.y === 0 || step.y === 49) continue;
+      if (reserved.has(`${step.x},${step.y}`)) continue; // belt-and-braces: skip reserved tiles
       const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
       const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
       const hasRoad =

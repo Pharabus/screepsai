@@ -150,6 +150,29 @@ describe('computeLayout', () => {
     const plan = computeLayout(room)!;
     expect(plan.extensionPositions.length).toBeGreaterThanOrEqual(40);
   });
+
+  it('excludes live off-plan towers from all planned structure positions', () => {
+    // A tower at (28,25) was built before the layout planner ran (or on a previous plan).
+    // computeLayout must add it to reserved so no lab/extension/new-tower slot overlaps.
+    const towerPos = new RoomPosition(28, 25, 'W1N1');
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_MY_STRUCTURES) {
+        const towers = [{ structureType: STRUCTURE_TOWER, pos: towerPos }];
+        return opts?.filter ? towers.filter(opts.filter) : towers;
+      }
+      return [];
+    };
+    const plan = computeLayout(room)!;
+    const towerKey = '28,25';
+    // The off-plan tower tile must not appear in any plan field
+    expect(plan.towerPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
+    expect(plan.labPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
+    expect(plan.extensionPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
+    expect(`${plan.storagePos.x},${plan.storagePos.y}`).not.toBe(towerKey);
+    expect(`${plan.terminalPos.x},${plan.terminalPos.y}`).not.toBe(towerKey);
+  });
 });
 
 describe('scoreSpawnCandidate', () => {

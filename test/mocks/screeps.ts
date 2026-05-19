@@ -265,6 +265,8 @@ export function resetGameGlobals(): void {
     creeps: {},
     rooms: {},
     spawns: {},
+    gcl: { level: 1, progress: 0, progressTotal: 1000 },
+    shard: { name: 'shard3', type: 'normal', ptr: false },
     getObjectById: () => undefined,
     map: {
       getRoomTerrain: () => ({ get: () => 0 }),

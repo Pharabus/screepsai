@@ -209,6 +209,14 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   reserved.add(`${storagePos.x},${storagePos.y}`);
   reserved.add(`${spawn.pos.x},${spawn.pos.y}`);
 
+  // Include live towers (built before or outside the current plan) so labs,
+  // extensions, and future tower slots never overlap an existing structure.
+  for (const tower of room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_TOWER,
+  })) {
+    reserved.add(`${tower.pos.x},${tower.pos.y}`);
+  }
+
   // Step 2: Lab positions (anchor = storagePos + (2,2))
   const labAx = storagePos.x + 2;
   const labAy = storagePos.y + 2;

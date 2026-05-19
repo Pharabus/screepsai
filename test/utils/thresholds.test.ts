@@ -6,8 +6,9 @@ beforeEach(() => {
 });
 
 describe('getMaxBuyPrice', () => {
-  it('returns the default 0.5 when Game.shard is undefined (test environment)', () => {
-    expect(getMaxBuyPrice()).toBe(0.5);
+  it('returns the shard3 cap by default (mock Game.shard is shard3)', () => {
+    // resetGameGlobals() sets Game.shard.name = 'shard3'; the illiquid-market cap applies
+    expect(getMaxBuyPrice()).toBeGreaterThan(50);
   });
 
   it('returns 0.5 for shard0', () => {

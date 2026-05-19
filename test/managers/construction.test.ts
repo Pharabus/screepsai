@@ -15,6 +15,7 @@ import {
   placeRemoteRoads,
   placeColonyBootstrapRoads,
   clearLabBlockers,
+  getPlannedReserved,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -79,6 +80,100 @@ describe('construction RCL gating', () => {
       const room = roomAt(3);
       placeTowers(room);
       expect(room.createConstructionSite).toHaveBeenCalled();
+    });
+
+    it('does not exceed the RCL cap (RCL 7 = max 3, already at 3)', () => {
+      // 3 towers already built — at the cap for RCL 7, should not place another
+      const room = roomAt(7, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            const structs = [
+              { structureType: STRUCTURE_TOWER },
+              { structureType: STRUCTURE_TOWER },
+              { structureType: STRUCTURE_TOWER },
+            ];
+            return opts?.filter ? structs.filter(opts.filter) : structs;
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      placeTowers(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('places 3rd tower at RCL 7 using the first free plan slot', () => {
+      // 2 towers built, 1 more needed — plan has 6 positions; first free one is chosen.
+      // Note: RoomPosition.lookFor() in the mock always returns [], so all plan positions
+      // appear unblocked and position[0] (28,25) is always selected.
+      const towerStructures = [
+        { structureType: STRUCTURE_TOWER },
+        { structureType: STRUCTURE_TOWER },
+      ];
+      const room = roomAt(7, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            return opts?.filter ? towerStructures.filter(opts.filter) : towerStructures;
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      (Memory as any).rooms = {
+        W1N1: {
+          layoutPlan: {
+            towerPositions: [
+              { x: 28, y: 25 },
+              { x: 22, y: 25 },
+              { x: 25, y: 28 },
+              { x: 25, y: 22 },
+              { x: 28, y: 28 },
+              { x: 22, y: 22 },
+            ],
+          },
+        },
+      };
+      placeTowers(room);
+      // First plan position chosen (mock cannot simulate blocked RoomPosition.lookFor)
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.objectContaining({ x: 28, y: 25 }),
+        STRUCTURE_TOWER,
+      );
+    });
+
+    it('falls back to overflow search when plan has no tower positions', () => {
+      // 2 towers built, 3rd needed — empty towerPositions forces overflow path.
+      // (RoomPosition.lookFor mock always returns [], so we simulate "all blocked"
+      // by providing an empty plan rather than trying to mock individual positions.)
+      const towerStructures = [
+        { structureType: STRUCTURE_TOWER },
+        { structureType: STRUCTURE_TOWER },
+      ];
+      const room = roomAt(7, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            return opts?.filter ? towerStructures.filter(opts.filter) : towerStructures;
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      (Memory as any).rooms = {
+        W1N1: {
+          layoutPlan: {
+            towerPositions: [], // exhausted — triggers overflow
+          },
+        },
+      };
+      placeTowers(room);
+      // Overflow search places somewhere near spawn
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.any(RoomPosition),
+        STRUCTURE_TOWER,
+      );
     });
   });
 
@@ -262,6 +357,168 @@ describe('construction RCL gating', () => {
         STRUCTURE_ROAD,
       );
     });
+  });
+});
+
+describe('getPlannedReserved', () => {
+  beforeEach(() => resetGameGlobals());
+
+  it('returns empty set when no layoutPlan exists', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = { W1N1: {} };
+    expect(getPlannedReserved(room).size).toBe(0);
+  });
+
+  it('returns empty set when Memory.rooms entry is missing', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = {};
+    expect(getPlannedReserved(room).size).toBe(0);
+  });
+
+  it('includes storagePos, terminalPos, towers, labs, and extensions', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 23, y: 25 },
+          terminalPos: { x: 24, y: 25 },
+          towerPositions: [{ x: 28, y: 25 }],
+          labPositions: [
+            { x: 25, y: 28 },
+            { x: 26, y: 28 },
+          ],
+          extensionPositions: [{ x: 22, y: 23 }],
+        },
+      },
+    };
+    const reserved = getPlannedReserved(room);
+    expect(reserved.has('23,25')).toBe(true); // storagePos
+    expect(reserved.has('24,25')).toBe(true); // terminalPos
+    expect(reserved.has('28,25')).toBe(true); // tower
+    expect(reserved.has('25,28')).toBe(true); // lab
+    expect(reserved.has('26,28')).toBe(true); // lab
+    expect(reserved.has('22,23')).toBe(true); // extension
+    expect(reserved.size).toBe(6);
+  });
+});
+
+describe('reserved-tile road avoidance', () => {
+  beforeEach(() => resetGameGlobals());
+
+  it('placeRoads does not place a road on a planned structure tile (belt-and-braces)', () => {
+    // findPath mock returns [{x:29, y:30}] — if that tile is reserved, no road is placed.
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 29, y: 30 }, // same as the mocked path step
+          terminalPos: { x: 0, y: 0 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    const room = roomAt(4);
+    placeRoads(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalledWith(29, 30, STRUCTURE_ROAD);
+    // All steps reserved → no road placed at all
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('placeCorridorRoads skips a corridor tile that appears in the layout plan', () => {
+    // Spawn at (25,25), RCL 3 → maxRing=2. First corridor candidate is (25,23) (offset=-2).
+    // If that tile is reserved (planned tower), the function must skip it.
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 0, y: 0 },
+          terminalPos: { x: 0, y: 0 },
+          towerPositions: [{ x: 25, y: 23 }], // first corridor candidate
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    const room = roomAt(3);
+    placeCorridorRoads(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalledWith(25, 23, STRUCTURE_ROAD);
+    // Some other corridor tile should still have been roaded
+    expect(room.createConstructionSite).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      STRUCTURE_ROAD,
+    );
+  });
+});
+
+describe('placeTowers overflow warning', () => {
+  beforeEach(() => resetGameGlobals());
+
+  it('logs overflow warning when all planned slots are blocked and stores it in memory', () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const towerStructures = [
+      { structureType: STRUCTURE_TOWER },
+      { structureType: STRUCTURE_TOWER },
+    ];
+    const room = roomAt(7, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+        if (type === FIND_MY_STRUCTURES)
+          return opts?.filter ? towerStructures.filter(opts.filter) : towerStructures;
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 0, y: 0 },
+          terminalPos: { x: 0, y: 0 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    placeTowers(room);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('overflow tower'));
+    expect((Memory as any).rooms.W1N1.overflowedTowers).toHaveLength(1);
+    consoleSpy.mockRestore();
+  });
+
+  it('does not repeat overflow warning for the same position', () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const towerStructures = [
+      { structureType: STRUCTURE_TOWER },
+      { structureType: STRUCTURE_TOWER },
+    ];
+    const room = roomAt(7, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+        if (type === FIND_MY_STRUCTURES)
+          return opts?.filter ? towerStructures.filter(opts.filter) : towerStructures;
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 0, y: 0 },
+          terminalPos: { x: 0, y: 0 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    placeTowers(room); // first call: warning logged
+    consoleSpy.mockClear();
+    placeTowers(room); // second call: same position, no warning
+    expect(consoleSpy).not.toHaveBeenCalled();
+    // Site is still placed on second call
+    expect(room.createConstructionSite).toHaveBeenCalledTimes(2);
+    consoleSpy.mockRestore();
   });
 });
 
@@ -463,6 +720,29 @@ describe('placeColonyBootstrapRoads', () => {
     const result = placeColonyBootstrapRoads(room);
     expect(result).toBe(true);
     expect(room.createConstructionSite).toHaveBeenCalledWith(26, 25, STRUCTURE_ROAD);
+  });
+
+  it('skips path steps that overlap planned structure tiles (belt-and-braces)', () => {
+    const room = bootstrapRoom(0);
+    Memory.rooms = {
+      W1N1: {
+        sources: [{ id: 's1' as any, x: 10, y: 10 }],
+        layoutPlan: {
+          storagePos: { x: 26, y: 25 }, // same as the mocked path step
+          terminalPos: { x: 0, y: 0 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    (PathFinder as any).search = vi.fn(() => ({
+      path: [new RoomPosition(26, 25, 'W1N1')], // reserved tile
+      incomplete: false,
+    }));
+    const result = placeColonyBootstrapRoads(room);
+    expect(result).toBe(false); // step was skipped, no road placed
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
   });
 });
 

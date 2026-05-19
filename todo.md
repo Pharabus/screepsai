@@ -273,7 +273,7 @@ Fix throughput gaps and missing infrastructure in the current room. These items 
 
 #### Base infrastructure
 
-- [ ] **Place missing 3rd tower at W43N58** — Only 2/3 RCL 6-allowed towers have been built. Trace the layout slot collision in `layoutPlanner.ts` / `construction.ts` that is preventing the 3rd tower site from being placed.
+- [x] **Place missing 3rd tower at W43N58** — Original framing obsoleted by the RCL 7 upgrade (all 3 towers now placed). Real root cause fixed as "Road placement: skip planned structure tiles (RCL 8 readiness)": `placeRoads`/`placeCorridorRoads`/`placeRemoteRoads`/`placeColonyBootstrapRoads` now route around planned structure tiles via `getPlannedReserved()`; `computeLayout` includes live off-plan towers in `reserved`; `placeTowers` has rate-limited overflow fallback.
 
 #### Testing quality
 

@@ -89,7 +89,7 @@ export function ownedRoomCount(): number {
  * Returns a human-readable reason when blocked.
  */
 export function canClaimAnotherRoom(): { ok: true } | { ok: false; reason: string } {
-  const gcl = Game.gcl?.level ?? 1;
+  const gcl = Game.gcl.level;
   const owned = ownedRoomCount();
   if (owned >= gcl) {
     return { ok: false, reason: `GCL ${gcl} only allows ${gcl} room(s), currently own ${owned}` };

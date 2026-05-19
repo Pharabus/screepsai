@@ -23,8 +23,8 @@ const MAX_BUY_PRICE_BY_SHARD: Record<string, number> = {
 const DEFAULT_MAX_BUY_PRICE = 0.5;
 
 export function getMaxBuyPrice(): number {
-  const shard = Game.shard?.name;
-  if (shard && MAX_BUY_PRICE_BY_SHARD[shard] !== undefined) {
+  const shard = Game.shard.name;
+  if (MAX_BUY_PRICE_BY_SHARD[shard] !== undefined) {
     return MAX_BUY_PRICE_BY_SHARD[shard];
   }
   return DEFAULT_MAX_BUY_PRICE;

@@ -111,6 +111,8 @@ interface RoomMemory {
    * Cleared when any new construction site is placed (structures changed).
    */
   roadsComplete?: boolean;
+  /** Rate-limit tracking for overflow tower placement; stores "x,y" keys already warned about */
+  overflowedTowers?: string[];
   /**
    * Set when placeRemoteRoads() completes a full pass with all path steps roaded.
    * Re-checked every 50 ticks instead of every 5 when true.
