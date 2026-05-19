@@ -468,6 +468,93 @@ export function placeLinks(room: Room): void {
   }
 }
 
+/**
+ * Remove extension construction sites that are not in the current layout plan.
+ * This cleans up stale sites left over after a replan so builders don't complete
+ * them and create inaccessible pockets that the new plan avoided.
+ */
+function clearStaleSites(room: Room): boolean {
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  if (!plan) return false;
+  const planSet = new Set(plan.extensionPositions.map((p) => `${p.x},${p.y}`));
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+  });
+  for (const site of sites) {
+    if (!planSet.has(`${site.pos.x},${site.pos.y}`)) {
+      console.log(
+        `[construction] ${room.name}: removing stale extension site at (${site.pos.x},${site.pos.y}) — not in current plan`,
+      );
+      site.remove();
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Destroy one overflow extension (Chebyshev > 4 from spawn) that is blocking a
+ * completely inaccessible extension (zero open cardinal neighbours). Called each
+ * construction tick so it self-heals over several ticks when the layout planner
+ * placed overflow extensions that created isolated pockets.
+ */
+export function clearBlockingExtensions(room: Room): void {
+  // First pass: remove any extension construction sites the current plan doesn't want.
+  if (clearStaleSites(room)) return;
+
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
+
+  const cardinals: [number, number][] = [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+  ];
+
+  const extensions = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+  }) as StructureExtension[];
+
+  for (const ext of extensions) {
+    const openCardinals = cardinals.filter(([dx, dy]) => {
+      const x = ext.pos.x + dx;
+      const y = ext.pos.y + dy;
+      if (x < 0 || x > 49 || y < 0 || y > 49) return false;
+      const here = room.lookForAt(LOOK_STRUCTURES, x, y);
+      return here.every(
+        (s) =>
+          s.structureType === STRUCTURE_ROAD ||
+          s.structureType === STRUCTURE_RAMPART ||
+          s.structureType === STRUCTURE_CONTAINER,
+      );
+    });
+    if (openCardinals.length > 0) continue;
+
+    // This extension is completely inaccessible. Find an adjacent overflow extension
+    // (Chebyshev > 4 from spawn) and destroy it to open a path.
+    for (const [dx, dy] of cardinals) {
+      const x = ext.pos.x + dx;
+      const y = ext.pos.y + dy;
+      const blocker = room
+        .lookForAt(LOOK_STRUCTURES, x, y)
+        .find((s) => s.structureType === STRUCTURE_EXTENSION) as StructureExtension | undefined;
+      if (!blocker) continue;
+      const cheb = Math.max(
+        Math.abs(blocker.pos.x - spawn.pos.x),
+        Math.abs(blocker.pos.y - spawn.pos.y),
+      );
+      if (cheb > 4) {
+        console.log(
+          `[construction] ${room.name}: destroying overflow extension at (${blocker.pos.x},${blocker.pos.y}) — blocked (${ext.pos.x},${ext.pos.y}) with 0 open cardinals`,
+        );
+        blocker.destroy();
+        return;
+      }
+    }
+  }
+}
+
 export function clearLabBlockers(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
@@ -837,6 +924,7 @@ export function runConstruction(): void {
     placeTerminal(room);
     placeExtractor(room);
     placeMineralContainer(room);
+    clearBlockingExtensions(room);
     clearLabBlockers(room);
     placeLabs(room);
     placeRamparts(room);

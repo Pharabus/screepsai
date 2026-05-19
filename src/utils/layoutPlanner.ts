@@ -265,10 +265,25 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   // slots sit unused until needed. Overflow positions land at Chebyshev distance 5+.
   if (extensionPositions.length < 70) {
     const inPlan = new Set(extensionPositions.map((p) => `${p.x},${p.y}`));
+    // Treat existing extension construction sites as occupied so the trap check
+    // accounts for sites placed by a previous (now-superseded) plan.
+    for (const site of room.find(FIND_MY_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+    })) {
+      inPlan.add(`${site.pos.x},${site.pos.y}`);
+    }
+    const cardinalOffsets: [number, number][] = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ];
     for (let r = 5; r <= 9 && extensionPositions.length < 70; r++) {
       for (let dx = -r; dx <= r && extensionPositions.length < 70; dx++) {
         for (let dy = -r; dy <= r && extensionPositions.length < 70; dy++) {
           if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          // Mirror the main stamp: leave dx=0 and dy=0 as road corridor axes.
+          if (dx === 0 || dy === 0) continue;
           const x = spawn.pos.x + dx;
           const y = spawn.pos.y + dy;
           if (!inBounds(x, y)) continue;
@@ -278,6 +293,29 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
           const pos = new RoomPosition(x, y, room.name);
           if (pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD))
             continue;
+          // Don't place if it would leave any planned cardinal neighbour with ≤1
+          // open cardinal. Zero means completely inaccessible; one means a single
+          // choke-point that other overflow extensions can close. Require ≥2 so
+          // the outer stamp ring always retains multiple access directions.
+          // Terrain walls count as blocked — a wall-blocked cardinal is not a
+          // usable access direction even though it's not in the plan.
+          const wouldTrap = cardinalOffsets.some(([ndx, ndy]) => {
+            const nk = `${x + ndx},${y + ndy}`;
+            if (!inPlan.has(nk)) return false;
+            const openAfter = cardinalOffsets.filter(([cdx, cdy]) => {
+              const ck = `${x + ndx + cdx},${y + ndy + cdy}`;
+              const nx = x + ndx + cdx;
+              const ny = y + ndy + cdy;
+              return (
+                ck !== key &&
+                !inPlan.has(ck) &&
+                !reserved.has(ck) &&
+                terrain.get(nx, ny) !== TERRAIN_MASK_WALL
+              );
+            }).length;
+            return openAfter <= 1;
+          });
+          if (wouldTrap) continue;
           extensionPositions.push({ x, y });
           inPlan.add(key);
         }
