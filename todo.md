@@ -283,6 +283,8 @@ Fix throughput gaps and missing infrastructure in the current room. These items 
 
 ### Phase 2: RCL 7 Core Infrastructure
 
+- [ ] **Layout plan versioning** — Bump a `layoutPlanVersion` field in `RoomMemory` when planner semantics change, so old cached plans auto-rebuild on next deploy without needing a manual `replanLayout()` call.
+
 The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs to tier-2 chains, wire up the factory, and enable Source Keeper rooms (3× remote-source yield).
 
 #### Spawning capacity

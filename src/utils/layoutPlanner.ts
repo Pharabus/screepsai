@@ -90,6 +90,46 @@ function inBounds(x: number, y: number): boolean {
   return x >= 2 && x <= 47 && y >= 2 && y <= 47;
 }
 
+/**
+ * Builds a map of "x,y" → structureType for every non-rampart live structure and
+ * construction site in the room. Built once per computeLayout call and threaded
+ * through all picker functions so we never call room.find inside a tight loop.
+ */
+function buildLiveMap(room: Room): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const s of room.find(FIND_STRUCTURES)) {
+    if (s.structureType === STRUCTURE_RAMPART) continue;
+    m.set(`${s.pos.x},${s.pos.y}`, s.structureType);
+  }
+  for (const cs of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+    if (cs.structureType === STRUCTURE_RAMPART) continue;
+    const key = `${cs.pos.x},${cs.pos.y}`;
+    if (!m.has(key)) m.set(key, cs.structureType as string);
+  }
+  return m;
+}
+
+/**
+ * Returns true if tile (x,y) is available for planning a structure of `forType`.
+ * Filter rules:
+ * - STRUCTURE_RAMPART: excluded from liveMap (coexists with everything).
+ * - STRUCTURE_ROAD: blocks tower/lab/extension/storage/terminal — allowed only for
+ *   the road planner itself.
+ * - STRUCTURE_WALL, STRUCTURE_CONTAINER: block.
+ * - Any structure of a *different* type: blocks.
+ * - An existing structure of the *same* type as `forType`: honored in-place (returns
+ *   true) so a replan on a populated room preserves already-built positions.
+ */
+function isTileBuildable(
+  liveMap: Map<string, string>,
+  x: number,
+  y: number,
+  forType: string,
+): boolean {
+  const existing = liveMap.get(`${x},${y}`);
+  return !existing || existing === forType;
+}
+
 function countBuildableLabPositions(
   storageX: number,
   storageY: number,
@@ -108,7 +148,7 @@ function countBuildableLabPositions(
 }
 
 function pickStoragePosition(
-  room: Room,
+  liveMap: Map<string, string>,
   spawnPos: RoomPosition,
   terrain: RoomTerrain,
 ): { x: number; y: number } {
@@ -123,13 +163,8 @@ function pickStoragePosition(
         const y = spawnPos.y + dy;
         if (!inBounds(x, y)) continue;
         if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-        const pos = new RoomPosition(x, y, room.name);
-        const blocked =
-          pos.lookFor(LOOK_STRUCTURES).length > 0 ||
-          pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
-        if (blocked) continue;
+        if (!isTileBuildable(liveMap, x, y, STRUCTURE_STORAGE)) continue;
         const score = countBuildableLabPositions(x, y, terrain);
-        // Prefer higher lab coverage, break ties by range (closer is better)
         if (score > bestScore) {
           bestScore = score;
           bestPos = { x, y };
@@ -141,12 +176,37 @@ function pickStoragePosition(
   return bestPos ?? { x: spawnPos.x + 2, y: spawnPos.y };
 }
 
+/**
+ * Picks up to `cap` tower positions.
+ * Live towers (structures + construction sites) are seeded first, sorted by id
+ * for deterministic ordering across replans. Additional slots fill from the
+ * range-3..6 ring around spawn, maximising mutual Manhattan spread.
+ * If liveCount >= cap, returns liveTowers.slice(0, cap) — no crash, no negative count.
+ */
 function pickTowerPositions(
+  room: Room,
+  liveMap: Map<string, string>,
   spawnPos: RoomPosition,
   reserved: Set<string>,
   terrain: RoomTerrain,
-  count: number,
+  cap: number,
 ): { x: number; y: number }[] {
+  // Seed from live towers (structures then sites, each sorted by id for stability)
+  const liveTowers = room
+    .find(FIND_MY_STRUCTURES, { filter: (s) => s.structureType === STRUCTURE_TOWER })
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((t) => ({ x: t.pos.x, y: t.pos.y }));
+  const towerSites = room
+    .find(FIND_MY_CONSTRUCTION_SITES, { filter: (s) => s.structureType === STRUCTURE_TOWER })
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((s) => ({ x: s.pos.x, y: s.pos.y }));
+  const seeded = [...liveTowers, ...towerSites];
+
+  if (seeded.length >= cap) return seeded.slice(0, cap);
+
+  const needed = cap - seeded.length;
+
+  // Candidates: perimeter ring range 3-6, excluding reserved and live non-tower tiles
   const candidates: { x: number; y: number }[] = [];
   for (let range = 3; range <= 6; range++) {
     for (let dx = -range; dx <= range; dx++) {
@@ -157,6 +217,7 @@ function pickTowerPositions(
         if (!inBounds(x, y)) continue;
         if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
         if (reserved.has(`${x},${y}`)) continue;
+        if (!isTileBuildable(liveMap, x, y, STRUCTURE_TOWER)) continue;
         candidates.push({ x, y });
       }
     }
@@ -165,20 +226,19 @@ function pickTowerPositions(
   const chosen: { x: number; y: number }[] = [];
   const remaining = [...candidates];
 
-  while (chosen.length < count && remaining.length > 0) {
-    if (chosen.length === 0) {
-      // First tower: just take first candidate (range 3, arbitrary direction)
+  while (chosen.length < needed && remaining.length > 0) {
+    const allPlaced = [...seeded, ...chosen];
+    if (allPlaced.length === 0) {
       chosen.push(remaining.shift()!);
       continue;
     }
-
-    // Subsequent: maximize minimum Manhattan distance from already-placed towers
+    // Maximize minimum Manhattan distance from already-placed towers (live + chosen)
     let bestIdx = 0;
     let bestMinDist = -1;
     for (let j = 0; j < remaining.length; j++) {
       const c = remaining[j]!;
       let minDist = Infinity;
-      for (const t of chosen) {
+      for (const t of allPlaced) {
         const d = Math.abs(c.x - t.x) + Math.abs(c.y - t.y);
         if (d < minDist) minDist = d;
       }
@@ -191,7 +251,7 @@ function pickTowerPositions(
     remaining.splice(bestIdx, 1);
   }
 
-  return chosen;
+  return [...seeded, ...chosen];
 }
 
 export function computeLayout(room: Room): LayoutPlan | undefined {
@@ -200,21 +260,31 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
 
   const terrain = room.getTerrain();
 
+  // Build once: "x,y" → structureType for all non-rampart live structures + CSes.
+  // All picker functions consult this so a replan on a built-up room never places
+  // a planned slot on top of an already-built structure of a different type.
+  const liveMap = buildLiveMap(room);
+
   // Step 1: Storage position
   const storagePos = room.storage
     ? { x: room.storage.pos.x, y: room.storage.pos.y }
-    : pickStoragePosition(room, spawn.pos, terrain);
+    : pickStoragePosition(liveMap, spawn.pos, terrain);
 
   const reserved = new Set<string>();
   reserved.add(`${storagePos.x},${storagePos.y}`);
   reserved.add(`${spawn.pos.x},${spawn.pos.y}`);
 
-  // Include live towers (built before or outside the current plan) so labs,
-  // extensions, and future tower slots never overlap an existing structure.
+  // Put live towers and tower CSes into reserved so labs/extensions don't land on them,
+  // and so pickTowerPositions's candidate loop doesn't double-pick a seeded tile.
   for (const tower of room.find(FIND_MY_STRUCTURES, {
     filter: (s) => s.structureType === STRUCTURE_TOWER,
   })) {
     reserved.add(`${tower.pos.x},${tower.pos.y}`);
+  }
+  for (const cs of room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_TOWER,
+  })) {
+    reserved.add(`${cs.pos.x},${cs.pos.y}`);
   }
 
   // Step 2: Lab positions (anchor = storagePos + (2,2))
@@ -227,6 +297,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     const y = labAy + dy;
     if (!inBounds(x, y)) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+    if (!isTileBuildable(liveMap, x, y, STRUCTURE_LAB)) continue;
     labPositions.push({ x, y });
     reserved.add(`${x},${y}`);
   }
@@ -242,6 +313,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
         if (!inBounds(x, y)) continue;
         if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
         if (reserved.has(`${x},${y}`)) continue;
+        if (!isTileBuildable(liveMap, x, y, STRUCTURE_TERMINAL)) continue;
         terminalPos = { x, y };
         reserved.add(`${x},${y}`);
         break outerTerminal;
@@ -249,13 +321,11 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     }
   }
 
-  // Step 4: Tower positions — spread around spawn perimeter
-  const towerPositions = pickTowerPositions(spawn.pos, reserved, terrain, 6);
+  // Step 4: Tower positions — seed from live towers, fill remaining slots spread around spawn
+  const towerPositions = pickTowerPositions(room, liveMap, spawn.pos, reserved, terrain, 6);
   for (const t of towerPositions) reserved.add(`${t.x},${t.y}`);
 
-  // Step 5: Extension positions — stamp minus reserved and road-blocked, with overflow.
-  // Roads block extension placement permanently, so exclude them at plan-generation time
-  // so the overflow can fill in with road-free positions instead.
+  // Step 5: Extension positions — stamp minus reserved and live-blocked, with overflow.
   const extensionPositions: { x: number; y: number }[] = [];
   for (const [dx, dy] of EXTENSION_STAMP) {
     const x = spawn.pos.x + dx;
@@ -263,8 +333,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     if (!inBounds(x, y)) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
     if (reserved.has(`${x},${y}`)) continue;
-    const pos = new RoomPosition(x, y, room.name);
-    if (pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD)) continue;
+    if (!isTileBuildable(liveMap, x, y, STRUCTURE_EXTENSION)) continue;
     extensionPositions.push({ x, y });
   }
 
@@ -298,9 +367,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
           if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
           const key = `${x},${y}`;
           if (reserved.has(key) || inPlan.has(key)) continue;
-          const pos = new RoomPosition(x, y, room.name);
-          if (pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD))
-            continue;
+          if (!isTileBuildable(liveMap, x, y, STRUCTURE_EXTENSION)) continue;
           // Don't place if it would leave any planned cardinal neighbour with ≤1
           // open cardinal. Zero means completely inaccessible; one means a single
           // choke-point that other overflow extensions can close. Require ≥2 so
@@ -329,28 +396,6 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
         }
       }
     }
-  }
-
-  // Warn about lab positions occupied by existing structures (e.g. misplaced extensions)
-  const blockedLabs: string[] = [];
-  for (const pos of labPositions) {
-    const rp = new RoomPosition(pos.x, pos.y, room.name);
-    const blocking = rp
-      .lookFor(LOOK_STRUCTURES)
-      .filter(
-        (s) =>
-          s.structureType !== STRUCTURE_RAMPART &&
-          s.structureType !== STRUCTURE_ROAD &&
-          s.structureType !== STRUCTURE_LAB,
-      );
-    if (blocking.length > 0) {
-      blockedLabs.push(`(${pos.x},${pos.y}:${blocking[0]!.structureType})`);
-    }
-  }
-  if (blockedLabs.length > 0) {
-    console.log(
-      `[layout] ${room.name}: ${blockedLabs.length} lab position(s) blocked — consider demolishing: ${blockedLabs.join(', ')}`,
-    );
   }
 
   return { storagePos, terminalPos, towerPositions, labPositions, extensionPositions };

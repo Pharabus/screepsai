@@ -151,27 +151,171 @@ describe('computeLayout', () => {
     expect(plan.extensionPositions.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('excludes live off-plan towers from all planned structure positions', () => {
-    // A tower at (28,25) was built before the layout planner ran (or on a previous plan).
-    // computeLayout must add it to reserved so no lab/extension/new-tower slot overlaps.
+  it('seeds live tower into towerPositions and excludes it from all other plan fields', () => {
     const towerPos = new RoomPosition(28, 25, 'W1N1');
     const room = makeRoom();
     room.find = (type: number, opts?: any) => {
       if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
       if (type === FIND_MY_STRUCTURES) {
-        const towers = [{ structureType: STRUCTURE_TOWER, pos: towerPos }];
+        const towers = [{ structureType: STRUCTURE_TOWER, pos: towerPos, id: 'tower1' }];
         return opts?.filter ? towers.filter(opts.filter) : towers;
       }
       return [];
     };
     const plan = computeLayout(room)!;
     const towerKey = '28,25';
-    // The off-plan tower tile must not appear in any plan field
-    expect(plan.towerPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
+    // Live tower is now seeded into the plan — it must appear in towerPositions
+    expect(plan.towerPositions.map((p) => `${p.x},${p.y}`)).toContain(towerKey);
+    // …but must not appear in any other plan field
     expect(plan.labPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
     expect(plan.extensionPositions.map((p) => `${p.x},${p.y}`)).not.toContain(towerKey);
     expect(`${plan.storagePos.x},${plan.storagePos.y}`).not.toBe(towerKey);
     expect(`${plan.terminalPos.x},${plan.terminalPos.y}`).not.toBe(towerKey);
+  });
+
+  it('W43N58 regression: live towers seeded, additional slots avoid live structures', () => {
+    // Exact coordinates from the MCP diagnostic that triggered this fix.
+    // Spawn estimated at (22,25); towers are outside range 3-6 so they would
+    // never be picked as candidates — only the seeding path preserves them.
+    // The extension at (18,28) and road at (19,30) are inside the ring and must
+    // be excluded from new tower slots by isTileBuildable.
+    const spawnPos = new RoomPosition(22, 25, 'W1N1');
+    const liveTowers = [
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(13, 29, 'W1N1'), id: 'tA' },
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(13, 31, 'W1N1'), id: 'tB' },
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(21, 37, 'W1N1'), id: 'tC' },
+    ];
+    const otherStructures = [
+      { structureType: STRUCTURE_ROAD, pos: new RoomPosition(10, 37, 'W1N1') },
+      { structureType: STRUCTURE_ROAD, pos: new RoomPosition(16, 34, 'W1N1') },
+      { structureType: STRUCTURE_ROAD, pos: new RoomPosition(19, 30, 'W1N1') },
+      { structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(13, 30, 'W1N1') },
+      { structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(21, 36, 'W1N1') },
+      { structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(18, 28, 'W1N1') },
+    ];
+    const allStructures = [...liveTowers, ...otherStructures];
+    const liveKeys = new Set(allStructures.map((s) => `${s.pos.x},${s.pos.y}`));
+
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+      if (type === FIND_STRUCTURES)
+        return opts?.filter ? allStructures.filter(opts.filter) : allStructures;
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? liveTowers.filter(opts.filter) : liveTowers;
+      return [];
+    };
+
+    const plan = computeLayout(room)!;
+    const towerKeys = plan.towerPositions.map((p) => `${p.x},${p.y}`);
+
+    // All 3 live towers must be the first 3 entries (sorted by id: tA < tB < tC)
+    expect(towerKeys.slice(0, 3)).toEqual(['13,29', '13,31', '21,37']);
+    expect(plan.towerPositions.length).toBe(6);
+
+    // None of the 3 new slots must land on a live structure tile
+    for (const pos of plan.towerPositions.slice(3)) {
+      expect(liveKeys.has(`${pos.x},${pos.y}`)).toBe(false);
+    }
+  });
+
+  it('general regression: 3 live towers seeded; new slots and other fields have zero live-structure collisions', () => {
+    const liveTowers = [
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(30, 20, 'W1N1'), id: 'x1' },
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(20, 30, 'W1N1'), id: 'x2' },
+      { structureType: STRUCTURE_TOWER, pos: new RoomPosition(30, 30, 'W1N1'), id: 'x3' },
+    ];
+    // Pack the entire range-3 ring with roads to force new tower slots to range 4+
+    const roadRing: { structureType: string; pos: RoomPosition }[] = [];
+    for (let dx = -3; dx <= 3; dx++) {
+      for (let dy = -3; dy <= 3; dy++) {
+        if (Math.abs(dx) !== 3 && Math.abs(dy) !== 3) continue;
+        roadRing.push({
+          structureType: STRUCTURE_ROAD,
+          pos: new RoomPosition(25 + dx, 25 + dy, 'W1N1'),
+        });
+      }
+    }
+    const allStructures = [...liveTowers, ...roadRing];
+    const liveKeys = new Set(allStructures.map((s) => `${s.pos.x},${s.pos.y}`));
+
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_STRUCTURES)
+        return opts?.filter ? allStructures.filter(opts.filter) : allStructures;
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? liveTowers.filter(opts.filter) : liveTowers;
+      return [];
+    };
+
+    const plan = computeLayout(room)!;
+    const towerKeys = plan.towerPositions.map((p) => `${p.x},${p.y}`);
+
+    // All 3 live towers present
+    expect(towerKeys).toContain('30,20');
+    expect(towerKeys).toContain('20,30');
+    expect(towerKeys).toContain('30,30');
+
+    // New slots (index 3-5) must not collide with any live structure
+    for (const pos of plan.towerPositions.slice(3)) {
+      expect(liveKeys.has(`${pos.x},${pos.y}`)).toBe(false);
+    }
+
+    // No planned tower slot may land on a road
+    for (const pos of plan.towerPositions) {
+      const live = allStructures.find((s) => `${s.pos.x},${s.pos.y}` === `${pos.x},${pos.y}`);
+      if (live) expect(live.structureType).toBe(STRUCTURE_TOWER);
+    }
+  });
+
+  it('truncates towerPositions to 6 when more than 6 live towers exist (no crash)', () => {
+    const liveTowers = Array.from({ length: 7 }, (_, i) => ({
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(20 + i * 2, 30, 'W1N1'),
+      id: `t${i}`,
+    }));
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_STRUCTURES)
+        return opts?.filter ? liveTowers.filter(opts.filter) : liveTowers;
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? liveTowers.filter(opts.filter) : liveTowers;
+      return [];
+    };
+    const plan = computeLayout(room)!;
+    expect(plan.towerPositions.length).toBe(6);
+  });
+
+  it('tower CS is seeded; extension CS on the same tile blocks that tile as a new tower slot', () => {
+    // Tower CS at (28,22) — range-3 corner from spawn (25,25). Should be seeded.
+    // Extension CS at (24,23) — stamp position [-1,-2]. Blocks (24,23) for tower picking.
+    const towerCs = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(28, 22, 'W1N1'),
+      id: 'cs_tower',
+    };
+    const extensionCs = {
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(24, 23, 'W1N1'),
+      id: 'cs_ext',
+    };
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_MY_CONSTRUCTION_SITES) {
+        const sites = [towerCs, extensionCs];
+        return opts?.filter ? sites.filter(opts.filter) : sites;
+      }
+      return [];
+    };
+    const plan = computeLayout(room)!;
+    const towerKeys = plan.towerPositions.map((p) => `${p.x},${p.y}`);
+    // Tower CS tile is seeded into the plan
+    expect(towerKeys).toContain('28,22');
+    // Extension CS tile must not appear as a new tower slot
+    expect(towerKeys).not.toContain('24,23');
   });
 });
 
