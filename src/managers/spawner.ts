@@ -15,6 +15,8 @@ import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
 import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
+import { LAB_STAMP } from '../utils/layoutPlanner';
+import { MAX_LABS } from './construction';
 
 type SpawnRequest = {
   role: CreepRoleName;
@@ -209,7 +211,26 @@ export function upgradersNeeded(room: Room): number {
  * Builder count scales with active construction sites. At least 1 (they fall
  * back to upgrading when idle), up to 3 when there's heavy construction.
  */
-function buildersNeeded(room: Room): number {
+function hasBlockedLabStampTile(room: Room): boolean {
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  if (!plan?.storagePos) return false;
+  const rcl = room.controller?.level ?? 0;
+  const maxLabs = MAX_LABS[rcl] ?? 0;
+  const labAx = plan.storagePos.x + 2;
+  const labAy = plan.storagePos.y + 2;
+  for (const [dx, dy] of LAB_STAMP.slice(0, maxLabs)) {
+    const structs = room.lookForAt(LOOK_STRUCTURES, labAx + dx, labAy + dy);
+    if (
+      structs.some(
+        (s) => s.structureType !== STRUCTURE_LAB && s.structureType !== STRUCTURE_RAMPART,
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
+export function buildersNeeded(room: Room): number {
   const storage = room.storage;
   const mem = Memory.rooms[room.name];
   const sources = mem?.sources;
@@ -226,8 +247,9 @@ function buildersNeeded(room: Room): number {
     'spawner:sites:' + room.name,
     () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
   );
-  if (sites === 0) return 0;
-  return Math.min(Math.ceil(sites / 3), 3);
+  const baseCount = sites === 0 ? 0 : Math.min(Math.ceil(sites / 3), 3);
+  if (baseCount > 0) return baseCount;
+  return hasBlockedLabStampTile(room) ? 1 : 0;
 }
 
 /**
