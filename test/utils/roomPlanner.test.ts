@@ -409,4 +409,109 @@ describe('roomPlanner', () => {
       expect(Memory.rooms['W1N1'].mineralMinerName).toBe('mm_1');
     });
   });
+
+  describe('inputLabIds stability', () => {
+    it('preserves cached inputLabIds when labs expand from 3 to 9', () => {
+      // Regression: same two physical labs designated at RCL 6 must stay input at RCL 7.
+      // The re-election guard in ensureRoomPlan should be a no-op when both cached IDs
+      // still resolve via Game.getObjectById — even when six new labs are discovered.
+      const labIds = ['labA', 'labB', 'labC', 'labD', 'labE', 'labF', 'labG', 'labH', 'labI'];
+      const labs = labIds.map((id) => ({ id, structureType: STRUCTURE_LAB }));
+
+      const controllerPos = { findInRange: vi.fn(() => []) };
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: { my: true, level: 7, pos: controllerPos },
+        storage: undefined,
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_SOURCES) return [];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return labs.filter(opts.filter as any);
+            return labs;
+          }
+          if (type === FIND_MINERALS) return [];
+          return [];
+        }),
+      });
+
+      // Pre-state: 3 labs at RCL 6 with labA+labB as designated inputs
+      (Memory as any).rooms = {
+        W1N1: {
+          sources: [],
+          layoutPlan: {
+            storagePos: { x: 25, y: 25 },
+            terminalPos: { x: 26, y: 25 },
+            towerPositions: [],
+            labPositions: [],
+            extensionPositions: [],
+          },
+          labIds: ['labA', 'labB', 'labC'],
+          inputLabIds: ['labA', 'labB'],
+        },
+      };
+
+      // All 9 labs are live — getObjectById resolves them
+      (Game as any).getObjectById = vi.fn((id: string) => {
+        if (labIds.includes(id)) return { id, structureType: STRUCTURE_LAB };
+        return null;
+      });
+
+      ensureRoomPlan(room);
+
+      // inputLabIds must be unchanged — labA and labB are still the input pair
+      expect(Memory.rooms['W1N1'].inputLabIds).toEqual(['labA', 'labB']);
+      // All 9 labs should now be tracked
+      expect(Memory.rooms['W1N1'].labIds).toHaveLength(9);
+    });
+
+    it('re-elects inputLabIds only when a cached lab is no longer valid', () => {
+      // If one of the original input labs is destroyed (getObjectById returns null),
+      // ensureRoomPlan should elect fresh inputs from labIds[0..1].
+      const labIds = ['labC', 'labD', 'labE'];
+
+      const controllerPos = { findInRange: vi.fn(() => []) };
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: { my: true, level: 6, pos: controllerPos },
+        storage: undefined,
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_SOURCES) return [];
+          if (type === FIND_MY_STRUCTURES) {
+            const allLabs = labIds.map((id) => ({ id, structureType: STRUCTURE_LAB }));
+            if (opts?.filter) return allLabs.filter(opts.filter as any);
+            return allLabs;
+          }
+          if (type === FIND_MINERALS) return [];
+          return [];
+        }),
+      });
+
+      // labA and labB were input labs but both are now gone
+      (Memory as any).rooms = {
+        W1N1: {
+          sources: [],
+          layoutPlan: {
+            storagePos: { x: 25, y: 25 },
+            terminalPos: { x: 26, y: 25 },
+            towerPositions: [],
+            labPositions: [],
+            extensionPositions: [],
+          },
+          labIds: ['labA', 'labB', 'labC'],
+          inputLabIds: ['labA', 'labB'],
+        },
+      };
+
+      // labA and labB destroyed — only C/D/E survive
+      (Game as any).getObjectById = vi.fn((id: string) => {
+        if (['labC', 'labD', 'labE'].includes(id)) return { id, structureType: STRUCTURE_LAB };
+        return null;
+      });
+
+      ensureRoomPlan(room);
+
+      // Should re-elect from the newly discovered valid labs
+      expect(Memory.rooms['W1N1'].inputLabIds).toEqual(['labC', 'labD']);
+    });
+  });
 });
