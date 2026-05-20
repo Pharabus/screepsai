@@ -35,7 +35,7 @@ const MAX_LINKS: Record<number, number> = {
   8: 6,
 };
 
-const MAX_LABS: Record<number, number> = {
+export const MAX_LABS: Record<number, number> = {
   6: 3,
   7: 9,
   8: 10,
@@ -671,27 +671,29 @@ export function placeLabs(room: Room): void {
   const plan = mem?.layoutPlan;
 
   if (plan) {
+    const roomMem = (Memory.rooms[room.name] ??= {});
+    const blockedLog = (roomMem.labStampBlockedLog ??= {});
     for (const { x, y } of plan.labPositions) {
       const pos = new RoomPosition(x, y, room.name);
-      const blocked =
-        pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      const structs = pos.lookFor(LOOK_STRUCTURES);
+      const sites = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+      const blocked = structs.length > 0 || sites.length > 0;
       if (!blocked) {
         room.createConstructionSite(pos, STRUCTURE_LAB);
         return;
       }
-    }
-    if (Game.time % 100 === 0) {
-      const occupants = plan.labPositions.map(({ x, y }) => {
-        const pos = new RoomPosition(x, y, room.name);
+      const key = `${x},${y}`;
+      const lastLog = blockedLog[key];
+      if (lastLog === undefined || Game.time - lastLog >= 100) {
         const here = [
-          ...pos.lookFor(LOOK_STRUCTURES).map((s) => s.structureType),
-          ...pos.lookFor(LOOK_CONSTRUCTION_SITES).map((s) => `${s.structureType}-site`),
+          ...structs.map((s) => s.structureType),
+          ...sites.map((s) => `${s.structureType}-site`),
         ];
-        return `(${x},${y})=${here.join('+') || '?'}`;
-      });
-      console.log(
-        `[construction] ${room.name}: placeLabs blocked, all planned tiles occupied: ${occupants.join(' ')}`,
-      );
+        console.log(
+          `[construction] ${room.name}: placeLabs blocked at (${x},${y}) — ${here.join('+') || '?'}`,
+        );
+        blockedLog[key] = Game.time;
+      }
     }
     return;
   }

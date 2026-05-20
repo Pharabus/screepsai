@@ -378,6 +378,80 @@ describe('construction RCL gating', () => {
       placeLabs(room);
       expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
+
+    it('rate-limits blocked log per (x,y) to once per 100 ticks', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      // Save and override RoomPosition.prototype.lookFor so lab stamp positions appear blocked
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(() => [
+        { structureType: STRUCTURE_ROAD },
+      ]);
+      try {
+        const room = roomAt(7, { storage: { pos: { x: 25, y: 25 } } });
+        (Memory as any).rooms = {
+          W1N1: {
+            layoutPlan: {
+              storagePos: { x: 25, y: 25 },
+              terminalPos: { x: 24, y: 24 },
+              towerPositions: [],
+              labPositions: [{ x: 10, y: 10 }],
+              extensionPositions: [],
+            },
+          },
+        };
+        (Game as any).time = 1;
+        placeLabs(room);
+        expect(logSpy).toHaveBeenCalledTimes(1);
+
+        // 5 more calls within 100 ticks — still only 1 emission
+        for (let i = 0; i < 5; i++) placeLabs(room);
+        expect(logSpy).toHaveBeenCalledTimes(1);
+
+        // Advance past 100 ticks — log fires again
+        (Game as any).time = 102;
+        placeLabs(room);
+        expect(logSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+        logSpy.mockRestore();
+      }
+    });
+
+    it('logs once per blocked position even when multiple positions are blocked', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(() => [
+        { structureType: STRUCTURE_ROAD },
+      ]);
+      try {
+        const room = roomAt(7, { storage: { pos: { x: 25, y: 25 } } });
+        (Memory as any).rooms = {
+          W1N1: {
+            layoutPlan: {
+              storagePos: { x: 25, y: 25 },
+              terminalPos: { x: 24, y: 24 },
+              towerPositions: [],
+              labPositions: [
+                { x: 10, y: 10 },
+                { x: 11, y: 11 },
+              ],
+              extensionPositions: [],
+            },
+          },
+        };
+        (Game as any).time = 1;
+        placeLabs(room);
+        // Two positions blocked → two log emissions on first call
+        expect(logSpy).toHaveBeenCalledTimes(2);
+
+        // Second call within 100 ticks → no more emissions
+        placeLabs(room);
+        expect(logSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+        logSpy.mockRestore();
+      }
+    });
   });
 
   describe('placeCorridorRoads', () => {

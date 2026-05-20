@@ -18,6 +18,7 @@ import { profile, formatStats, resetStatsNow } from './utils/profiler';
 import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
 import { startClaim, canClaimAnotherRoom, scoreClaimTarget } from './utils/colonyPlanner';
+import { roles } from './roles';
 
 // Console-callable exports.
 export const stats = () => formatStats();
@@ -136,6 +137,7 @@ global.suggestSpawn = suggestSpawn;
 global.claim = claim;
 global.colonies = colonies;
 global.evaluateClaim = evaluateClaim;
+global.roles = roles;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

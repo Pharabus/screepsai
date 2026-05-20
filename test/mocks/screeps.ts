@@ -1,3 +1,5 @@
+import { resetTickCache } from '../../src/utils/tickCache';
+
 // Body part constants (string values matching Screeps runtime)
 (globalThis as any).MOVE = 'move';
 (globalThis as any).WORK = 'work';
@@ -284,4 +286,6 @@ export function resetGameGlobals(): void {
     segments: {} as Record<number, string>,
     setActiveSegments: vi.fn(),
   };
+  // Clear the tick cache so tests don't share stale path results
+  resetTickCache();
 }

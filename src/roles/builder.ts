@@ -3,6 +3,7 @@ import { gatherEnergy } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { MAX_LABS } from '../managers/construction';
 
 const BUILD_PRIORITY: Partial<Record<BuildableStructureConstant, number>> = {
   [STRUCTURE_SPAWN]: 0,
@@ -26,7 +27,7 @@ const states: StateMachineDefinition = {
   },
   BUILD: {
     run(creep) {
-      // Dismantle old-owner structures that block RCL-gated placement — doesn't need energy
+      // Pass 1: dismantle old-owner structures that block RCL-gated placement — doesn't need energy
       const hostile = creep.pos.findClosestByRange(FIND_HOSTILE_STRUCTURES, {
         filter: (s) =>
           s.structureType === STRUCTURE_EXTENSION || s.structureType === STRUCTURE_TOWER,
@@ -36,6 +37,29 @@ const states: StateMachineDefinition = {
           moveTo(creep, hostile, { range: 1, priority: PRIORITY_WORKER });
         }
         return undefined;
+      }
+
+      // Pass 2: dismantle roads sitting on planned lab stamp tiles — clears blocked lab sites
+      const plan = Memory.rooms[creep.room.name]?.layoutPlan;
+      if (plan?.labPositions) {
+        const rcl = creep.room.controller?.level ?? 0;
+        const maxLabs = MAX_LABS[rcl] ?? 0;
+        for (const { x, y } of plan.labPositions.slice(0, maxLabs)) {
+          const structs = creep.room.lookForAt(LOOK_STRUCTURES, x, y);
+          const hasLabOrCS =
+            structs.some((s) => s.structureType === STRUCTURE_LAB) ||
+            creep.room
+              .lookForAt(LOOK_CONSTRUCTION_SITES, x, y)
+              .some((s) => s.structureType === STRUCTURE_LAB);
+          if (hasLabOrCS) continue;
+          const road = structs.find((s) => s.structureType === STRUCTURE_ROAD);
+          if (!road) continue;
+          if (creep.pos.getRangeTo(road) > 3) continue;
+          if (creep.dismantle(road) === ERR_NOT_IN_RANGE) {
+            moveTo(creep, road, { range: 1, priority: PRIORITY_WORKER });
+          }
+          return undefined;
+        }
       }
 
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';

@@ -116,6 +116,8 @@ interface RoomMemory {
   roadsComplete?: boolean;
   /** Rate-limit tracking for overflow tower placement; stores "x,y" keys already warned about */
   overflowedTowers?: string[];
+  /** Rate-limit tracking for placeLabs blocked log; maps "x,y" → last emission tick */
+  labStampBlockedLog?: Record<string, number>;
   /**
    * Set when placeRemoteRoads() completes a full pass with all path steps roaded.
    * Re-checked every 50 ticks instead of every 5 when true.
