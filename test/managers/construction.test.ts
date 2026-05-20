@@ -319,7 +319,7 @@ describe('construction RCL gating', () => {
       );
     });
 
-    it('does not place if already at max for RCL', () => {
+    it('does not place if already at max for RCL 6 (3 labs)', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
       const room = roomAt(6, {
@@ -327,10 +327,48 @@ describe('construction RCL gating', () => {
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
-            if (opts?.filter) {
-              // Return 3 labs (max for RCL 6)
-              return [{}, {}, {}];
-            }
+            if (opts?.filter) return Array(3).fill({}); // 3 labs = RCL 6 max
+            return [];
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      placeLabs(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('places a lab at RCL 7 when fewer than 9 exist', () => {
+      const storagePos = new RoomPosition(25, 25, 'W1N1');
+      (storagePos as any).lookFor = vi.fn(() => []);
+      const room = roomAt(7, {
+        storage: { pos: storagePos },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return Array(6).fill({}); // 6 labs < RCL 7 max (9)
+            return [];
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      placeLabs(room);
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.any(RoomPosition),
+        STRUCTURE_LAB,
+      );
+    });
+
+    it('does not place at RCL 7 when already at 9 labs', () => {
+      const storagePos = new RoomPosition(25, 25, 'W1N1');
+      (storagePos as any).lookFor = vi.fn(() => []);
+      const room = roomAt(7, {
+        storage: { pos: storagePos },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return Array(9).fill({}); // 9 labs = RCL 7 max
             return [];
           }
           if (type === FIND_MY_CONSTRUCTION_SITES) return [];

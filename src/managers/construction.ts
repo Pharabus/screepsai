@@ -37,7 +37,7 @@ const MAX_LINKS: Record<number, number> = {
 
 const MAX_LABS: Record<number, number> = {
   6: 3,
-  7: 6,
+  7: 9,
   8: 10,
 };
 

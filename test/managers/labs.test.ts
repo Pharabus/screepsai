@@ -391,6 +391,34 @@ describe('runLabs', () => {
     expect(mem?.activeReaction?.output).toBe('ZK');
   });
 
+  it('runs reactions on all 7 output labs (9-lab RCL 7 configuration)', () => {
+    const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
+    const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
+    const outputLabs = Array.from({ length: 7 }, (_, i) =>
+      mockLab({ id: `lab${i + 3}`, capacity: { OH: 3000 } }),
+    );
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      return outputLabs.find((l) => l.id === id) ?? null;
+    });
+
+    setupRoom(7, {
+      labIds: ['lab1', 'lab2', ...outputLabs.map((l: any) => l.id)],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+    });
+
+    runLabs();
+
+    for (const lab of outputLabs) {
+      expect(lab.runReaction).toHaveBeenCalledWith(inputLab1, inputLab2);
+    }
+    expect(inputLab1.runReaction).not.toHaveBeenCalled();
+    expect(inputLab2.runReaction).not.toHaveBeenCalled();
+  });
+
   it('selects a reaction when none is active', () => {
     const inputLab1 = mockLab({ id: 'lab1', stored: {} });
     const inputLab2 = mockLab({ id: 'lab2', stored: {} });

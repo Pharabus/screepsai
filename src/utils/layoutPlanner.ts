@@ -1,16 +1,17 @@
 // Lab stamp: [dx, dy] offsets from lab anchor = storagePos + (2,2).
 // Positions 0-1 are input labs; 2-9 are output labs.
+// RCL 6 → 3 labs (indices 0-2), RCL 7 → 9 labs (indices 0-8), RCL 8 → 10 labs (all).
 export const LAB_STAMP: [number, number][] = [
   [0, 0], // input 1
   [1, 1], // input 2
-  [0, 1], // output (RCL 6: 3 labs)
-  [1, 0], // output (RCL 7: +3)
-  [2, 1],
-  [1, 2],
-  [2, 0], // output (RCL 8: +4)
-  [0, 2],
-  [2, 2],
-  [-1, 1],
+  [0, 1], // output — RCL 6 cap (3 total)
+  [1, 0], // output
+  [2, 1], // output
+  [1, 2], // output
+  [2, 0], // output
+  [0, 2], // output
+  [2, 2], // output — RCL 7 cap (9 total)
+  [-1, 1], // output — RCL 8 cap (10 total)
 ];
 
 // Extension stamp: [dx, dy] from spawn, ordered closest-first.

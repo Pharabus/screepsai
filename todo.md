@@ -60,7 +60,7 @@ The current AI only harvests energy from Sources. Screeps has four other harvest
 | --- | -------------------------------------------- | ----------------------------------------------- |
 | 4   | Storage                                      | Central stockpile (prereq for everything below) |
 | 6   | Extractor, Terminal, Labs (3)                | Mineral mining + lab reactions + market         |
-| 7   | Factory, more Labs (6)                       | Commodity production                            |
+| 7   | Factory, more Labs (9)                       | Commodity production + T2 reaction chains       |
 | 8   | Power Spawn, Observer, full labs (10), nuker | Power processing + deposit mining at scale      |
 
 Deposit mining (highway surfaces) is technically possible earlier but is only economical once we have a Factory (RCL 7) to refine commodities from them, so gate it there.
@@ -97,7 +97,7 @@ Deposit mining (highway surfaces) is technically possible earlier but is only ec
 
 ##### Stage 3 — Labs & boosts (RCL 6 → 8)
 
-- [x] **Lab cluster placement** — `placeLabs(room)` uses a stamp pattern (`LAB_STAMP` in `construction.ts`) anchored +2 tiles from storage. 10 positions where all output labs are within Chebyshev range 2 of both input labs. Places 3 at RCL 6, 6 at RCL 7, 10 at RCL 8. Room planner discovers labs and designates first two as input labs (`inputLabIds` in `RoomMemory`).
+- [x] **Lab cluster placement** — `placeLabs(room)` uses a stamp pattern (`LAB_STAMP` in `construction.ts`) anchored +2 tiles from storage. 10 positions where all output labs are within Chebyshev range 2 of both input labs. Places 3 at RCL 6, 9 at RCL 7, 10 at RCL 8. Room planner discovers labs and designates first two as input labs (`inputLabIds` in `RoomMemory`).
 - [x] **Lab manager** — `src/managers/labs.ts` `runLabs()` selects the best viable reaction (most available input materials) from `REACTIONS`, stores as `activeReaction` in `RoomMemory` (re-evaluated every 500 ticks). Runs `outputLab.runReaction(inputLab1, inputLab2)` on all non-input labs each tick. Hauler handles logistics: fills input labs from storage, collects output compounds from output labs, delivers to terminal or storage.
 - [x] **Input lab flushing** — When `activeReaction` changes, `labs.ts` detects stale minerals in input labs and sets `labFlushing` flag. Hauler's `pickupLabFlush()` withdraws wrong minerals before loading new inputs. Flag auto-clears when labs are clean.
 - [x] **Reaction chaining** — `src/utils/reactions.ts` provides `buildReactionChain`, `findNextChainStep`, `chainMissingInputs`, `REACTION_GOALS`. Labs now pick the highest viable step from a priority-ordered goal list (XGHO2→XLHO2→XGH2O→XZHO2 and tier-2 precursors), falling back to greedy if no goal chain is achievable.
@@ -290,11 +290,11 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 #### Spawning capacity
 
 - [x] **Place 2nd spawn** — `construction.ts` `placeSecondSpawn` at RCL ≥ 7; `computeLayout` now returns `spawnPositions[]` (up to 3, id-sorted). Spawner already iterates `Object.values(Game.spawns)` — no spawner changes needed.
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn now in (`placeSecondSpawn` v1.0.144). Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn now in (`placeSecondSpawn` v1.0.144). Labs 9-cap at RCL 7 now in (`MAX_LABS[7]=9` v1.0.145). Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
 
 #### Lab expansion & boost infrastructure
 
-- [ ] **Expand labs 3 → 9 at RCL 7** — Update the lab count gate in `construction.ts` (`MAX_LABS` table entry for RCL 7). With 9 labs we can run multi-step chains (XGHO2, XLHO2) instead of being stuck on tier-1 ZH2O.
+- [x] **Expand labs 3 → 9 at RCL 7** — `MAX_LABS[7]` raised from 6 to 9 in `construction.ts` (v1.0.145). LAB_STAMP already had 9 usable positions (indices 0-8 all within Chebyshev-2 of both input labs). `runLabs` iterates all non-input labIds with no hardcoded limit — scales to 7 output labs automatically.
 - [ ] **Upgrader boost dispatch wiring** — Wire `lab.boostCreep()` into the upgrader spawn→dispatch flow for XGH2O (+100% upgrade). Skip if compound stockpile < 30 × WORK parts. Requires a "boosting" state on spawned upgraders + lab reservation logic so the chosen lab isn't consumed by reactions while a creep is inbound. `src/roles/upgrader.ts`, `src/managers/labs.ts`.
 - [ ] **Boost application framework** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders. Prerequisite for boosted defenders (Phase 3) and boosted keeper killer (Phase 4).
 
