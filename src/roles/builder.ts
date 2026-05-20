@@ -4,6 +4,7 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { MAX_LABS } from '../managers/construction';
+import { LAB_STAMP } from '../utils/layoutPlanner';
 
 const BUILD_PRIORITY: Partial<Record<BuildableStructureConstant, number>> = {
   [STRUCTURE_SPAWN]: 0,
@@ -39,12 +40,18 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      // Pass 2: dismantle roads sitting on planned lab stamp tiles — clears blocked lab sites
+      // Pass 2: dismantle roads on planned lab stamp tiles — clears blocked lab sites.
+      // labPositions only records tiles that passed isTileBuildable at plan time; road-blocked
+      // slots are silently dropped, so we must re-walk the raw stamp to find them.
       const plan = Memory.rooms[creep.room.name]?.layoutPlan;
-      if (plan?.labPositions) {
+      if (plan?.storagePos) {
         const rcl = creep.room.controller?.level ?? 0;
         const maxLabs = MAX_LABS[rcl] ?? 0;
-        for (const { x, y } of plan.labPositions.slice(0, maxLabs)) {
+        const labAx = plan.storagePos.x + 2;
+        const labAy = plan.storagePos.y + 2;
+        for (const [dx, dy] of LAB_STAMP.slice(0, maxLabs)) {
+          const x = labAx + dx;
+          const y = labAy + dy;
           const structs = creep.room.lookForAt(LOOK_STRUCTURES, x, y);
           const hasLabOrCS =
             structs.some((s) => s.structureType === STRUCTURE_LAB) ||
