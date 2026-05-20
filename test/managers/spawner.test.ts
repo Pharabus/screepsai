@@ -1,6 +1,7 @@
 import {
   buildSpawnQueue,
   huntersNeeded,
+  keeperKillersNeeded,
   minersNeeded,
   haulersNeeded,
   upgradersNeeded,
@@ -1098,5 +1099,95 @@ describe('remoteHaulersWanted', () => {
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 4 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
+  });
+});
+
+describe('keeperKillersNeeded', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('returns 0 when energyCapacityAvailable < 5300', () => {
+    (Memory as any).rooms = { W1N1: { remoteRooms: ['W0N0'] }, W0N0: { scoutedHasKeepers: true } };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5299 });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when no remoteRooms have scoutedHasKeepers', () => {
+    (Memory as any).rooms = { W1N1: { remoteRooms: ['W2N1'] }, W2N1: {} };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when remoteRooms is empty', () => {
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 when one SK remote has no assigned killer', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'] },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    expect(keeperKillersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 when a killer is already assigned to the SK remote', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'] },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {
+      kk1: {
+        name: 'kk1',
+        memory: { role: 'keeperKiller', homeRoom: 'W1N1', targetRoom: 'W0N0' },
+        room: { name: 'W0N0' },
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 2 when two SK remotes each lack a killer', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0', 'W0N1'] },
+      W0N0: { scoutedHasKeepers: true },
+      W0N1: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    expect(keeperKillersNeeded(room)).toBe(2);
+  });
+
+  it('queues keeperKiller in buildSpawnQueue when SK remote has no killer', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'], minerEconomy: true },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const queue = buildSpawnQueue(room);
+    const entry = queue.find((r) => r.role === 'keeperKiller');
+    expect(entry).toBeDefined();
+    expect(entry?.memory?.targetRoom).toBe('W0N0');
+    expect(entry?.memory?.homeRoom).toBe('W1N1');
+  });
+
+  it('does not queue keeperKiller when energyCapacityAvailable < 5300', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'], minerEconomy: true },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+    const queue = buildSpawnQueue(room);
+    expect(queue.find((r) => r.role === 'keeperKiller')).toBeUndefined();
   });
 });

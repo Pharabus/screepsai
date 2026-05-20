@@ -42,6 +42,7 @@
 (globalThis as any).STRUCTURE_STORAGE = 'storage';
 (globalThis as any).STRUCTURE_TERMINAL = 'terminal';
 (globalThis as any).STRUCTURE_LAB = 'lab';
+(globalThis as any).STRUCTURE_KEEPER_LAIR = 'keeperLair';
 
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';

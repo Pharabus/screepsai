@@ -1,6 +1,7 @@
 import {
   buildBody,
   buildHunterBody,
+  buildKeeperKillerBody,
   buildMinerBody,
   buildRemoteMinerBody,
   buildUpgraderBody,
@@ -162,5 +163,55 @@ describe('buildHunterBody', () => {
     expect(body[0]).toBe(TOUGH);
     expect(body[1]).toBe(TOUGH);
     expect(body[2]).toBe(TOUGH);
+  });
+});
+
+describe('buildKeeperKillerBody', () => {
+  it('returns null below 5300 energy', () => {
+    expect(buildKeeperKillerBody(5299)).toBeNull();
+    expect(buildKeeperKillerBody(0)).toBeNull();
+  });
+
+  it('returns tier-1 body at exactly 5300 energy', () => {
+    const body = buildKeeperKillerBody(5300);
+    expect(body).not.toBeNull();
+    expect(body!.filter((p) => p === TOUGH).length).toBe(6);
+    expect(body!.filter((p) => p === MOVE).length).toBe(10);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(20);
+    expect(body!.filter((p) => p === HEAL).length).toBe(4);
+  });
+
+  it('returns tier-1 body at 6999 energy', () => {
+    const body = buildKeeperKillerBody(6999);
+    expect(body!.filter((p) => p === TOUGH).length).toBe(6);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(20);
+    expect(body!.filter((p) => p === HEAL).length).toBe(4);
+  });
+
+  it('returns tier-2 body at exactly 7000 energy', () => {
+    const body = buildKeeperKillerBody(7000);
+    expect(body).not.toBeNull();
+    expect(body!.filter((p) => p === TOUGH).length).toBe(8);
+    expect(body!.filter((p) => p === MOVE).length).toBe(12);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(25);
+    expect(body!.filter((p) => p === HEAL).length).toBe(8);
+  });
+
+  it('returns tier-2 body above 7000 energy', () => {
+    const body = buildKeeperKillerBody(10000);
+    expect(body!.filter((p) => p === TOUGH).length).toBe(8);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(25);
+  });
+
+  it('places TOUGH first and HEAL last for damage absorption', () => {
+    const body = buildKeeperKillerBody(5300)!;
+    expect(body[0]).toBe(TOUGH);
+    expect(body[body.length - 1]).toBe(HEAL);
+  });
+
+  it('places TOUGH first and HEAL last in tier-2 body', () => {
+    const body = buildKeeperKillerBody(7000)!;
+    expect(body[0]).toBe(TOUGH);
+    expect(body[body.length - 1]).toBe(HEAL);
   });
 });

@@ -96,6 +96,38 @@ export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
 }
 
 /**
+ * Build a keeper killer body for clearing Source Keepers from SK rooms.
+ *
+ * Three tiers keyed on energyCapacityAvailable:
+ *   < 5300  — room not developed enough; returns null (caller skips the spawn).
+ *   5300–6999 — [TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]; clears SK in ~18 ticks.
+ *   ≥ 7000  — [TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]; clears SK in ~14 ticks.
+ *
+ * Body order: TOUGH first (absorbs ranged hits), MOVE, ATTACK, HEAL last.
+ * Returns null rather than [] when below threshold so callers can distinguish
+ * "skip spawning entirely" from "can't afford it right now".
+ */
+export function buildKeeperKillerBody(energyCap: number): BodyPartConstant[] | null {
+  if (energyCap >= 7000) {
+    return [
+      ...Array(8).fill(TOUGH),
+      ...Array(12).fill(MOVE),
+      ...Array(25).fill(ATTACK),
+      ...Array(8).fill(HEAL),
+    ];
+  }
+  if (energyCap >= 5300) {
+    return [
+      ...Array(6).fill(TOUGH),
+      ...Array(10).fill(MOVE),
+      ...Array(20).fill(ATTACK),
+      ...Array(4).fill(HEAL),
+    ];
+  }
+  return null;
+}
+
+/**
  * Build the largest creep body that fits within the available energy,
  * repeating a pattern of body parts up to a maximum number of repetitions.
  *

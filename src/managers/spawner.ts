@@ -1,6 +1,7 @@
 import {
   buildBody,
   buildHunterBody,
+  buildKeeperKillerBody,
   buildMinerBody,
   buildRemoteMinerBody,
   buildUpgraderBody,
@@ -379,6 +380,30 @@ export function huntersNeeded(homeRoom: Room): number {
   return getInvaderTargetRooms(homeRoom).length;
 }
 
+/** SK rooms (in remoteRooms) that need a keeper killer from this colony. */
+function getKeeperTargetRooms(home: Room): string[] {
+  return (Memory.rooms[home.name]?.remoteRooms ?? []).filter(
+    (r) => !!Memory.rooms[r]?.scoutedHasKeepers,
+  );
+}
+
+/**
+ * Count of SK-flagged remote rooms that lack an assigned keeper killer.
+ * Returns 0 when energyCapacityAvailable < 5300 (body can't be built).
+ */
+export function keeperKillersNeeded(home: Room): number {
+  if (home.energyCapacityAvailable < 5300) return 0;
+  return getKeeperTargetRooms(home).filter(
+    (targetRoom) =>
+      !Object.values(Game.creeps).some(
+        (c) =>
+          c.memory.role === 'keeperKiller' &&
+          c.memory.targetRoom === targetRoom &&
+          c.memory.homeRoom === home.name,
+      ),
+  ).length;
+}
+
 export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
@@ -425,6 +450,30 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         },
       });
     }
+  }
+
+  // Priority 2: Keeper killers for SK rooms — queued before miners so Source Keeper
+  // rooms stay clear and don't block remote energy production indefinitely.
+  for (const targetRoom of getKeeperTargetRooms(room)) {
+    const hasKiller = Object.values(Game.creeps).some(
+      (c) =>
+        c.memory.role === 'keeperKiller' &&
+        c.memory.targetRoom === targetRoom &&
+        c.memory.homeRoom === room.name,
+    );
+    if (hasKiller) continue;
+    const keeperBody = buildKeeperKillerBody(room.energyCapacityAvailable);
+    if (!keeperBody) continue;
+    queue.push({
+      role: 'keeperKiller',
+      body: keeperBody,
+      minCount: countCreepsByRole('keeperKiller', room.name) + 1,
+      memory: {
+        role: 'keeperKiller' as CreepRoleName,
+        homeRoom: room.name,
+        targetRoom,
+      },
+    });
   }
 
   if (isMinerEconomy) {

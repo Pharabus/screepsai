@@ -305,12 +305,12 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 
 #### Source Keeper rooms — Killer role (RCL 7)
 
-- [ ] **Add `keeperKiller` role** — State machine: `TRAVEL` paths to target room center; `PATROL` cycles between the 3 keeper lair positions, attacking any Source Keeper in range and self-healing each tick; `RETREAT` paths home to recycle when TTL < travel time. Body: `buildKeeperKillerBody`, 3 tiers gated by `energyCapacityAvailable`:
+- [x] **Add `keeperKiller` role** — State machine: `TRAVEL` paths to target room center; `PATROL` cycles between the 3 keeper lair positions, attacking any Source Keeper in range and self-healing each tick; `RETREAT` paths home to recycle when TTL < travel time. Body: `buildKeeperKillerBody`, 3 tiers gated by `energyCapacityAvailable`:
   - < 5300 energy: not spawned (RCL 7 minimum)
   - 5300–6999: `[TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]` (~3800 energy) — kills SK in ~18 ticks, minimal self-healing, relies on TOUGH absorbing ranged hits cheaply
   - ≥ 7000: `[TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]` — more sustainable; drops an SK in ~14 ticks, heals 96/tick
-- [ ] **Store lair positions in room memory** — When a keeper killer enters the target room, use `room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_KEEPER_LAIR })` to record lair positions into `RoomMemory.keeperLairPositions` (array of `{x, y}`). Patrol visits them in order, closest-first from current position.
-- [ ] **Spawner integration for keeperKiller** — Add `keeperKillersNeeded(room)` in `spawner.ts`: returns 1 per SK remote room that has an assigned keeper killer with TTL > travel time. Spawn at Priority 2 (after defenders, before miners) so the room is never mined without killer coverage. Gate on `room.energyCapacityAvailable >= 5300`.
+- [x] **Store lair positions in room memory** — When a keeper killer enters the target room, use `room.find(FIND_STRUCTURES, { filter: s => s.structureType === STRUCTURE_KEEPER_LAIR })` to record lair positions into `RoomMemory.keeperLairPositions` (array of `{x, y}`). Patrol visits them in order, closest-first from current position.
+- [x] **Spawner integration for keeperKiller** — Add `keeperKillersNeeded(room)` in `spawner.ts`: returns 1 per SK remote room that has an assigned keeper killer with TTL > travel time. Spawn at Priority 2 (after defenders, before miners) so the room is never mined without killer coverage. Gate on `room.energyCapacityAvailable >= 5300`.
 
 #### Source Keeper rooms — SK remote mining (RCL 7, after killer is stable)
 

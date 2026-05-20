@@ -15,7 +15,8 @@ type CreepRoleName =
   | 'remoteBuilder'
   | 'claimer'
   | 'colonyBuilder'
-  | 'hunter';
+  | 'hunter'
+  | 'keeperKiller';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -141,6 +142,8 @@ interface RoomMemory {
   scoutedHasController?: boolean;
   /** True when the room contains Source Keeper Lairs — permanently hostile, never remote-mine */
   scoutedHasKeepers?: boolean;
+  /** Cached lair positions for keeperKiller patrol; populated on first arrival */
+  keeperLairPositions?: { x: number; y: number }[];
   /** Controller position — drives base-layout viability when evaluating a claim */
   scoutedControllerPos?: { x: number; y: number };
   /** Mineral type + position — used to avoid claiming a duplicate mineral and for extractor planning */
