@@ -84,6 +84,8 @@ export interface LayoutPlan {
   towerPositions: { x: number; y: number }[];
   labPositions: { x: number; y: number }[];
   extensionPositions: { x: number; y: number }[];
+  /** Up to 3 spawn positions. Index 0 = primary/live spawn. Index 1-2 = 2nd/3rd spawns at RCL 7-8. */
+  spawnPositions: { x: number; y: number }[];
 }
 
 function inBounds(x: number, y: number): boolean {
@@ -287,6 +289,42 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     reserved.add(`${cs.pos.x},${cs.pos.y}`);
   }
 
+  // Step: Spawn positions — seed from live spawns (id-sorted), then pick additional
+  // slots up to cap 3 so the construction manager can place 2nd/3rd spawns at RCL 7-8.
+  const liveSpawns = room
+    .find(FIND_MY_STRUCTURES, { filter: (s) => s.structureType === STRUCTURE_SPAWN })
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((s) => ({ x: s.pos.x, y: s.pos.y }));
+  const spawnPositions: { x: number; y: number }[] = [...liveSpawns];
+  for (const p of liveSpawns) reserved.add(`${p.x},${p.y}`);
+
+  const spawnCap = 3;
+  if (spawnPositions.length < spawnCap) {
+    const pickedKeys = new Set(spawnPositions.map((p) => `${p.x},${p.y}`));
+    const needed = spawnCap - spawnPositions.length;
+    const spawnCandidates: { x: number; y: number }[] = [];
+    for (let range = 3; range <= 8; range++) {
+      for (let dx = -range; dx <= range; dx++) {
+        for (let dy = -range; dy <= range; dy++) {
+          if (Math.abs(dx) !== range && Math.abs(dy) !== range) continue;
+          const x = spawn.pos.x + dx;
+          const y = spawn.pos.y + dy;
+          if (!inBounds(x, y)) continue;
+          if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+          const key = `${x},${y}`;
+          if (reserved.has(key) || pickedKeys.has(key)) continue;
+          if (!isTileBuildable(liveMap, x, y, STRUCTURE_SPAWN)) continue;
+          spawnCandidates.push({ x, y });
+        }
+      }
+    }
+    for (let i = 0; i < needed && i < spawnCandidates.length; i++) {
+      const p = spawnCandidates[i]!;
+      spawnPositions.push(p);
+      reserved.add(`${p.x},${p.y}`);
+    }
+  }
+
   // Step 2: Lab positions (anchor = storagePos + (2,2))
   const labAx = storagePos.x + 2;
   const labAy = storagePos.y + 2;
@@ -297,6 +335,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     const y = labAy + dy;
     if (!inBounds(x, y)) continue;
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+    if (reserved.has(`${x},${y}`)) continue;
     if (!isTileBuildable(liveMap, x, y, STRUCTURE_LAB)) continue;
     labPositions.push({ x, y });
     reserved.add(`${x},${y}`);
@@ -398,7 +437,14 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     }
   }
 
-  return { storagePos, terminalPos, towerPositions, labPositions, extensionPositions };
+  return {
+    storagePos,
+    terminalPos,
+    towerPositions,
+    labPositions,
+    extensionPositions,
+    spawnPositions,
+  };
 }
 
 /**

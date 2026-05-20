@@ -289,8 +289,8 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 
 #### Spawning capacity
 
-- [ ] **Place 2nd spawn** — `construction.ts` at RCL ≥ 7. Pick a position from `layoutPlan` (needs a `spawnPositions` entry — add to `computeLayout` and `LayoutPlan`). Register the new spawn ID in `RoomMemory` so `runSpawner` uses both. Spawner already iterates `Object.values(Game.spawns)` so spawn discovery is free; the main work is placement and avoiding collisions with extensions/labs in the plan.
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn (RCL 7), Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
+- [x] **Place 2nd spawn** — `construction.ts` `placeSecondSpawn` at RCL ≥ 7; `computeLayout` now returns `spawnPositions[]` (up to 3, id-sorted). Spawner already iterates `Object.values(Game.spawns)` — no spawner changes needed.
+- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn now in (`placeSecondSpawn` v1.0.144). Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). Labs already handled (expand at 7 and 8 via `MAX_LABS` table). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
 
 #### Lab expansion & boost infrastructure
 

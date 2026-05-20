@@ -175,11 +175,11 @@ describe('computeLayout', () => {
 
   it('W43N58 regression: live towers seeded, additional slots avoid live structures', () => {
     // Exact coordinates from the MCP diagnostic that triggered this fix.
-    // Spawn estimated at (22,25); towers are outside range 3-6 so they would
-    // never be picked as candidates — only the seeding path preserves them.
-    // The extension at (18,28) and road at (19,30) are inside the ring and must
-    // be excluded from new tower slots by isTileBuildable.
-    const spawnPos = new RoomPosition(22, 25, 'W1N1');
+    // Spawn confirmed at (16,31) by team-lead-2 MCP 2026-05-20.
+    // With this spawn, all 9 live structures fall inside the range 3-6 ring —
+    // towers are in reserved so excluded as candidates but still seeded;
+    // roads and extensions are blocked by isTileBuildable for new slots.
+    const spawnPos = new RoomPosition(16, 31, 'W1N1');
     const liveTowers = [
       { structureType: STRUCTURE_TOWER, pos: new RoomPosition(13, 29, 'W1N1'), id: 'tA' },
       { structureType: STRUCTURE_TOWER, pos: new RoomPosition(13, 31, 'W1N1'), id: 'tB' },
@@ -316,6 +316,65 @@ describe('computeLayout', () => {
     expect(towerKeys).toContain('28,22');
     // Extension CS tile must not appear as a new tower slot
     expect(towerKeys).not.toContain('24,23');
+  });
+
+  it('spawnPositions has 3 entries for a greenfield room', () => {
+    const room = makeRoom();
+    const plan = computeLayout(room)!;
+    expect(plan.spawnPositions.length).toBe(3);
+  });
+
+  it('spawnPositions[0] is the live spawn and no other plan field uses that tile', () => {
+    const liveSpawn = {
+      structureType: STRUCTURE_SPAWN,
+      pos: new RoomPosition(16, 31, 'W1N1'),
+      id: 's1',
+    };
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [liveSpawn];
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? [liveSpawn].filter(opts.filter) : [liveSpawn];
+      return [];
+    };
+    const plan = computeLayout(room)!;
+    expect(plan.spawnPositions[0]).toEqual({ x: 16, y: 31 });
+    expect(plan.spawnPositions.length).toBe(3);
+    const spawnKey = '16,31';
+    expect(plan.towerPositions.map((p) => `${p.x},${p.y}`)).not.toContain(spawnKey);
+    expect(plan.labPositions.map((p) => `${p.x},${p.y}`)).not.toContain(spawnKey);
+    expect(plan.extensionPositions.map((p) => `${p.x},${p.y}`)).not.toContain(spawnKey);
+    expect(`${plan.storagePos.x},${plan.storagePos.y}`).not.toBe(spawnKey);
+    expect(`${plan.terminalPos.x},${plan.terminalPos.y}`).not.toBe(spawnKey);
+  });
+
+  it('spawnPositions picks only buildable tiles — no new slot on a live road', () => {
+    // Block the first natural candidate range-3 tiles with roads so the planner
+    // must skip past them and still fill 3 spawn positions total.
+    const spawnX = 25,
+      spawnY = 25;
+    const roads: any[] = [];
+    for (let dx = -3; dx <= 3; dx++) {
+      for (let dy = -3; dy <= 3; dy++) {
+        if (Math.abs(dx) !== 3 && Math.abs(dy) !== 3) continue;
+        roads.push({
+          structureType: STRUCTURE_ROAD,
+          pos: new RoomPosition(spawnX + dx, spawnY + dy, 'W1N1'),
+        });
+      }
+    }
+    const roadKeys = new Set(roads.map((r) => `${r.pos.x},${r.pos.y}`));
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(spawnX, spawnY, 'W1N1') }];
+      if (type === FIND_STRUCTURES) return opts?.filter ? roads.filter(opts.filter) : roads;
+      return [];
+    };
+    const plan = computeLayout(room)!;
+    expect(plan.spawnPositions.length).toBe(3);
+    for (const p of plan.spawnPositions) {
+      expect(roadKeys.has(`${p.x},${p.y}`)).toBe(false);
+    }
   });
 });
 

@@ -4,6 +4,7 @@ import {
   placeSourceContainers,
   placeControllerContainer,
   placeStorage,
+  placeSecondSpawn,
   placeRoads,
   placeCorridorRoads,
   placeRamparts,
@@ -806,5 +807,128 @@ describe('clearLabBlockers', () => {
     clearLabBlockers(room);
     expect(blocker1.destroy).toHaveBeenCalledTimes(1);
     expect(blocker2.destroy).not.toHaveBeenCalled();
+  });
+});
+
+describe('placeSecondSpawn', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  function spawnRoom(rcl: number, spawnPositions: { x: number; y: number }[]): any {
+    // placeSecondSpawn reads from the global Memory, not room.memory
+    Memory.rooms['W1N1'] = {
+      layoutPlan: {
+        spawnPositions,
+        towerPositions: [],
+        labPositions: [],
+        extensionPositions: [],
+        storagePos: { x: 30, y: 30 },
+        terminalPos: { x: 31, y: 30 },
+      },
+    };
+    return roomAt(rcl);
+  }
+
+  it('is a no-op below RCL 7', () => {
+    const room = spawnRoom(6, [
+      { x: 25, y: 25 },
+      { x: 28, y: 25 },
+    ]);
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('places at spawnPositions[1] at RCL 7 when tile is free', () => {
+    const room = spawnRoom(7, [
+      { x: 25, y: 25 },
+      { x: 29, y: 25 },
+      { x: 25, y: 29 },
+    ]);
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 29, y: 25 }),
+      STRUCTURE_SPAWN,
+    );
+  });
+
+  it('is idempotent when a construction site already occupies spawnPositions[1]', () => {
+    const room = spawnRoom(7, [
+      { x: 25, y: 25 },
+      { x: 29, y: 25 },
+      { x: 25, y: 29 },
+    ]);
+    // 1 built spawn + 1 CS at spawnPositions[1] = 2 = RCL 7 cap → early-out, no new site.
+    room.find = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_MY_STRUCTURES) {
+        const spawns = [{ structureType: STRUCTURE_SPAWN }];
+        return opts?.filter ? spawns.filter(opts.filter) : spawns;
+      }
+      if (type === FIND_MY_CONSTRUCTION_SITES) {
+        const sites = [{ structureType: STRUCTURE_SPAWN }];
+        return opts?.filter ? sites.filter(opts.filter) : sites;
+      }
+      return [];
+    });
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('places 3rd spawn at RCL 8 when 2 spawns are already built', () => {
+    const room = spawnRoom(8, [
+      { x: 25, y: 25 },
+      { x: 29, y: 25 },
+      { x: 25, y: 29 },
+    ]);
+    // 2 spawns already built + 0 sites → current = 2, max = 3.
+    // Index 1 (29,25) is occupied by a live spawn so the loop falls through to index 2.
+    room.find = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_MY_STRUCTURES) {
+        const spawns = [{ structureType: STRUCTURE_SPAWN }, { structureType: STRUCTURE_SPAWN }];
+        return opts?.filter ? spawns.filter(opts.filter) : spawns;
+      }
+      if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+      return [];
+    });
+    room.lookForAt = vi.fn((type: string, x: number, y: number) => {
+      if (type === LOOK_STRUCTURES && x === 29 && y === 25)
+        return [{ structureType: STRUCTURE_SPAWN }];
+      return [];
+    });
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 25, y: 29 }),
+      STRUCTURE_SPAWN,
+    );
+  });
+
+  it('is a no-op when spawnPositions has fewer than 2 entries', () => {
+    const room = spawnRoom(7, [{ x: 25, y: 25 }]);
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when current spawn count already meets the RCL cap', () => {
+    const room = spawnRoom(7, [
+      { x: 25, y: 25 },
+      { x: 29, y: 25 },
+    ]);
+    // 1 built spawn + 1 site = 2 = max at RCL 7
+    room.find = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_MY_STRUCTURES) {
+        const spawns = [{ structureType: STRUCTURE_SPAWN }];
+        return opts?.filter ? spawns.filter(opts.filter) : spawns;
+      }
+      if (type === FIND_MY_CONSTRUCTION_SITES) {
+        const sites = [{ structureType: STRUCTURE_SPAWN }];
+        return opts?.filter ? sites.filter(opts.filter) : sites;
+      }
+      return [];
+    });
+    placeSecondSpawn(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
   });
 });

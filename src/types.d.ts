@@ -103,6 +103,8 @@ interface RoomMemory {
     towerPositions: { x: number; y: number }[];
     labPositions: { x: number; y: number }[];
     extensionPositions: { x: number; y: number }[];
+    /** Up to 3 spawn positions (index 0 = primary/live spawn, 1-2 = 2nd/3rd RCL 7-8 spawns). */
+    spawnPositions?: { x: number; y: number }[];
   };
   // Best spawn position suggestion for a not-yet-claimed room
   suggestedSpawnPos?: { x: number; y: number; score: number };

@@ -41,6 +41,17 @@ const MAX_LABS: Record<number, number> = {
   8: 10,
 };
 
+const MAX_SPAWNS: Record<number, number> = {
+  1: 1,
+  2: 1,
+  3: 1,
+  4: 1,
+  5: 1,
+  6: 1,
+  7: 2,
+  8: 3,
+};
+
 function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
   const built = room.find(FIND_MY_STRUCTURES, {
     filter: (s) => s.structureType === type,
@@ -94,6 +105,7 @@ export function getPlannedReserved(room: Room): Set<string> {
   for (const p of plan.towerPositions) set.add(`${p.x},${p.y}`);
   for (const p of plan.labPositions) set.add(`${p.x},${p.y}`);
   for (const p of plan.extensionPositions) set.add(`${p.x},${p.y}`);
+  for (const p of plan.spawnPositions ?? []) set.add(`${p.x},${p.y}`);
   return set;
 }
 
@@ -269,6 +281,30 @@ export function placeStorage(room: Room): void {
   if (!spawn) return;
   const pos = findOpenPosition(room, spawn.pos, 2, 4);
   if (pos) room.createConstructionSite(pos, STRUCTURE_STORAGE);
+}
+
+export function placeSecondSpawn(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 7) return;
+
+  const maxSpawns = MAX_SPAWNS[rcl] ?? 1;
+  const current = countStructuresAndSites(room, STRUCTURE_SPAWN);
+  if (current >= maxSpawns) return;
+
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  if (!plan?.spawnPositions || plan.spawnPositions.length < 2) return;
+
+  // Index 0 is the primary spawn; place sites for index 1+ only.
+  for (let i = 1; i < plan.spawnPositions.length; i++) {
+    const { x, y } = plan.spawnPositions[i]!;
+    const blocked =
+      room.lookForAt(LOOK_STRUCTURES, x, y).length > 0 ||
+      room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y).length > 0;
+    if (!blocked) {
+      room.createConstructionSite(new RoomPosition(x, y, room.name), STRUCTURE_SPAWN);
+      return; // one per tick
+    }
+  }
 }
 
 export function placeRoads(room: Room): void {
@@ -981,6 +1017,7 @@ export function runConstruction(): void {
     placeSourceContainers(room);
     placeControllerContainer(room);
     placeStorage(room);
+    placeSecondSpawn(room);
     placeLinks(room);
     placeExtensions(room);
     placeTowers(room);
