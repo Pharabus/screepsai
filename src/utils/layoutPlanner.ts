@@ -133,6 +133,62 @@ function isTileBuildable(
   return !existing || existing === forType;
 }
 
+const NON_WALKABLE_STRUCTURES = new Set<string>([
+  STRUCTURE_LAB,
+  STRUCTURE_SPAWN,
+  STRUCTURE_EXTENSION,
+  STRUCTURE_STORAGE,
+  STRUCTURE_TERMINAL,
+  STRUCTURE_TOWER,
+  STRUCTURE_LINK,
+  STRUCTURE_WALL,
+]);
+
+const CARDINALS: [number, number][] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
+
+/**
+ * Returns false if placing a non-walkable structure at (x, y) would leave any
+ * adjacent planned-or-built non-walkable structure with zero walkable neighbours.
+ * Prevents the W43N58 corridor-strand bug.
+ */
+function isAccessible(
+  x: number,
+  y: number,
+  terrain: RoomTerrain,
+  liveMap: Map<string, string>,
+  reserved: Set<string>,
+): boolean {
+  const isWalkableFrom = (cx: number, cy: number): boolean => {
+    if (cx === x && cy === y) return false;
+    if (!inBounds(cx, cy)) return false;
+    if (terrain.get(cx, cy) === TERRAIN_MASK_WALL) return false;
+    const t = liveMap.get(`${cx},${cy}`);
+    if (t && NON_WALKABLE_STRUCTURES.has(t)) return false;
+    if (reserved.has(`${cx},${cy}`)) return false;
+    return true;
+  };
+
+  if (!CARDINALS.some(([dx, dy]) => isWalkableFrom(x + dx, y + dy))) return false;
+
+  for (const [dx, dy] of CARDINALS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (!inBounds(nx, ny)) continue;
+    const nType = liveMap.get(`${nx},${ny}`);
+    const isNonWalkable =
+      (nType !== undefined && NON_WALKABLE_STRUCTURES.has(nType)) || reserved.has(`${nx},${ny}`);
+    if (!isNonWalkable) continue;
+    if (!CARDINALS.some(([cdx, cdy]) => isWalkableFrom(nx + cdx, ny + cdy))) return false;
+  }
+
+  return true;
+}
+
 function countBuildableLabPositions(
   storageX: number,
   storageY: number,
@@ -330,6 +386,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   const labAx = storagePos.x + 2;
   const labAy = storagePos.y + 2;
   const labPositions: { x: number; y: number }[] = [];
+  let labStampBuildable = 0;
 
   for (const [dx, dy] of LAB_STAMP) {
     const x = labAx + dx;
@@ -338,8 +395,16 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
     if (reserved.has(`${x},${y}`)) continue;
     if (!isTileBuildable(liveMap, x, y, STRUCTURE_LAB)) continue;
+    labStampBuildable++;
+    if (!isAccessible(x, y, terrain, liveMap, reserved)) continue; // Prevents the W43N58 corridor-strand bug
     labPositions.push({ x, y });
     reserved.add(`${x},${y}`);
+  }
+
+  if (labPositions.length < labStampBuildable) {
+    console.log(
+      `[layout] ${room.name}: lab stamp can only place ${labPositions.length}/${labStampBuildable} positions due to accessibility constraints`,
+    );
   }
 
   // Step 3: Terminal position — near storage, not in lab area

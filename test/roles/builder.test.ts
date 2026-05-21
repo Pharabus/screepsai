@@ -131,10 +131,9 @@ describe('builder', () => {
     });
   });
 
-  describe('lab stamp road clearance', () => {
-    // storagePos (8,8) → lab anchor (10,10).
-    // LAB_STAMP[0] = [0,0] → world (10,10): the road position used in generic tests.
-    // LAB_STAMP[9] = [-1,1] → world (9,11): the RCL 8 slot.
+  describe.skip('lab stamp road clearance (removed — builder no longer dismantles stamp tiles)', () => {
+    // These tests covered Pass 2 dismantle scan which was removed in v1.0.151.
+    // The isAccessible filter in pickLabPositions is the correct fix; see layoutPlanner.test.ts.
     const labPlan = {
       storagePos: { x: 8, y: 8 },
       terminalPos: { x: 7, y: 8 },

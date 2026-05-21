@@ -99,7 +99,7 @@ function findOpenPosition(
 export function getPlannedReserved(room: Room): Set<string> {
   const plan = Memory.rooms[room.name]?.layoutPlan;
   const set = new Set<string>();
-  if (!plan) return set;
+  if (!plan?.storagePos) return set;
   set.add(`${plan.storagePos.x},${plan.storagePos.y}`);
   set.add(`${plan.terminalPos.x},${plan.terminalPos.y}`);
   for (const p of plan.towerPositions) set.add(`${p.x},${p.y}`);

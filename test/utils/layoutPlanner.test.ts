@@ -378,6 +378,125 @@ describe('computeLayout', () => {
   });
 });
 
+describe('isAccessible filter in lab stamp loop', () => {
+  it('all planned lab positions have ≥1 walkable cardinal neighbour in the final plan', () => {
+    // In a clean room, the filter must ensure every placed lab remains reachable.
+    const room = makeRoom({
+      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+    });
+    const plan = computeLayout(room)!;
+    // Build the set of lab keys to check accessibility in the final configuration.
+    const labKeys = new Set(plan.labPositions.map((p) => `${p.x},${p.y}`));
+    const spawnKey = '25,25';
+    const storageKey = '27,25';
+    const towerKeys = new Set(plan.towerPositions.map((p) => `${p.x},${p.y}`));
+    const cardinals: [number, number][] = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ];
+    const NON_WALKABLE = new Set([
+      STRUCTURE_LAB,
+      STRUCTURE_SPAWN,
+      STRUCTURE_EXTENSION,
+      STRUCTURE_STORAGE,
+      STRUCTURE_TERMINAL,
+      STRUCTURE_TOWER,
+      STRUCTURE_LINK,
+      STRUCTURE_WALL,
+    ]);
+    for (const { x, y } of plan.labPositions) {
+      const hasWalkable = cardinals.some(([dx, dy]) => {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 2 || nx > 47 || ny < 2 || ny > 47) return false;
+        const key = `${nx},${ny}`;
+        if (labKeys.has(key)) return false;
+        if (key === spawnKey || key === storageKey) return false;
+        if (towerKeys.has(key)) return false;
+        return true;
+      });
+      expect(hasWalkable).toBe(true);
+    }
+  });
+
+  it('W43N58 regression: stamp positions [5] and [9] rejected, core cluster placed', () => {
+    // W43N58: spawn=(16,31), storage=(16,29) → labAx=18, labAy=31
+    // LAB_STAMP[5]=[1,2]→(19,33): would strand lab[1]=(19,32) with 0 walkable neighbours
+    // LAB_STAMP[9]=[-1,1]→(17,32): would strand lab[2]=(18,32) with 0 walkable neighbours
+    const room = makeRoom();
+    room.find = (type: number) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(16, 31, 'W1N1') }];
+      if (type === FIND_STRUCTURES) return [];
+      return [];
+    };
+    room.getTerrain = () => makeTerrain();
+    // Force storage position to (16,29) so labAx=18, labAy=31
+    (room as any).storage = { pos: new RoomPosition(16, 29, 'W1N1') };
+    const plan = computeLayout(room)!;
+    const labKeys = new Set(plan.labPositions.map((p) => `${p.x},${p.y}`));
+    // Rejected positions must not be in the plan
+    expect(labKeys.has('19,33')).toBe(false); // stamp[5] — strands (19,32)
+    expect(labKeys.has('17,32')).toBe(false); // stamp[9] — strands (18,32)
+    // Core cluster must still be placed
+    expect(labKeys.has('18,31')).toBe(true); // stamp[0]
+    expect(labKeys.has('19,32')).toBe(true); // stamp[1]
+    expect(labKeys.has('18,32')).toBe(true); // stamp[2]
+  });
+
+  it('under-fill log is emitted when accessibility rejects stamp positions', () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const room = makeRoom({
+      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+    });
+    computeLayout(room);
+    const calls = consoleSpy.mock.calls.map((args) => args.join(' '));
+    const logged = calls.some(
+      (msg) => msg.includes('[layout]') && msg.includes('lab stamp can only place'),
+    );
+    expect(logged).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('no log when all buildable stamp positions pass accessibility', () => {
+    // Block all lab stamp positions with walls except one — that one passes
+    // accessibility trivially (no adjacent non-walkable reserved neighbours).
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // With storage at (27,25): labAx=29, labAy=27
+    // Block all stamp positions except [0]=(29,27) with walls
+    const walls = new Set<string>();
+    const labAx = 29;
+    const labAy = 27;
+    const LAB_STAMP_LOCAL: [number, number][] = [
+      [0, 0],
+      [1, 1],
+      [0, 1],
+      [1, 0],
+      [2, 1],
+      [1, 2],
+      [2, 0],
+      [0, 2],
+      [2, 2],
+      [-1, 1],
+    ];
+    for (const [dx, dy] of LAB_STAMP_LOCAL.slice(1)) {
+      walls.add(`${labAx + dx},${labAy + dy}`);
+    }
+    const room = makeRoom({
+      terrain: makeTerrain(walls),
+      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+    });
+    computeLayout(room);
+    const calls = consoleSpy.mock.calls.map((args) => args.join(' '));
+    const logged = calls.some(
+      (msg) => msg.includes('[layout]') && msg.includes('lab stamp can only place'),
+    );
+    expect(logged).toBe(false);
+    consoleSpy.mockRestore();
+  });
+});
+
 describe('scoreSpawnCandidate', () => {
   it('returns -1 for out-of-bounds positions', () => {
     const terrain = makeTerrain();

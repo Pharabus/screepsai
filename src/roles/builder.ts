@@ -3,8 +3,6 @@ import { gatherEnergy } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
-import { MAX_LABS } from '../managers/construction';
-import { LAB_STAMP } from '../utils/layoutPlanner';
 
 const BUILD_PRIORITY: Partial<Record<BuildableStructureConstant, number>> = {
   [STRUCTURE_SPAWN]: 0,
@@ -38,35 +36,6 @@ const states: StateMachineDefinition = {
           moveTo(creep, hostile, { range: 1, priority: PRIORITY_WORKER });
         }
         return undefined;
-      }
-
-      // Pass 2: dismantle roads on planned lab stamp tiles — clears blocked lab sites.
-      // labPositions only records tiles that passed isTileBuildable at plan time; road-blocked
-      // slots are silently dropped, so we must re-walk the raw stamp to find them.
-      const plan = Memory.rooms[creep.room.name]?.layoutPlan;
-      if (plan?.storagePos) {
-        const rcl = creep.room.controller?.level ?? 0;
-        const maxLabs = MAX_LABS[rcl] ?? 0;
-        const labAx = plan.storagePos.x + 2;
-        const labAy = plan.storagePos.y + 2;
-        for (const [dx, dy] of LAB_STAMP.slice(0, maxLabs)) {
-          const x = labAx + dx;
-          const y = labAy + dy;
-          const structs = creep.room.lookForAt(LOOK_STRUCTURES, x, y);
-          const hasLabOrCS =
-            structs.some((s) => s.structureType === STRUCTURE_LAB) ||
-            creep.room
-              .lookForAt(LOOK_CONSTRUCTION_SITES, x, y)
-              .some((s) => s.structureType === STRUCTURE_LAB);
-          if (hasLabOrCS) continue;
-          const road = structs.find((s) => s.structureType === STRUCTURE_ROAD);
-          if (!road) continue;
-          if (creep.pos.getRangeTo(road) > 3) continue;
-          if (creep.dismantle(road) === ERR_NOT_IN_RANGE) {
-            moveTo(creep, road, { range: 1, priority: PRIORITY_WORKER });
-          }
-          return undefined;
-        }
       }
 
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'GATHER';

@@ -488,6 +488,22 @@ describe('getPlannedReserved', () => {
     expect(getPlannedReserved(room).size).toBe(0);
   });
 
+  it('returns empty set when layoutPlan exists but storagePos is missing (null guard)', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          // storagePos absent — simulates Memory corruption that caused per-tick TypeError
+          terminalPos: { x: 24, y: 25 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    expect(getPlannedReserved(room).size).toBe(0);
+  });
+
   it('includes storagePos, terminalPos, towers, labs, and extensions', () => {
     const room = roomAt(7);
     (Memory as any).rooms = {
