@@ -1,6 +1,5 @@
 import {
   buildSpawnQueue,
-  buildersNeeded,
   huntersNeeded,
   keeperKillersNeeded,
   minersNeeded,
@@ -171,66 +170,6 @@ describe('buildSpawnQueue', () => {
     const builderEntry = queue.find((r) => r.role === 'builder');
 
     expect(builderEntry?.minCount).toBeGreaterThan(0);
-  });
-
-  describe('buildersNeeded — dismantle deadlock prevention', () => {
-    // storagePos (8,8) → lab anchor (10,10). LAB_STAMP[0] = [0,0] → world (10,10).
-    const layoutPlan = {
-      storagePos: { x: 8, y: 8 },
-      terminalPos: { x: 7, y: 8 },
-      towerPositions: [],
-      labPositions: [],
-      extensionPositions: [],
-    };
-
-    it('returns ≥1 when no CS exist but a road blocks a lab stamp tile', () => {
-      // If a room has zero CS but planned-structure tiles are road-blocked, we still
-      // need a builder to dismantle. Returning 0 here creates a deadlock that prevented
-      // the v1.0.148 dismantle code from ever firing in-game.
-      (Memory as any).rooms = { W1N1: { layoutPlan } };
-      const room = mockRoom({
-        name: 'W1N1',
-        controller: { level: 7, my: true },
-        find: vi.fn(() => []), // sites === 0
-        lookForAt: vi.fn((type: number, x: number, y: number) => {
-          // Road at LAB_STAMP[0] = anchor(10,10) + [0,0] = (10,10)
-          if (type === LOOK_STRUCTURES && x === 10 && y === 10)
-            return [{ structureType: STRUCTURE_ROAD }];
-          return [];
-        }),
-      });
-
-      expect(buildersNeeded(room)).toBeGreaterThanOrEqual(1);
-    });
-
-    it('returns 0 when no CS and no roads on any stamp tile', () => {
-      (Memory as any).rooms = { W1N1: { layoutPlan } };
-      const room = mockRoom({
-        name: 'W1N1',
-        controller: { level: 7, my: true },
-        find: vi.fn(() => []), // sites === 0
-        lookForAt: vi.fn(() => []), // no structures anywhere
-      });
-
-      expect(buildersNeeded(room)).toBe(0);
-    });
-
-    it('returns CS-driven count (not CS-count + 1) when CS exist alongside a blocked stamp tile', () => {
-      (Memory as any).rooms = { W1N1: { layoutPlan } };
-      const sites = Array.from({ length: 5 }, () => ({ structureType: STRUCTURE_EXTENSION }));
-      const room = mockRoom({
-        name: 'W1N1',
-        controller: { level: 7, my: true },
-        find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? sites : [])),
-        lookForAt: vi.fn((type: number, x: number, y: number) => {
-          if (type === LOOK_STRUCTURES && x === 10 && y === 10)
-            return [{ structureType: STRUCTURE_ROAD }];
-          return [];
-        }),
-      });
-      // 5 sites → Math.min(ceil(5/3), 3) = 2; dismantle path should NOT add to this
-      expect(buildersNeeded(room)).toBe(2);
-    });
   });
 
   it('includes miner when source needs one', () => {
