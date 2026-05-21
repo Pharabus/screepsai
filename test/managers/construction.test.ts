@@ -460,6 +460,7 @@ describe('construction RCL gating', () => {
       (globalThis as any).RoomPosition.prototype.lookFor = vi.fn((type: string) =>
         type === LOOK_STRUCTURES ? [{ structureType: STRUCTURE_LAB }] : [],
       );
+      // ^ also covers [lab, rampart] coexistence — see the test below
       try {
         const room = roomAt(7, {
           storage: { pos: { x: 25, y: 25 } },
@@ -491,6 +492,49 @@ describe('construction RCL gating', () => {
         placeLabs(room);
         expect(logSpy).not.toHaveBeenCalled();
         expect(room.createConstructionSite).not.toHaveBeenCalled();
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+        logSpy.mockRestore();
+      }
+    });
+
+    it('does not log when lab position has both a lab and a rampart (tile coexistence)', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      // Ramparts coexist on the same tile as labs in protected rooms — structs
+      // contains [lab, rampart]; the isBuiltLab check must use .some(), not .every()
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn((type: string) =>
+        type === LOOK_STRUCTURES
+          ? [{ structureType: STRUCTURE_LAB }, { structureType: STRUCTURE_RAMPART }]
+          : [],
+      );
+      try {
+        const room = roomAt(7, {
+          storage: { pos: { x: 25, y: 25 } },
+          find: vi.fn((type: number, opts?: any) => {
+            if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+            if (type === FIND_MY_STRUCTURES) {
+              if (opts?.filter) return Array(6).fill({});
+              return [];
+            }
+            if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+            return [];
+          }),
+        });
+        (Memory as any).rooms = {
+          W1N1: {
+            layoutPlan: {
+              storagePos: { x: 25, y: 25 },
+              terminalPos: { x: 24, y: 24 },
+              towerPositions: [],
+              labPositions: [{ x: 10, y: 10 }],
+              extensionPositions: [],
+            },
+          },
+        };
+        (Game as any).time = 1;
+        placeLabs(room);
+        expect(logSpy).not.toHaveBeenCalled();
       } finally {
         (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
         logSpy.mockRestore();
