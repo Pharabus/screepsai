@@ -504,6 +504,46 @@ describe('getPlannedReserved', () => {
     expect(getPlannedReserved(room).size).toBe(0);
   });
 
+  it('returns empty set when layoutPlan = {} (all fields missing)', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = { W1N1: { layoutPlan: {} } };
+    expect(getPlannedReserved(room).size).toBe(0);
+  });
+
+  it('returns empty set when terminalPos is missing', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 23, y: 25 },
+          // terminalPos absent — simulates partial Memory corruption
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      },
+    };
+    expect(getPlannedReserved(room).size).toBe(0);
+  });
+
+  it('handles sparse extensionPositions array without throwing', () => {
+    const room = roomAt(7);
+    (Memory as any).rooms = {
+      W1N1: {
+        layoutPlan: {
+          storagePos: { x: 23, y: 25 },
+          terminalPos: { x: 24, y: 25 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [undefined, { x: 22, y: 23 }], // sparse — hole at index 0
+        },
+      },
+    };
+    const reserved = getPlannedReserved(room);
+    expect(reserved.has('22,23')).toBe(true);
+    expect(reserved.size).toBe(3); // storagePos + terminalPos + valid extension
+  });
+
   it('includes storagePos, terminalPos, towers, labs, and extensions', () => {
     const room = roomAt(7);
     (Memory as any).rooms = {

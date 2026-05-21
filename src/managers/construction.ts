@@ -99,13 +99,26 @@ function findOpenPosition(
 export function getPlannedReserved(room: Room): Set<string> {
   const plan = Memory.rooms[room.name]?.layoutPlan;
   const set = new Set<string>();
-  if (!plan?.storagePos) return set;
+  // Plan fields can be cleared by manual operator console mutation as an emergency
+  // stop pattern — never throw on missing fields, always degrade gracefully to no-op.
+  if (
+    !plan?.storagePos ||
+    !plan.terminalPos ||
+    !Array.isArray(plan.towerPositions) ||
+    !Array.isArray(plan.labPositions) ||
+    !Array.isArray(plan.extensionPositions)
+  )
+    return set;
   set.add(`${plan.storagePos.x},${plan.storagePos.y}`);
   set.add(`${plan.terminalPos.x},${plan.terminalPos.y}`);
-  for (const p of plan.towerPositions) set.add(`${p.x},${p.y}`);
-  for (const p of plan.labPositions) set.add(`${p.x},${p.y}`);
-  for (const p of plan.extensionPositions) set.add(`${p.x},${p.y}`);
-  for (const p of plan.spawnPositions ?? []) set.add(`${p.x},${p.y}`);
+  for (const p of plan.towerPositions as ({ x: number; y: number } | undefined)[])
+    if (p) set.add(`${p.x},${p.y}`);
+  for (const p of plan.labPositions as ({ x: number; y: number } | undefined)[])
+    if (p) set.add(`${p.x},${p.y}`);
+  for (const p of plan.extensionPositions as ({ x: number; y: number } | undefined)[])
+    if (p) set.add(`${p.x},${p.y}`);
+  for (const p of (plan.spawnPositions ?? []) as ({ x: number; y: number } | undefined)[])
+    if (p) set.add(`${p.x},${p.y}`);
   return set;
 }
 
