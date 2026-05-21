@@ -3,6 +3,7 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_DEFAULT } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { markIdle } from '../utils/idle';
+import { getStructuresByType } from '../utils/tickCache';
 
 function pickScoutTarget(creep: Creep): string | undefined {
   return findScoutTarget(creep.memory.homeRoom ?? creep.room.name);
@@ -189,9 +190,7 @@ const states: StateMachineDefinition = {
         const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
         rmem.scoutedHostiles = hostiles.length;
 
-        const keeperLairs = creep.room.find(FIND_STRUCTURES, {
-          filter: (s) => s.structureType === STRUCTURE_KEEPER_LAIR,
-        });
+        const keeperLairs = getStructuresByType(creep.room)[STRUCTURE_KEEPER_LAIR] ?? [];
         rmem.scoutedHasKeepers = keeperLairs.length > 0;
 
         recordLoot(creep.room, rmem);

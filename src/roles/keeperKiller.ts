@@ -2,6 +2,7 @@ import { Role } from './Role';
 import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { getStructuresByType } from '../utils/tickCache';
 
 /**
  * keeperKiller — clears Source Keeper NPCs from SK rooms.
@@ -38,9 +39,7 @@ const states: StateMachineDefinition = {
       if (mem.keeperLairPositions) return;
       const room = Game.rooms[targetRoom];
       if (!room) return;
-      const lairs = room.find(FIND_STRUCTURES, {
-        filter: (s) => s.structureType === STRUCTURE_KEEPER_LAIR,
-      });
+      const lairs = getStructuresByType(room)[STRUCTURE_KEEPER_LAIR] ?? [];
       mem.keeperLairPositions = lairs.map((l) => ({ x: l.pos.x, y: l.pos.y }));
     },
     run(creep) {

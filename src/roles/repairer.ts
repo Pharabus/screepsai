@@ -4,6 +4,7 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
+import { getStructuresByType } from '../utils/tickCache';
 
 const states: StateMachineDefinition = {
   GATHER: {
@@ -21,12 +22,16 @@ const states: StateMachineDefinition = {
 
       // Exclude walls (too expensive) and ramparts (towers handle those) so the
       // spawner's repairersNeeded exclusion list stays consistent.
-      const target = creep.room.find(FIND_STRUCTURES, {
-        filter: (s) =>
-          s.hits < s.hitsMax * REPAIR_THRESHOLD &&
-          s.structureType !== STRUCTURE_WALL &&
-          s.structureType !== STRUCTURE_RAMPART,
-      })[0];
+      const structs = getStructuresByType(creep.room);
+      let target: Structure | undefined;
+      for (const [type, list] of Object.entries(structs) as [StructureConstant, Structure[]][]) {
+        if (type === STRUCTURE_WALL || type === STRUCTURE_RAMPART) continue;
+        const damaged = list.find((s) => s.hits < s.hitsMax * REPAIR_THRESHOLD);
+        if (damaged) {
+          target = damaged;
+          break;
+        }
+      }
       if (target) {
         if (creep.repair(target) === ERR_NOT_IN_RANGE) {
           moveTo(creep, target, {

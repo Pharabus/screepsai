@@ -695,6 +695,12 @@ export function placeLabs(room: Room): void {
         room.createConstructionSite(pos, STRUCTURE_LAB);
         return;
       }
+      // Already-built labs are expected occupants — don't log them as blocked.
+      const isBuiltLab =
+        structs.length > 0 &&
+        sites.length === 0 &&
+        structs.every((s) => s.structureType === STRUCTURE_LAB);
+      if (isBuiltLab) continue;
       const key = `${x},${y}`;
       const lastLog = blockedLog[key];
       if (lastLog === undefined || Game.time - lastLog >= 100) {

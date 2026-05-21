@@ -6,7 +6,7 @@ import {
   buildRemoteMinerBody,
   buildUpgraderBody,
 } from '../utils/body';
-import { cached } from '../utils/tickCache';
+import { cached, getStructuresByType } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
@@ -116,10 +116,8 @@ export function remoteBuilderNeeded(remoteRoom: string): boolean {
   }
   const sites = room.find(FIND_MY_CONSTRUCTION_SITES);
   if (sites.length > 0) return true;
-  const damagedRoads = room.find(FIND_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_ROAD && s.hits < s.hitsMax * 0.5,
-  });
-  return damagedRoads.length > 0;
+  const roads = getStructuresByType(room)[STRUCTURE_ROAD] ?? [];
+  return roads.some((s) => s.hits < s.hitsMax * 0.5);
 }
 
 /**
@@ -235,16 +233,17 @@ export function buildersNeeded(room: Room): number {
  * upgrading), up to 2 when there's significant damage.
  */
 export function repairersNeeded(room: Room): number {
-  const damaged = cached(
-    'spawner:damaged:' + room.name,
-    () =>
-      room.find(FIND_STRUCTURES, {
-        filter: (s) =>
-          s.hits < s.hitsMax * REPAIR_THRESHOLD &&
-          s.structureType !== STRUCTURE_WALL &&
-          s.structureType !== STRUCTURE_RAMPART,
-      }).length,
-  );
+  const damaged = cached('spawner:damaged:' + room.name, () => {
+    const structs = getStructuresByType(room);
+    let count = 0;
+    for (const [type, list] of Object.entries(structs) as [StructureConstant, Structure[]][]) {
+      if (type === STRUCTURE_WALL || type === STRUCTURE_RAMPART) continue;
+      for (const s of list) {
+        if (s.hits < s.hitsMax * REPAIR_THRESHOLD) count++;
+      }
+    }
+    return count;
+  });
   if (damaged === 0) return 0;
   if (damaged > 5) return 2;
   return 1;

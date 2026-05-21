@@ -32,3 +32,18 @@ export function cached<T>(key: string, compute: () => T): T {
 export function invalidate(key: string): void {
   cache.delete(key);
 }
+
+/**
+ * Returns all structures in the room grouped by structureType, cached for the
+ * current tick. Callers use `result[STRUCTURE_X] ?? []` instead of a per-call
+ * `room.find(FIND_STRUCTURES, { filter: s => s.structureType === X })`.
+ */
+export function getStructuresByType(room: Room): Partial<Record<StructureConstant, Structure[]>> {
+  return cached(`${room.name}:structsByType`, () => {
+    const m: Partial<Record<StructureConstant, Structure[]>> = {};
+    for (const s of room.find(FIND_STRUCTURES)) {
+      (m[s.structureType] ??= []).push(s);
+    }
+    return m;
+  });
+}

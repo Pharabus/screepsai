@@ -3,6 +3,7 @@ import { harvestFromBestSource, withdrawFromLogistics } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { getStructuresByType } from '../utils/tickCache';
 
 const states: StateMachineDefinition = {
   HARVEST: {
@@ -27,13 +28,14 @@ const states: StateMachineDefinition = {
     run(creep) {
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return 'HARVEST';
 
-      const target = creep.room.find(FIND_STRUCTURES, {
-        filter: (s) =>
-          (s.structureType === STRUCTURE_SPAWN ||
-            s.structureType === STRUCTURE_EXTENSION ||
-            s.structureType === STRUCTURE_TOWER) &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-      })[0];
+      const structs = getStructuresByType(creep.room);
+      const target = (
+        [
+          ...(structs[STRUCTURE_SPAWN] ?? []),
+          ...(structs[STRUCTURE_EXTENSION] ?? []),
+          ...(structs[STRUCTURE_TOWER] ?? []),
+        ] as (StructureSpawn | StructureExtension | StructureTower)[]
+      ).find((s) => s.store.getFreeCapacity(RESOURCE_ENERGY) > 0);
       if (target) {
         if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           moveTo(creep, target, { visualizePathStyle: { stroke: '#ffffff' } });

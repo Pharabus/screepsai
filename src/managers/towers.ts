@@ -1,5 +1,5 @@
 import { pickPriorityTarget } from '../utils/threat';
-import { cached } from '../utils/tickCache';
+import { cached, getStructuresByType } from '../utils/tickCache';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
 const COMBAT_ENERGY_RESERVE = 0.5;
 
@@ -38,18 +38,15 @@ export function runTowers(): void {
 
     // Cache repair target per room (avoids per-tower find)
     const maxWallHits = wallRepairMax(room);
-    const repairTarget = cached(
-      'towers:repair:' + room.name,
-      () =>
-        room.find(FIND_STRUCTURES, {
-          filter: (s) => {
-            if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
-              return s.hits < maxWallHits;
-            }
-            return s.hits < s.hitsMax * REPAIR_THRESHOLD;
-          },
-        })[0],
-    );
+    const repairTarget = cached('towers:repair:' + room.name, () => {
+      const allStructs = Object.values(getStructuresByType(room)).flatMap((s) => s ?? []);
+      return allStructs.find((s) => {
+        if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
+          return s.hits < maxWallHits;
+        }
+        return s.hits < s.hitsMax * REPAIR_THRESHOLD;
+      });
+    });
 
     for (const tower of towers) {
       const wounded = tower.pos.findClosestByRange(FIND_MY_CREEPS, {

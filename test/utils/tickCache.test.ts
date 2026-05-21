@@ -1,4 +1,4 @@
-import { cached, invalidate, resetTickCache } from '../../src/utils/tickCache';
+import { cached, invalidate, resetTickCache, getStructuresByType } from '../../src/utils/tickCache';
 
 describe('tickCache', () => {
   beforeEach(() => {
@@ -33,6 +33,39 @@ describe('tickCache', () => {
       resetTickCache();
       cached('key3', compute);
       expect(compute).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getStructuresByType', () => {
+    it('groups structures by structureType', () => {
+      const road = { structureType: STRUCTURE_ROAD };
+      const container = { structureType: STRUCTURE_CONTAINER };
+      const road2 = { structureType: STRUCTURE_ROAD };
+      const room = { name: 'W1N1', find: vi.fn(() => [road, container, road2]) } as any;
+      const result = getStructuresByType(room);
+      expect(result[STRUCTURE_ROAD]).toHaveLength(2);
+      expect(result[STRUCTURE_CONTAINER]).toHaveLength(1);
+    });
+
+    it('caches the result within the same tick (find called once)', () => {
+      const room = { name: 'W2N2', find: vi.fn(() => []) } as any;
+      getStructuresByType(room);
+      getStructuresByType(room);
+      expect(room.find).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns empty partial record when room has no structures', () => {
+      const room = { name: 'W3N3', find: vi.fn(() => []) } as any;
+      const result = getStructuresByType(room);
+      expect(Object.keys(result)).toHaveLength(0);
+    });
+
+    it('recomputes after resetTickCache', () => {
+      const room = { name: 'W4N4', find: vi.fn(() => []) } as any;
+      getStructuresByType(room);
+      resetTickCache();
+      getStructuresByType(room);
+      expect(room.find).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -4,7 +4,7 @@ import { markIdle } from '../utils/idle';
 import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
-import { cached } from '../utils/tickCache';
+import { cached, getStructuresByType } from '../utils/tickCache';
 import { MINERAL_STORAGE_FLOOR, TERMINAL_ENERGY_FLOOR } from '../utils/thresholds';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
@@ -295,14 +295,13 @@ function pickup(creep: Creep): boolean {
   }
 
   // Any source container with energy
-  const containers = creep.room.find(FIND_STRUCTURES, {
-    filter: (s): s is StructureContainer =>
-      s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
-  });
+  const containersWithEnergy = (
+    (getStructuresByType(creep.room)[STRUCTURE_CONTAINER] ?? []) as StructureContainer[]
+  ).filter((s) => s.store.getUsedCapacity(RESOURCE_ENERGY) > 0);
 
   const controllerContainerId = mem?.controllerContainerId;
   const mineralContainerId = mem?.mineralContainerId;
-  const sourceContainers = containers.filter(
+  const sourceContainers = containersWithEnergy.filter(
     (c) => c.id !== controllerContainerId && c.id !== mineralContainerId,
   );
   const target = sourceContainers.sort(
@@ -498,13 +497,14 @@ function findFullSourceContainer(
 ): StructureContainer | undefined {
   const controllerContainerId = mem?.controllerContainerId;
   const mineralContainerId = mem?.mineralContainerId;
-  const containers = room.find(FIND_STRUCTURES, {
-    filter: (s): s is StructureContainer =>
-      s.structureType === STRUCTURE_CONTAINER &&
+  const containers = (
+    (getStructuresByType(room)[STRUCTURE_CONTAINER] ?? []) as StructureContainer[]
+  ).filter(
+    (s) =>
       s.id !== controllerContainerId &&
       s.id !== mineralContainerId &&
       s.store.getUsedCapacity(RESOURCE_ENERGY) >= SOURCE_CONTAINER_FULL_THRESHOLD,
-  });
+  );
   if (containers.length === 0) return undefined;
   return containers.sort(
     (a, b) => b.store.getUsedCapacity(RESOURCE_ENERGY) - a.store.getUsedCapacity(RESOURCE_ENERGY),

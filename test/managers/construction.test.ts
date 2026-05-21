@@ -452,6 +452,50 @@ describe('construction RCL gating', () => {
         logSpy.mockRestore();
       }
     });
+
+    it('does not log when plan positions are all occupied by already-built labs', () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      // All positions return an existing STRUCTURE_LAB — no noise expected
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn((type: string) =>
+        type === LOOK_STRUCTURES ? [{ structureType: STRUCTURE_LAB }] : [],
+      );
+      try {
+        const room = roomAt(7, {
+          storage: { pos: { x: 25, y: 25 } },
+          find: vi.fn((type: number, opts?: any) => {
+            if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+            if (type === FIND_MY_STRUCTURES) {
+              if (opts?.filter) return Array(6).fill({}); // 6 labs < 9 max → triggers loop
+              return [];
+            }
+            if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+            return [];
+          }),
+        });
+        (Memory as any).rooms = {
+          W1N1: {
+            layoutPlan: {
+              storagePos: { x: 25, y: 25 },
+              terminalPos: { x: 24, y: 24 },
+              towerPositions: [],
+              labPositions: [
+                { x: 10, y: 10 },
+                { x: 11, y: 11 },
+              ],
+              extensionPositions: [],
+            },
+          },
+        };
+        (Game as any).time = 1;
+        placeLabs(room);
+        expect(logSpy).not.toHaveBeenCalled();
+        expect(room.createConstructionSite).not.toHaveBeenCalled();
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+        logSpy.mockRestore();
+      }
+    });
   });
 
   describe('placeCorridorRoads', () => {
