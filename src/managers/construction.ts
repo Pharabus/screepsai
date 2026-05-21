@@ -1025,7 +1025,6 @@ export function placeColonySpawn(room: Room): void {
 }
 
 export function runConstruction(): void {
-  if (Game.time % 5 !== 0) return;
   if (Object.keys(Game.constructionSites).length >= 90) return;
 
   for (const room of Object.values(Game.rooms)) {

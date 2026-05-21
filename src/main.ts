@@ -15,6 +15,7 @@ import { resetIdle } from './utils/idle';
 import { cleanStuckTracker } from './utils/movement';
 import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
+import { shouldRun, THROTTLE_HIGH, THROTTLE_NORMAL, THROTTLE_LOW } from './utils/throttle';
 import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
 import { startClaim, canClaimAnotherRoom, scoreClaimTarget } from './utils/colonyPlanner';
@@ -151,15 +152,16 @@ export const loop = ErrorMapper.wrapLoop(() => {
     // Defense first: refreshes threat state before spawner decides whether to
     // build defenders and before towers pick their focus-fire target.
     profile('defense', runDefense);
-    profile('spawner', runSpawner);
-    profile('links', runLinks);
+    if (shouldRun({ priority: THROTTLE_HIGH })) profile('spawner', runSpawner);
+    if (shouldRun({ priority: THROTTLE_HIGH })) profile('links', runLinks);
     profile('rooms', runRooms);
     profile('traffic', resolveTraffic);
-    profile('towers', runTowers);
-    profile('labs', runLabs);
-    profile('terminal', runTerminal);
-    profile('construction', runConstruction);
-    profile('visuals', runVisuals);
+    if (shouldRun({ priority: THROTTLE_HIGH })) profile('towers', runTowers);
+    if (shouldRun({ priority: THROTTLE_NORMAL })) profile('labs', runLabs);
+    if (shouldRun({ priority: THROTTLE_LOW })) profile('terminal', runTerminal);
+    if (shouldRun({ interval: 5, priority: THROTTLE_LOW }))
+      profile('construction', runConstruction);
+    if (shouldRun({ priority: THROTTLE_LOW })) profile('visuals', runVisuals);
 
     flushSegments();
   });
