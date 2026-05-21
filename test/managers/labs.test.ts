@@ -7,7 +7,6 @@ function mockLab(overrides: Record<string, any> = {}): any {
     structureType: STRUCTURE_LAB,
     cooldown: overrides.cooldown ?? 0,
     mineralType: overrides.mineralType ?? null,
-    isActive: vi.fn(() => overrides.active ?? true),
     store: {
       getUsedCapacity: vi.fn((r?: string) => {
         if (r && overrides.stored?.[r] !== undefined) return overrides.stored[r];

@@ -1,5 +1,3 @@
-import { isOperational } from '../utils/structures';
-
 export function runLinks(): void {
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
@@ -20,7 +18,6 @@ export function runLinks(): void {
       if (!entry.linkId) continue;
       const sourceLink = Game.getObjectById(entry.linkId);
       if (!sourceLink || sourceLink.cooldown > 0) continue;
-      if (!isOperational(sourceLink)) continue;
       if (sourceLink.store.getUsedCapacity(RESOURCE_ENERGY) === 0) continue;
 
       // Proactively send one source link to the controller link when it's running
@@ -29,24 +26,15 @@ export function runLinks(): void {
       const controllerNeedsEnergy =
         !controllerFed &&
         controllerLink &&
-        isOperational(controllerLink) &&
         controllerLink.store.getUsedCapacity(RESOURCE_ENERGY) < 400 &&
         controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
 
       if (controllerNeedsEnergy) {
         sourceLink.transferEnergy(controllerLink!);
         controllerFed = true;
-      } else if (
-        storageLink &&
-        isOperational(storageLink) &&
-        storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      ) {
+      } else if (storageLink && storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         sourceLink.transferEnergy(storageLink);
-      } else if (
-        controllerLink &&
-        isOperational(controllerLink) &&
-        controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      ) {
+      } else if (controllerLink && controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
         sourceLink.transferEnergy(controllerLink);
       }
     }

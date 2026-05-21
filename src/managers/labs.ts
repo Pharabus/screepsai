@@ -5,7 +5,6 @@ import {
   getReactionProduct,
   REACTION_GOALS,
 } from '../utils/reactions';
-import { isOperational } from '../utils/structures';
 import type { ReactionStep } from '../utils/reactions';
 
 const REACTION_CHECK_INTERVAL = 500;
@@ -158,7 +157,6 @@ export function runLabs(): void {
     const inputLab1 = Game.getObjectById(mem.inputLabIds[0]);
     const inputLab2 = Game.getObjectById(mem.inputLabIds[1]);
     if (!inputLab1 || !inputLab2) continue;
-    if (!isOperational(inputLab1) || !isOperational(inputLab2)) continue;
 
     // Periodically re-evaluate which reaction to run
     if (!mem.activeReaction || Game.time % REACTION_CHECK_INTERVAL === 0) {
@@ -212,7 +210,6 @@ export function runLabs(): void {
       if (inputSet.has(labId)) continue;
       const lab = Game.getObjectById(labId);
       if (!lab || lab.cooldown > 0) continue;
-      if (!isOperational(lab)) continue;
       if ((lab.store.getFreeCapacity(mem.activeReaction.output) ?? 0) < LAB_REACTION_AMOUNT)
         continue;
       lab.runReaction(inputLab1, inputLab2);

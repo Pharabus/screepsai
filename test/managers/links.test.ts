@@ -2,16 +2,13 @@ import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
 import { runLinks } from '../../src/managers/links';
 
-function makeLink(
-  opts: { energy?: number; free?: number; cooldown?: number; active?: boolean } = {},
-): any {
+function makeLink(opts: { energy?: number; free?: number; cooldown?: number } = {}): any {
   const energy = opts.energy ?? 0;
   const capacity = 800;
   const freeCapacity = opts.free ?? capacity - energy;
   return {
     id: `link_${Math.random()}`,
     cooldown: opts.cooldown ?? 0,
-    isActive: vi.fn(() => opts.active ?? true),
     store: {
       getUsedCapacity: (r?: string) => (r === RESOURCE_ENERGY ? energy : 0),
       getFreeCapacity: (r?: string) => (r === RESOURCE_ENERGY ? freeCapacity : 0),
@@ -147,27 +144,6 @@ describe('runLinks', () => {
 
   it('skips source links with no energy', () => {
     const sourceLink = makeLink({ energy: 0, free: 800 });
-    const storageLink = makeLink({ energy: 0, free: 800 });
-
-    const room = mockRoom({ name: 'W1N1' });
-    room.controller = { my: true, level: 5 };
-    Game.rooms['W1N1'] = room;
-    Memory.rooms['W1N1'] = {
-      storageLinkId: 'storageLink',
-      sources: [{ id: 'src1' as any, x: 10, y: 10, linkId: 'sourceLink' }],
-    };
-    Game.getObjectById = vi.fn((id: string) => {
-      if (id === 'storageLink') return storageLink;
-      if (id === 'sourceLink') return sourceLink;
-      return null;
-    });
-
-    runLinks();
-    expect(sourceLink.transferEnergy).not.toHaveBeenCalled();
-  });
-
-  it('skips source link when isActive() returns false', () => {
-    const sourceLink = makeLink({ energy: 800, free: 0, active: false });
     const storageLink = makeLink({ energy: 0, free: 800 });
 
     const room = mockRoom({ name: 'W1N1' });

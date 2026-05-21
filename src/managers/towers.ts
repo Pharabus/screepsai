@@ -1,7 +1,6 @@
 import { pickPriorityTarget } from '../utils/threat';
 import { cached, getStructuresByType } from '../utils/tickCache';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
-import { isOperational } from '../utils/structures';
 const COMBAT_ENERGY_RESERVE = 0.5;
 
 const WALL_CAPS: Record<number, number> = {
@@ -25,7 +24,7 @@ function wallRepairMax(room: Room): number {
 export function runTowers(): void {
   for (const room of Object.values(Game.rooms)) {
     const towers = room.find(FIND_MY_STRUCTURES, {
-      filter: (s): s is StructureTower => s.structureType === STRUCTURE_TOWER && isOperational(s),
+      filter: (s): s is StructureTower => s.structureType === STRUCTURE_TOWER,
     });
     if (towers.length === 0) continue;
 
