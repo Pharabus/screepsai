@@ -180,6 +180,29 @@ describe('trafficManager', () => {
       const second = getRoomCostMatrix(room);
       expect(second.get(20, 20)).toBe(255);
     });
+
+    it('invalidates the base matrix when structure positions change (same count)', () => {
+      // Bug regression: extension demolished at (20,20), new one placed at (25,9).
+      // structureCount stays 1 — old cache key wouldn't notice. posHash must differ.
+      let structures: any[] = [{ structureType: STRUCTURE_EXTENSION, pos: { x: 20, y: 20 } }];
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_STRUCTURES) return structures;
+          return [];
+        }),
+      });
+
+      const first = getRoomCostMatrix(room);
+      expect(first.get(20, 20)).toBe(255);
+      expect(first.get(25, 9)).toBe(0);
+
+      // Same count (1), different position — old structureCount cache would incorrectly reuse.
+      structures = [{ structureType: STRUCTURE_EXTENSION, pos: { x: 25, y: 9 } }];
+      resetTickCache();
+      const second = getRoomCostMatrix(room);
+      expect(second.get(25, 9)).toBe(255);
+      expect(second.get(20, 20)).toBe(0);
+    });
   });
 
   describe('getRoomCostMatrixAvoidCreeps', () => {

@@ -292,16 +292,18 @@ export function executeMoveAvoidCreeps(
 
 // Heap-cached base matrix — terrain + structures only. Walking FIND_STRUCTURES
 // every tick was a meaningful chunk of pathfinding cost, but structures rarely
-// change tick-to-tick, so we cache and only rebuild when the structure count
-// shifts (build/decay/destroy) or the TTL expires. The per-tick overlay below
-// adds friendly creeps and hostiles on top of a clone.
+// change tick-to-tick, so we cache and only rebuild when the structure position
+// hash shifts (build/decay/destroy/relocate) or the TTL expires. posHash catches
+// same-count swaps that structureCount missed (e.g. extension demolished + new
+// one placed elsewhere in the same tick). The per-tick overlay below adds
+// friendly creeps and hostiles on top of a clone.
 interface BaseMatrixEntry {
   matrix: CostMatrix;
   builtAt: number;
-  structureCount: number;
+  posHash: number;
 }
 const baseMatrixCache = new Map<string, BaseMatrixEntry>();
-const BASE_MATRIX_TTL = 100;
+const BASE_MATRIX_TTL = 20;
 
 export function resetBaseMatrixCache(): void {
   baseMatrixCache.clear();
@@ -334,23 +336,16 @@ export function getRoomCostMatrixNoExits(room: Room): CostMatrix {
 }
 
 function getBaseCostMatrix(room: Room): CostMatrix {
-  // room.find is internally cached by the engine within a tick, so the count
-  // probe is cheap on the cache-hit path; on miss we'd be calling find anyway.
+  // room.find is internally cached by the engine within a tick, so this is
+  // cheap on the cache-hit path; on miss we'd be calling find anyway.
   const structures = room.find(FIND_STRUCTURES);
+  const posHash = structures.reduce((sum, s) => sum + s.pos.x + s.pos.y * 50, 0);
   const cached = baseMatrixCache.get(room.name);
-  if (
-    cached &&
-    Game.time - cached.builtAt < BASE_MATRIX_TTL &&
-    cached.structureCount === structures.length
-  ) {
+  if (cached && Game.time - cached.builtAt < BASE_MATRIX_TTL && cached.posHash === posHash) {
     return cached.matrix;
   }
   const matrix = buildBaseMatrix(structures);
-  baseMatrixCache.set(room.name, {
-    matrix,
-    builtAt: Game.time,
-    structureCount: structures.length,
-  });
+  baseMatrixCache.set(room.name, { matrix, builtAt: Game.time, posHash });
   return matrix;
 }
 
