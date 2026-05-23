@@ -266,6 +266,57 @@ describe('construction RCL gating', () => {
       placeLinks(room);
       expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
+
+    it('places link near the highest-pathDist source first', () => {
+      // Source A is far (pathDist=60, pos at 39,20); source B is close (pathDist=10, pos at 10,10).
+      // placeLinks should sort A before B and place the construction site near A's container.
+      const containerAPos = new RoomPosition(38, 20, 'W1N1');
+      const containerBPos = new RoomPosition(10, 10, 'W1N1');
+      const sourceAPos = new RoomPosition(39, 20, 'W1N1');
+      const sourceBPos = new RoomPosition(10, 10, 'W1N1');
+
+      const containerA = { id: 'cntA', pos: containerAPos };
+      const containerB = { id: 'cntB', pos: containerBPos };
+      const sourceA = { id: 'srcA', pos: sourceAPos };
+      const sourceB = { id: 'srcB', pos: sourceBPos };
+
+      (Game as any).getObjectById = vi.fn((id: string) => {
+        if (id === 'srcA') return sourceA;
+        if (id === 'srcB') return sourceB;
+        if (id === 'cntA') return containerA;
+        if (id === 'cntB') return containerB;
+        return null;
+      });
+
+      const room = roomAt(6, {
+        storage: { pos: new RoomPosition(25, 25, 'W1N1') },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(16, 31, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) return opts?.filter ? [] : [];
+          if (type === FIND_MY_CONSTRUCTION_SITES) return opts?.filter ? [] : [];
+          return [];
+        }),
+      });
+
+      (Memory as any).rooms = {
+        W1N1: {
+          // storageLinkId set so priority 1 (storage link) is skipped
+          storageLinkId: 'existingStorageLink',
+          sources: [
+            { id: 'srcA', x: 39, y: 20, containerId: 'cntA', pathDist: 60 },
+            { id: 'srcB', x: 10, y: 10, containerId: 'cntB', pathDist: 10 },
+          ],
+        },
+      };
+
+      placeLinks(room);
+
+      // Should place a site — and the position should be near containerA (range 1 of 38,20)
+      expect(room.createConstructionSite).toHaveBeenCalledOnce();
+      const [placedPos] = (room.createConstructionSite as any).mock.calls[0] as [RoomPosition];
+      expect(Math.abs(placedPos.x - containerAPos.x) <= 1).toBe(true);
+      expect(Math.abs(placedPos.y - containerAPos.y) <= 1).toBe(true);
+    });
   });
 
   describe('placeTerminal', () => {

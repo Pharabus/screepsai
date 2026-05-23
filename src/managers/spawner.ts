@@ -153,8 +153,9 @@ export function minersNeeded(room: Room): number {
 }
 
 /**
- * Hauler count based on source count and room capacity.
- * At low energy capacity haulers are small so we need more of them.
+ * Hauler count scaled to per-source round-trip distance.
+ * Linked sources share one distribution hauler. Unlinked sources each get
+ * ceil(dist*2*SOURCE_RATE / haulerCarry) haulers so energy doesn't pool.
  */
 export function haulersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
@@ -162,15 +163,24 @@ export function haulersNeeded(room: Room): number {
   const withContainers = mem.sources.filter((s) => !!s.containerId);
   if (withContainers.length === 0) return 0;
 
-  const perUnlinked = room.energyCapacityAvailable >= 800 ? 2 : 3;
+  const haulerCarry = room.energyCapacityAvailable >= 800 ? 400 : 200;
+  const SOURCE_RATE = 10; // energy/tick (3000 energy / 300-tick regen cycle)
+
   const linked = withContainers.filter(
     (s) => s.linkId && Game.getObjectById(s.linkId as Id<StructureLink>),
-  ).length;
-  const unlinked = withContainers.length - linked;
+  );
+  const unlinked = withContainers.filter(
+    (s) => !(s.linkId && Game.getObjectById(s.linkId as Id<StructureLink>)),
+  );
 
-  // Linked sources need fewer haulers but still require distribution to
-  // spawns/extensions/towers; unlinked sources need full hauler complement
-  let count = Math.max(unlinked * perUnlinked + Math.min(linked, 1), 2);
+  let count = linked.length > 0 ? 1 : 0;
+
+  for (const s of unlinked) {
+    const dist = s.pathDist ?? 25;
+    count += Math.max(1, Math.ceil((dist * 2 * SOURCE_RATE) / haulerCarry));
+  }
+
+  count = Math.max(count, 2);
 
   // +1 when mineral mining is active so the mineral container doesn't overflow
   if (mem.mineralId && mem.mineralContainerId) {

@@ -77,6 +77,8 @@ interface RoomMemory {
     linkId?: Id<StructureLink>;
     /** Name of the miner creep assigned to this source */
     minerName?: string;
+    /** Path distance from source to spawn (tiles). Computed once, used by link priority and hauler sizing. */
+    pathDist?: number;
   }[];
   controllerContainerId?: Id<StructureContainer>;
   /** Set to true once containers are built and the room transitions to miner+hauler economy */

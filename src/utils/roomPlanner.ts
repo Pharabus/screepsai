@@ -84,6 +84,20 @@ export function ensureRoomPlan(room: Room): void {
     }
   }
 
+  // Compute path distance from each source to the spawn once and cache it.
+  // Sources never move so this only fires when Memory is fresh or newly created.
+  const planSpawn = room.find(FIND_MY_SPAWNS)[0];
+  if (planSpawn) {
+    for (const entry of mem.sources) {
+      if (entry.pathDist === undefined) {
+        const path = room.findPath(new RoomPosition(entry.x, entry.y, room.name), planSpawn.pos, {
+          ignoreCreeps: true,
+        });
+        entry.pathDist = path.length;
+      }
+    }
+  }
+
   // Update storage link
   if (room.storage) {
     if (mem.storageLinkId) {

@@ -410,6 +410,96 @@ describe('roomPlanner', () => {
     });
   });
 
+  describe('pathDist computation', () => {
+    const STUB_LAYOUT = {
+      storagePos: { x: 25, y: 25 },
+      terminalPos: { x: 26, y: 25 },
+      towerPositions: [],
+      labPositions: [],
+      extensionPositions: [],
+    };
+
+    it('computes and caches path distance from source to spawn', () => {
+      const spawnPos = new (globalThis as any).RoomPosition(16, 31, 'W1N1');
+      const spawn = { pos: spawnPos };
+      const findPath = vi.fn(() => Array(15).fill({ x: 0, y: 0 }));
+
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: undefined,
+        storage: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [spawn];
+          return [];
+        }),
+        findPath,
+      });
+
+      Memory.rooms['W1N1'] = {
+        sources: [{ id: 's1' as Id<Source>, x: 39, y: 20 }],
+        layoutPlan: STUB_LAYOUT,
+      } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      ensureRoomPlan(room);
+
+      expect(Memory.rooms['W1N1'].sources![0]!.pathDist).toBe(15);
+      expect(findPath).toHaveBeenCalledOnce();
+    });
+
+    it('does not recompute pathDist when already set', () => {
+      const spawnPos = new (globalThis as any).RoomPosition(16, 31, 'W1N1');
+      const spawn = { pos: spawnPos };
+      const findPath = vi.fn(() => Array(20).fill({ x: 0, y: 0 }));
+
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: undefined,
+        storage: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [spawn];
+          return [];
+        }),
+        findPath,
+      });
+
+      Memory.rooms['W1N1'] = {
+        sources: [{ id: 's1' as Id<Source>, x: 39, y: 20, pathDist: 15 }],
+        layoutPlan: STUB_LAYOUT,
+      } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      ensureRoomPlan(room);
+
+      expect(Memory.rooms['W1N1'].sources![0]!.pathDist).toBe(15);
+      expect(findPath).not.toHaveBeenCalled();
+    });
+
+    it('skips pathDist when no spawn exists', () => {
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: undefined,
+        storage: undefined,
+        find: vi.fn(() => []),
+        findPath: vi.fn(),
+      });
+
+      Memory.rooms['W1N1'] = {
+        sources: [{ id: 's1' as Id<Source>, x: 10, y: 20 }],
+        layoutPlan: STUB_LAYOUT,
+      } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      ensureRoomPlan(room);
+
+      expect(Memory.rooms['W1N1'].sources![0]!.pathDist).toBeUndefined();
+      expect(room.findPath).not.toHaveBeenCalled();
+    });
+  });
+
   describe('inputLabIds stability', () => {
     it('preserves cached inputLabIds when labs expand from 3 to 9', () => {
       // Regression: same two physical labs designated at RCL 6 must stay input at RCL 7.

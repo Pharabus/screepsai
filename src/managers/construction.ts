@@ -514,7 +514,11 @@ export function placeLinks(room: Room): void {
         .filter((s) => s.containerId && !s.linkId)
         .map((s) => ({ entry: s, source: Game.getObjectById(s.id) }))
         .filter((x) => !!x.source)
-        .sort((a, b) => b.source!.pos.getRangeTo(anchor) - a.source!.pos.getRangeTo(anchor));
+        .sort(
+          (a, b) =>
+            (b.entry.pathDist ?? b.source!.pos.getRangeTo(anchor)) -
+            (a.entry.pathDist ?? a.source!.pos.getRangeTo(anchor)),
+        );
 
       for (const { entry } of unlinked) {
         const source = Game.getObjectById(entry.id);

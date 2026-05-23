@@ -366,7 +366,8 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(0);
   });
 
-  it('returns 3 per unlinked source at low capacity', () => {
+  it('returns 3 for unlinked source at low capacity with default dist (25 tiles)', () => {
+    // dist=25, haulerCarry=200: ceil(25*2*10/200)=ceil(2.5)=3 → max(3,2)=3
     (Memory as any).rooms = {
       W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
     };
@@ -374,12 +375,36 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(3);
   });
 
-  it('returns 2 per unlinked source at high capacity', () => {
+  it('returns 2 for unlinked source at high capacity with default dist (25 tiles)', () => {
+    // dist=25, haulerCarry=400: ceil(25*2*10/400)=ceil(1.25)=2 → max(2,2)=2
     (Memory as any).rooms = {
       W1N1: { sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }] },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(2);
+  });
+
+  it('scales to 3 haulers for a far unlinked source (pathDist=60, high capacity)', () => {
+    // dist=60, haulerCarry=400: ceil(60*2*10/400)=ceil(3)=3 → max(3,2)=3
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 39, y: 20, containerId: 'cnt1' as any, pathDist: 60 }],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(3);
+  });
+
+  it('uses pathDist over the 25-tile default when present', () => {
+    // dist=40, haulerCarry=400: ceil(40*2*10/400)=ceil(2)=2 (same as default here)
+    // but dist=10 → ceil(10*2*10/400)=ceil(0.5)=1 → max(1,2)=2 (min enforced)
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, pathDist: 10 }],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(2); // min(2) enforced even for close source
   });
 
   it('does not add extra hauler for mineral container (task commitment handles it)', () => {
