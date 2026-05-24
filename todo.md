@@ -277,13 +277,13 @@ Fix throughput gaps and missing infrastructure in the current room. These items 
 
 #### Testing quality
 
-- [ ] **Extend test mocks to stub `Game.gcl` and `Game.shard`** — `resetGameGlobals()` in `test/mocks/screeps.ts` doesn't set these globals, so removing the unnecessary `?.` optional chains on `Game.gcl?.level` (`colonyPlanner.ts`) and `Game.shard?.name` (`thresholds.ts`) would crash tests. Once the mocks stub both globals with sensible defaults, remove the `?.` operators — both are non-optional in `@types/screeps` and the guards mislead readers into thinking they can be absent at runtime.
+- [x] **Extend test mocks to stub `Game.gcl` and `Game.shard`** — Confirmed already present in `resetGameGlobals()`; `?.` optional chains already removed from `colonyPlanner.ts` and `thresholds.ts`.
 
 ---
 
 ### Phase 2: RCL 7 Core Infrastructure
 
-- [ ] **Layout plan versioning** — Bump a `layoutPlanVersion` field in `RoomMemory` when planner semantics change, so old cached plans auto-rebuild on next deploy without needing a manual `replanLayout()` call.
+- [x] **Layout plan versioning** — `LAYOUT_PLAN_VERSION` constant in `layoutPlanner.ts`; stored as `layoutPlan.version`; `ensureRoomPlan()` deletes stale plans on version mismatch and recomputes automatically. Bumping the constant forces a one-time replan on next deploy.
 
 The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs to tier-2 chains, wire up the factory, and enable Source Keeper rooms (3× remote-source yield).
 
@@ -300,8 +300,8 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 
 #### Factory pipeline
 
-- [ ] **Place Factory** — Construction manager at RCL ≥ 7. Placed adjacent to storage + terminal.
-- [ ] **Add `factoryManager`** — `src/managers/factory.ts`. Pick a target commodity from a configurable list, check inputs in storage/terminal, haul in via hauler, run `factory.produce`, push outputs back. Level the factory (0–5) based on inputs we can sustain.
+- [x] **Place Factory** — `placeFactory(room)` at RCL ≥ 7, within 3 tiles of storage; position reserved in `layoutPlan`; gated behind link completion. `factoryId` cached in `RoomMemory` by `ensureRoomPlan()`.
+- [x] **Add `factoryManager`** — `src/managers/factory.ts` `runFactory()` at `THROTTLE_NORMAL`. Level 0 only (no power required): produces `RESOURCE_BATTERY` (50 energy → 1 battery) when storage > `FACTORY_ENERGY_FLOOR` (50k) and battery stock < `FACTORY_BATTERY_CAP` (500). Hauler delivers energy to factory and picks up batteries for terminal/storage.
 
 #### Source Keeper rooms — Killer role (RCL 7)
 
@@ -314,10 +314,10 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 
 #### Source Keeper rooms — SK remote mining (RCL 7, after killer is stable)
 
-- [ ] **Opt-in SK rooms in remote planner** — Add `allowKeeperRooms` flag to `evaluateRemoteRoom` (default false). When a room `scoutedHasKeepers` AND a keeper killer is assigned and alive, return a score of `sourceCount * 3` (premium for the extra yield). `selectRemoteRooms` opts in when `energyCapacityAvailable >= 5300`.
-- [ ] **Defense policy for SK rooms** — Set `defensePolicy: 'flee'` (miners flee on hostile sighting as normal), but do NOT flee from Source Keepers (`owner.username === 'Source Keeper'`). Miners should ignore Source Keeper entries in the hostile scan — the killer handles them.
-- [ ] **Remote miner body for SK rooms** — Use the existing `buildRemoteMinerBody` with `maxWork: 10` (same as reserved). No CARRY needed in SK rooms (no container self-build required — killer presence means miners can path freely).
-- [ ] **Hauler count for SK rooms** — 3 sources × 2 haulers = 6 per room (same formula as reserved). Distance-aware scaling (Phase 1 economy fix) matters more here since SK rooms are typically further away.
+- [x] **Opt-in SK rooms in remote planner** — `evaluateRemoteRoom` accepts `allowKeeperRooms` flag; when true AND `scoutedHasKeepers` AND killer alive, scores `sourceCount * 3`. `selectRemoteRooms` passes `allowKeeperRooms: energyCapacityAvailable >= 5300`. `classifyRemoteType` returns `'keeperRoom'`; added to `remoteType` union in `types.d.ts`.
+- [x] **Defense policy for SK rooms** — `remoteThreat.ts` `handleRemoteThreat` excludes `creep.owner.username === 'Source Keeper'` from flee scan in keeper rooms. Player hostiles in SK rooms still trigger flee.
+- [x] **Remote miner body for SK rooms** — `buildRemoteMinerBody(cap, 10)` when `isKeeperRoom`; CARRY=1 preserved for container self-build on arrival.
+- [x] **Hauler count for SK rooms** — `isHighCapacity = isReserved || isKeeperRoom` in `remoteHaulersWanted`; uses `flatPerSource=3` and `sourceRate=10` (same as reserved, matching 3000-cap sources). Distance-aware formula applies on top.
 
 ---
 
