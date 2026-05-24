@@ -15,6 +15,10 @@ function getSourcePos(creep: Creep): RoomPosition | undefined {
 
 const states: StateMachineDefinition = {
   POSITION: {
+    onEnter(creep) {
+      // Traveling miners should be pushable; clear the static priority set by HARVEST.
+      delete creep.memory.movePriority;
+    },
     run(creep) {
       if (!creep.memory.targetId) {
         const roomName = creep.memory.targetRoom ?? creep.room.name;
@@ -87,8 +91,6 @@ const states: StateMachineDefinition = {
   },
   HARVEST: {
     run(creep) {
-      registerStationary(creep, PRIORITY_STATIC);
-
       const source = Game.getObjectById(creep.memory.targetId as Id<Source>);
       if (!source) {
         creep.memory.targetId = undefined;
@@ -97,6 +99,18 @@ const states: StateMachineDefinition = {
 
       const mem = Memory.rooms[creep.room.name];
       const entry = mem?.sources?.find((s) => s.id === source.id);
+
+      // Validate position before locking in as stationary. If we were pushed
+      // off the container tile (or the source adjacency) by a creep that ran
+      // earlier this tick, return to POSITION to re-path back.
+      const container = entry?.containerId ? Game.getObjectById(entry.containerId) : undefined;
+      if (container) {
+        if (!creep.pos.isEqualTo(container.pos)) return 'POSITION';
+      } else if (!creep.pos.isNearTo(source)) {
+        return 'POSITION';
+      }
+
+      registerStationary(creep, PRIORITY_STATIC);
 
       // Remote miners: build container site, then repair container if damaged
       if (creep.memory.targetRoom && creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
@@ -108,7 +122,6 @@ const states: StateMachineDefinition = {
           return undefined;
         }
 
-        const container = entry?.containerId ? Game.getObjectById(entry.containerId) : undefined;
         if (container && container.hits < container.hitsMax) {
           creep.repair(container);
           return undefined;
@@ -126,11 +139,11 @@ const states: StateMachineDefinition = {
 
       // Once a container is built, reposition onto it
       if (creep.memory.targetRoom && entry && !entry.containerId) {
-        const container = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        const built = source.pos.findInRange(FIND_STRUCTURES, 1, {
           filter: (s): s is StructureContainer => s.structureType === STRUCTURE_CONTAINER,
         })[0];
-        if (container) {
-          entry.containerId = container.id;
+        if (built) {
+          entry.containerId = built.id;
           return 'POSITION';
         }
       }

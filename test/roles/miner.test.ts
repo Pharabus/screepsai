@@ -209,6 +209,8 @@ describe('miner', () => {
       const source = {
         id: 's1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 25,
           findInRange: vi.fn(() => []),
         },
       };
@@ -236,7 +238,7 @@ describe('miner', () => {
       };
       const source = {
         id: 's1' as Id<Source>,
-        pos: { findInRange: vi.fn(() => []) },
+        pos: { x: 25, y: 25, findInRange: vi.fn(() => []) },
       };
 
       Game.getObjectById = vi.fn((id: string) => {
@@ -283,6 +285,8 @@ describe('miner', () => {
       const source = {
         id: 'rs1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 25,
           findInRange: vi.fn((type: number) => {
             if (type === FIND_MY_CONSTRUCTION_SITES) return [site];
             return [];
@@ -312,10 +316,13 @@ describe('miner', () => {
         id: 'rc1' as Id<StructureContainer>,
         hits: 245000,
         hitsMax: 250000,
+        pos: { x: 25, y: 25, roomName: 'W1N1' },
       };
       const source = {
         id: 'rs1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 26,
           findInRange: vi.fn(() => []),
         },
       };
@@ -354,10 +361,13 @@ describe('miner', () => {
         id: 'rc1' as Id<StructureContainer>,
         hits: 250000,
         hitsMax: 250000,
+        pos: { x: 25, y: 25, roomName: 'W1N1' },
       };
       const source = {
         id: 'rs1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 26,
           findInRange: vi.fn(() => []),
         },
       };
@@ -396,10 +406,11 @@ describe('miner', () => {
         id: 'c1' as Id<StructureContainer>,
         hits: 245000,
         hitsMax: 250000,
+        pos: { x: 25, y: 25, roomName: 'W1N1' },
       };
       const source = {
         id: 's1' as Id<Source>,
-        pos: { findInRange: vi.fn(() => []) },
+        pos: { x: 25, y: 26, findInRange: vi.fn(() => []) },
       };
 
       Game.getObjectById = vi.fn((id: string) => {
@@ -435,10 +446,13 @@ describe('miner', () => {
         id: 'rc1' as Id<StructureContainer>,
         hits: 200000,
         hitsMax: 250000,
+        pos: { x: 25, y: 25, roomName: 'W1N1' },
       };
       const source = {
         id: 'rs1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 26,
           findInRange: vi.fn((type: number) => {
             if (type === FIND_MY_CONSTRUCTION_SITES) return [site];
             return [];
@@ -475,6 +489,42 @@ describe('miner', () => {
       expect(creep.repair).not.toHaveBeenCalled();
     });
 
+    it('returns to POSITION when displaced from container (push race condition)', () => {
+      const container = {
+        id: 'c1' as Id<StructureContainer>,
+        hits: 250000,
+        hitsMax: 250000,
+        pos: { x: 10, y: 10, roomName: 'W1N1' },
+      };
+      const source = {
+        id: 's1' as Id<Source>,
+        pos: { x: 10, y: 11, findInRange: vi.fn(() => []) },
+      };
+
+      Game.getObjectById = vi.fn((id: string) => {
+        if (id === 's1') return source;
+        if (id === 'c1') return container;
+        return undefined;
+      }) as any;
+
+      Memory.rooms['W1N1'] = {
+        sources: [
+          { id: 's1' as Id<Source>, x: 10, y: 11, containerId: 'c1' as Id<StructureContainer> },
+        ],
+      } as any;
+
+      // Creep at (25,25) — not on the container at (10,10) — simulates a push displacement
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 's1' },
+        room: mockRoom({ name: 'W1N1' }),
+      });
+
+      miner.run(creep);
+
+      expect(creep.memory.state).toBe('POSITION');
+      expect(creep.harvest).not.toHaveBeenCalled();
+    });
+
     it('repositions when container is built in remote room', () => {
       const container = {
         id: 'rc1' as Id<StructureContainer>,
@@ -483,6 +533,8 @@ describe('miner', () => {
       const source = {
         id: 'rs1' as Id<Source>,
         pos: {
+          x: 25,
+          y: 25,
           findInRange: vi.fn((type: number) => {
             if (type === FIND_MY_CONSTRUCTION_SITES) return [];
             if (type === FIND_STRUCTURES) return [container];

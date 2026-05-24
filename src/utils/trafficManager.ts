@@ -40,8 +40,11 @@ export function invalidateSerialPath(creepName: string): void {
   pathSerialCache.delete(creepName);
 }
 
-export function registerStationary(creep: Creep, _priority: number): void {
+export function registerStationary(creep: Creep, priority: number): void {
   stationaryCreeps.add(creep.name);
+  // Persist priority so pushBlocker skips this creep even on ticks where its
+  // role hasn't run yet (stationaryCreeps is cleared each tick by resetTraffic).
+  creep.memory.movePriority = priority;
 }
 
 export function resetTraffic(): void {
