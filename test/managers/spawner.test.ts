@@ -1125,6 +1125,22 @@ describe('remoteHaulersWanted', () => {
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
   });
+
+  it('SK room (isHighCapacity=true) 3 sources at short distance hits flat floor of 9', () => {
+    // roundTripTicks = 100, sourceRate = 10, carryCapacity = 800 at 2300e
+    // ceil(100 × 10 / 800) = ceil(1.25) = 2; Math.max(3, 2) = 3 per source → 3 × 3 = 9
+    (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 100 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(9);
+  });
+
+  it('SK room scales above floor for long distance (remoteDistance=320)', () => {
+    // roundTripTicks = 320, sourceRate = 10, carryCapacity = 800
+    // ceil(320 × 10 / 800) = 4 per source; 4 × 3 = 12
+    (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 320 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(12);
+  });
 });
 
 describe('keeperKillersNeeded', () => {

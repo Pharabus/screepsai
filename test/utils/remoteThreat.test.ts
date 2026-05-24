@@ -171,4 +171,58 @@ describe('handleRemoteThreat', () => {
 
     expect(handleRemoteThreat(creep)).toBe(false);
   });
+
+  it('does not flee from Source Keepers in a keeperRoom', () => {
+    // Miners in SK rooms should ignore Source Keepers — the keeperKiller handles them.
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    (Memory as any).rooms = { W2N1: { remoteType: 'keeperRoom' } };
+
+    const sourceKeeper = {
+      body: [
+        { type: ATTACK, hits: 100 },
+        { type: MOVE, hits: 100 },
+      ],
+      hits: 1000,
+      hitsMax: 1000,
+      owner: { username: 'Source Keeper' },
+    };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [sourceKeeper]),
+    });
+
+    expect(handleRemoteThreat(creep)).toBe(false);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBeUndefined();
+  });
+
+  it('still flees from player hostiles in a keeperRoom', () => {
+    // A player creep in an SK room is still a threat — flee regardless of remoteType.
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: { remoteType: 'keeperRoom' } };
+
+    const playerHostile = {
+      body: [
+        { type: ATTACK, hits: 100 },
+        { type: MOVE, hits: 100 },
+      ],
+      hits: 1000,
+      hitsMax: 1000,
+      owner: { username: 'Attacker' },
+    };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [playerHostile]),
+    });
+
+    expect(handleRemoteThreat(creep)).toBe(true);
+  });
 });

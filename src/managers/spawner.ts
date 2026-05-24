@@ -330,14 +330,14 @@ export function remoteHaulersWanted(
   room: Room,
   remoteRoom: string,
   sourceCount: number,
-  isReserved: boolean,
+  isHighCapacity: boolean,
 ): number {
-  const flatPerSource = isReserved ? 3 : 2;
+  const flatPerSource = isHighCapacity ? 3 : 2;
   const roundTripTicks = Memory.rooms[room.name]?.remoteDistance?.[remoteRoom];
   if (roundTripTicks === undefined) {
     return sourceCount * flatPerSource; // flat fallback — distance not cached yet
   }
-  const sourceRate = isReserved ? 10 : 5;
+  const sourceRate = isHighCapacity ? 10 : 5;
   const haulerBody = buildBody([CARRY, CARRY, MOVE, MOVE], room.energyCapacityAvailable, 8);
   const carryCapacity = haulerBody.filter((p) => p === CARRY).length * 50;
   if (carryCapacity === 0) return sourceCount * flatPerSource;
@@ -606,7 +606,12 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     for (const remoteRoom of remoteRooms) {
       const remoteMem = Memory.rooms[remoteRoom];
       const isReserved = remoteMem?.remoteType === 'reserved';
-      const remoteBody = buildRemoteMinerBody(room.energyCapacityAvailable, isReserved ? 10 : 5);
+      const isKeeperRoom = remoteMem?.remoteType === 'keeperRoom';
+      const isHighCapacity = isReserved || isKeeperRoom;
+      const remoteBody = buildRemoteMinerBody(
+        room.energyCapacityAvailable,
+        isHighCapacity ? 10 : 5,
+      );
       if (remoteBody.length === 0) continue;
       const scoutedCount =
         remoteMem?.scoutedSourceData?.length ??
@@ -654,7 +659,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isReserved);
+      const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isHighCapacity);
       if (existingRemoteHaulers < haulersWanted) {
         queue.push({
           role: 'remoteHauler',

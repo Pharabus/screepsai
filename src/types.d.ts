@@ -131,7 +131,7 @@ interface RoomMemory {
   remoteDistance?: Record<string, number>;
   /** Tick when each remoteDistance entry was last computed (for staleness checks) */
   remoteDistanceUpdated?: Record<string, number>;
-  remoteType?: 'remote' | 'reserved' | 'claimed';
+  remoteType?: 'remote' | 'reserved' | 'claimed' | 'keeperRoom';
   defensePolicy?: 'flee' | 'defend' | 'abandon';
   // Scout data (populated by scouts visiting unowned rooms)
   scoutedAt?: number;

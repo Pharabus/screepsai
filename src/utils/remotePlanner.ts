@@ -10,7 +10,7 @@ import { getMyUsername } from './identity';
 // a second remote's spawn/bootstrap cost doesn't stall storage growth.
 export const REMOTE_ROOM_SCALE_THRESHOLD = 100_000;
 
-export function evaluateRemoteRoom(targetRoomName: string): number {
+export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = false): number {
   const rmem = Memory.rooms[targetRoomName];
   if (!rmem?.scoutedAt) return -1;
 
@@ -33,15 +33,24 @@ export function evaluateRemoteRoom(targetRoomName: string): number {
   // Reject rooms with no sources
   if ((rmem.scoutedSources ?? 0) === 0) return -1;
 
-  // Reject Source Keeper rooms — keepers are permanent, unkillable without dedicated SK-killers
-  if (rmem.scoutedHasKeepers) return -1;
+  // Source Keeper rooms: only opt in when a killer is already alive there.
+  // Score 3× to reflect 3× source capacity (3000 vs 1000 per regen cycle).
+  if (rmem.scoutedHasKeepers) {
+    if (!allowKeeperRooms) return -1;
+    const hasKiller = Object.values(Game.creeps).some(
+      (c) => c.memory.role === 'keeperKiller' && c.memory.targetRoom === targetRoomName,
+    );
+    if (!hasKiller) return -1;
+    return (rmem.scoutedSources ?? 0) * 3;
+  }
 
   // Score: more sources = better
   return rmem.scoutedSources ?? 0;
 }
 
-function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' {
+function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'keeperRoom' {
   const rmem = Memory.rooms[targetRoomName];
+  if (rmem?.scoutedHasKeepers) return 'keeperRoom';
   // Rooms with a controller are worth reserving (doubles source capacity)
   if (rmem?.scoutedHasController) return 'reserved';
   return 'remote';
@@ -56,9 +65,10 @@ export function selectRemoteRooms(homeRoom: Room): void {
   const exits = Game.map.describeExits(homeRoom.name);
   if (!exits) return;
 
+  const allowKeeperRooms = homeRoom.energyCapacityAvailable >= 5300;
   const scored: { name: string; score: number }[] = [];
   for (const roomName of Object.values(exits)) {
-    const score = evaluateRemoteRoom(roomName);
+    const score = evaluateRemoteRoom(roomName, allowKeeperRooms);
     if (score > 0) {
       scored.push({ name: roomName, score });
     }

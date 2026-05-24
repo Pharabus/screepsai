@@ -47,8 +47,10 @@ export function handleRemoteThreat(creep: Creep): boolean {
   if (!targetRoom) return false;
 
   if (creep.room.name === targetRoom) {
+    const isKeeperRoom = Memory.rooms[targetRoom]?.remoteType === 'keeperRoom';
     const hostiles = creep.pos.findInRange(FIND_HOSTILE_CREEPS, HOSTILE_FLEE_RANGE, {
-      filter: (h) => threatScore(h) > 0,
+      // In SK rooms, Source Keepers are handled by the keeperKiller — don't flee from them.
+      filter: (h) => threatScore(h) > 0 && !(isKeeperRoom && h.owner?.username === 'Source Keeper'),
     });
     if (hostiles.length === 0) return false;
     recordHostile(targetRoom);
