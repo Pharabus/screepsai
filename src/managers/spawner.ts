@@ -177,7 +177,10 @@ export function haulersNeeded(room: Room): number {
 
   for (const s of unlinked) {
     const dist = s.pathDist ?? 25;
-    count += Math.max(1, Math.ceil((dist * 2 * SOURCE_RATE) / haulerCarry));
+    // Apply swamp correction for far sources: pathDist is plain-tile count but
+    // high-dist paths typically traverse swamp, making hauler round-trips ~1.5x longer.
+    const effectiveDist = dist > 60 ? Math.ceil(dist * 1.5) : dist;
+    count += Math.max(1, Math.ceil((effectiveDist * 2 * SOURCE_RATE) / haulerCarry));
   }
 
   count = Math.max(count, 2);
@@ -218,6 +221,10 @@ export function upgradersNeeded(room: Room): number {
  * back to upgrading when idle), up to 3 when there's heavy construction.
  */
 export function buildersNeeded(room: Room): number {
+  // Controller emergency: stop draining energy on construction when near downgrade
+  const ctrl = room.controller;
+  if (ctrl && ctrl.ticksToDowngrade < 10_000 && ctrl.level < 5) return 0;
+
   const storage = room.storage;
   const mem = Memory.rooms[room.name];
   const sources = mem?.sources;
@@ -518,12 +525,19 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     // Cap at energyCapacityAvailable so the body never exceeds what the room can afford
     // (e.g. RCL 1 after a downgrade has 300 cap, below the 600 floor tier).
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    const isCtrlEmergency = !!(
+      room.controller &&
+      room.controller.ticksToDowngrade < 10_000 &&
+      room.controller.level < 5
+    );
     const upgraderEnergyCap = Math.min(
-      storedEnergy < 15_000
-        ? 600 // 5 WORK
-        : storedEnergy < 50_000
-          ? 1100 // 10 WORK
-          : room.energyCapacityAvailable,
+      isCtrlEmergency
+        ? room.energyCapacityAvailable
+        : storedEnergy < 15_000
+          ? 600 // 5 WORK
+          : storedEnergy < 50_000
+            ? 1100 // 10 WORK
+            : room.energyCapacityAvailable,
       room.energyCapacityAvailable,
     );
     queue.push({
