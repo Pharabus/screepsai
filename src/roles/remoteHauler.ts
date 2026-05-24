@@ -6,10 +6,9 @@ import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../util
 import { handleRemoteThreat } from '../utils/remoteThreat';
 
 function pickLootResource(target: Ruin | Tombstone): ResourceConstant | undefined {
+  // Only pick up energy — the DELIVER state only transfers energy, so picking up
+  // non-energy minerals would leave them permanently stuck in the hauler's store.
   if (target.store.getUsedCapacity(RESOURCE_ENERGY) > 0) return RESOURCE_ENERGY;
-  for (const r of Object.keys(target.store) as ResourceConstant[]) {
-    if (target.store.getUsedCapacity(r) > 0) return r;
-  }
   return undefined;
 }
 

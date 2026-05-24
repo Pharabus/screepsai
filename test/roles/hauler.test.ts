@@ -942,9 +942,16 @@ describe('hauler pickup priority', () => {
       pos: new RoomPosition(10, 10, 'W1N1'),
     };
 
+    const storage = {
+      id: 'storage1' as Id<StructureStorage>,
+      store: mockStore({ energy: 20000 }, 1000000),
+      structureType: STRUCTURE_STORAGE,
+      pos: new RoomPosition(25, 24, 'W1N1'),
+    };
     const room = mockRoom({
       name: 'W1N1',
       find: vi.fn(() => []),
+      storage,
     });
 
     Game.getObjectById = vi.fn(() => null) as any;
@@ -1063,6 +1070,75 @@ describe('hauler pickup priority', () => {
     hauler.run(creep);
 
     expect(creep.withdraw).toHaveBeenCalledWith(closeTomb, RESOURCE_ENERGY);
+  });
+
+  it('skips non-energy abandoned loot when room has no storage or terminal', () => {
+    const mineralTomb = {
+      id: 'tomb1' as Id<Tombstone>,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: {
+        getUsedCapacity: (r?: string) => (r === undefined ? 5 : r === RESOURCE_ENERGY ? 0 : 5),
+      },
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn(() => null) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_TOMBSTONES) {
+        const items = [mineralTomb];
+        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
+      }
+      return null;
+    }) as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalled();
+  });
+
+  it('skips dropped minerals when room has no storage or terminal', () => {
+    const mineralDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: 'H',
+      amount: 100,
+      pos: new RoomPosition(10, 10, 'W1N1'),
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn(() => null) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
+      if (type === FIND_DROPPED_RESOURCES) {
+        return (opts?.filter ? [mineralDrop].filter(opts.filter) : [mineralDrop])[0] ?? null;
+      }
+      // Return null for FIND_RUINS / FIND_TOMBSTONES so pickupAbandonedLoot doesn't crash
+      return null;
+    }) as any;
+
+    hauler.run(creep);
+
+    expect(creep.pickup).not.toHaveBeenCalled();
   });
 
   it('picks mineral container before partially-full source containers', () => {
@@ -1358,5 +1434,28 @@ describe('hauler delivery priority', () => {
     hauler.run(creep);
 
     expect(creep.transfer).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('drops mineral when stuck in deliver with no storage or terminal', () => {
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = { W1N1: {} };
+    Game.creeps = { hauler_1: {} } as any;
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ UH: 5 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.drop).toHaveBeenCalledWith('UH');
+    expect(creep.transfer).not.toHaveBeenCalled();
   });
 });

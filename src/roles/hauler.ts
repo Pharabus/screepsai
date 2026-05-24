@@ -239,10 +239,13 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
-  // Dropped minerals (non-energy) — decay-sensitive
-  const droppedMineral = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
-  });
+  // Dropped minerals (non-energy) — decay-sensitive, but only if deliverable
+  const droppedMineral =
+    creep.room.storage || creep.room.terminal
+      ? creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+          filter: (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
+        })
+      : null;
   if (droppedMineral) {
     creep.memory.targetId = droppedMineral.id;
     if (creep.pickup(droppedMineral) === ERR_NOT_IN_RANGE) {
@@ -350,6 +353,9 @@ function pickupAbandonedLoot(creep: Creep): boolean {
   if (!target) return false;
   const resource = pickWithdrawResource(target as unknown as AnyStoreStructure);
   if (!resource) return false;
+  // Don't pick up non-energy minerals when the room has nowhere to deliver them.
+  // Young colonies without storage/terminal would get permanently stuck in DELIVER.
+  if (resource !== RESOURCE_ENERGY && !creep.room.storage && !creep.room.terminal) return false;
   creep.memory.targetId = target.id;
   if (creep.withdraw(target, resource) === ERR_NOT_IN_RANGE) {
     moveTo(creep, target, {
@@ -536,10 +542,19 @@ function findFullSourceContainer(
 }
 
 function deliver(creep: Creep): void {
-  // Non-energy resources: deliver to lab input, terminal, or storage
+  // Non-energy resources: deliver to lab input, terminal, or storage.
+  // If the room has no storage or terminal (young colony), drop the mineral rather
+  // than getting permanently stuck in DELIVER with no valid target.
   if (creep.store.getUsedCapacity() > creep.store.getUsedCapacity(RESOURCE_ENERGY)) {
     if (deliverToLabInput(creep)) return;
     if (deliverToTerminalOrStorage(creep)) return;
+    const mineralType = (Object.keys(creep.store) as ResourceConstant[]).find(
+      (r) => r !== RESOURCE_ENERGY && creep.store.getUsedCapacity(r) > 0,
+    );
+    if (mineralType) {
+      creep.drop(mineralType);
+      return;
+    }
   }
 
   if (deliverToSpawnOrExtension(creep)) return;

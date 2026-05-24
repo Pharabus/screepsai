@@ -237,6 +237,7 @@ export function mockCreep(overrides: Record<string, any> = {}): any {
     transfer: vi.fn(() => 0),
     withdraw: vi.fn(() => 0),
     pickup: vi.fn(() => 0),
+    drop: vi.fn(() => 0),
     upgradeController: vi.fn(() => 0),
     attack: vi.fn(() => 0),
     dismantle: vi.fn(() => 0),
