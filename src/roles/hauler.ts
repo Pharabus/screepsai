@@ -5,7 +5,11 @@ import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached, getStructuresByType } from '../utils/tickCache';
-import { MINERAL_STORAGE_FLOOR, TERMINAL_ENERGY_FLOOR } from '../utils/thresholds';
+import {
+  MINERAL_STORAGE_FLOOR,
+  TERMINAL_ENERGY_FLOOR,
+  FACTORY_ENERGY_FLOOR,
+} from '../utils/thresholds';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 // Only dispatch a hauler for lab minerals when the lab genuinely needs a
@@ -319,6 +323,9 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
+  // Battery pickup from factory — deliver to terminal (preferred) or storage
+  if (pickupFromFactory(creep)) return true;
+
   // Terminal: move excess minerals from storage to terminal
   if (pickupForTerminal(creep)) return true;
 
@@ -489,6 +496,23 @@ function pickupForTerminal(creep: Creep): boolean {
   return false;
 }
 
+function pickupFromFactory(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.factoryId) return false;
+  const factory = Game.getObjectById(mem.factoryId);
+  if (!factory) return false;
+  const batteries = factory.store.getUsedCapacity(RESOURCE_BATTERY) ?? 0;
+  if (batteries === 0) return false;
+  creep.memory.targetId = factory.id;
+  if (creep.withdraw(factory, RESOURCE_BATTERY) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, factory, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#cc66ff' },
+    });
+  }
+  return true;
+}
+
 const SOURCE_CONTAINER_FULL_THRESHOLD = 1000;
 
 function findFullSourceContainer(
@@ -535,6 +559,8 @@ function deliver(creep: Creep): void {
     return;
   }
 
+  if (deliverToFactory(creep)) return;
+
   if (deliverToControllerContainer(creep)) return;
 
   if (deliverToTerminalEnergy(creep)) return;
@@ -563,6 +589,25 @@ function deliverToTerminalEnergy(creep: Creep): boolean {
     moveTo(creep, terminal, {
       priority: PRIORITY_HAULER,
       visualizePathStyle: { stroke: '#ffff00' },
+    });
+  }
+  return true;
+}
+
+function deliverToFactory(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.factoryId || !mem.factoryRecipe) return false;
+  if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
+  const storage = creep.room.storage;
+  if (!storage || storage.store.getUsedCapacity(RESOURCE_ENERGY) <= FACTORY_ENERGY_FLOOR)
+    return false;
+  const factory = Game.getObjectById(mem.factoryId);
+  if (!factory) return false;
+  if ((factory.store.getFreeCapacity(RESOURCE_ENERGY) ?? 0) === 0) return false;
+  if (creep.transfer(factory, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, factory, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ffaa00' },
     });
   }
   return true;

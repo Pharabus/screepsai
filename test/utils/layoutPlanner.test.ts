@@ -497,6 +497,48 @@ describe('isAccessible filter in lab stamp loop', () => {
   });
 });
 
+describe('isAccessible filter in factory placement', () => {
+  it('skips a factory candidate that would strand an adjacent extension', () => {
+    // Simulate the W43N58 bug: spawn=(16,31), storage=(16,29).
+    // The first candidate adjacent to storage at (17,29) has the extension at (17,28)
+    // as its only non-wall cardinal neighbour — placing the factory there would leave
+    // the extension with zero walkable cardinals.
+    // We reproduce this by placing an extension directly above the first candidate
+    // and walling off all other cardinals of that extension.
+    //
+    // Setup: spawn at (25,25), storage at (27,25).
+    // Candidate factory at (28,25) — first ring-1 tile east of storage.
+    // Place an extension at (28,24) (directly above candidate).
+    // Wall off (28,23) so the extension's only open cardinal would be (28,25) itself
+    // (which is blocked if factory is placed there) — making it inaccessible.
+    const room = makeRoom({
+      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+    });
+    // Wall at (28,23) — extension at (28,24) would then rely on (28,25) as its
+    // sole non-wall walkable cardinal, but that's the factory candidate tile.
+    const wallSet = new Set<string>(['28,23', '29,24', '27,24']);
+    const baseTerrain = makeTerrain();
+    room.getTerrain = () => ({
+      get: (x: number, y: number) => {
+        if (wallSet.has(`${x},${y}`)) return TERRAIN_MASK_WALL;
+        return baseTerrain.get(x, y);
+      },
+    });
+    // Inject an extension structure at (28,24) so the liveMap knows it's non-walkable
+    room.find = (type: number) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_STRUCTURES)
+        return [{ structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(28, 24, 'W1N1') }];
+      if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+      return [];
+    };
+
+    const plan = computeLayout(room)!;
+    // Factory must NOT be placed at (28,25) — it would strand the extension at (28,24)
+    expect(plan.factoryPos).not.toEqual({ x: 28, y: 25 });
+  });
+});
+
 describe('scoreSpawnCandidate', () => {
   it('returns -1 for out-of-bounds positions', () => {
     const terrain = makeTerrain();

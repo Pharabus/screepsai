@@ -10,6 +10,7 @@ import {
   placeRamparts,
   placeLinks,
   placeTerminal,
+  placeFactory,
   placeExtractor,
   placeMineralContainer,
   placeLabs,
@@ -324,6 +325,35 @@ describe('construction RCL gating', () => {
       const room = roomAt(5);
       placeTerminal(room);
       expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('placeFactory', () => {
+    it('does not place before RCL 7', () => {
+      const room = roomAt(6);
+      placeFactory(room);
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('places at RCL 7 when storage exists and no factory present', () => {
+      const storagePos = new RoomPosition(27, 25, 'W1N1');
+      const room = roomAt(7, {
+        storage: { pos: storagePos },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return [];
+            return [];
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      placeFactory(room);
+      expect(room.createConstructionSite).toHaveBeenCalledWith(
+        expect.any(Object),
+        STRUCTURE_FACTORY,
+      );
     });
   });
 
@@ -862,6 +892,12 @@ describe('link-first gating', () => {
   it('placeTerminal skips when link site exists', () => {
     const room = roomWithLinkSite(6);
     placeTerminal(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+
+  it('placeFactory skips when link site exists', () => {
+    const room = roomWithLinkSite(7);
+    placeFactory(room);
     expect(room.createConstructionSite).not.toHaveBeenCalled();
   });
 

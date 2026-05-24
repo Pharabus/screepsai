@@ -8,6 +8,7 @@ import { runVisuals } from './managers/visuals';
 import { runLinks } from './managers/links';
 import { runTerminal } from './managers/terminal';
 import { runLabs } from './managers/labs';
+import { runFactory } from './managers/factory';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
 import { resetTraffic, resolveTraffic, cleanPathSerialCache } from './utils/trafficManager';
@@ -158,6 +159,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     profile('traffic', resolveTraffic);
     if (shouldRun({ priority: THROTTLE_HIGH })) profile('towers', runTowers);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('labs', runLabs);
+    if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);
     if (shouldRun({ priority: THROTTLE_LOW })) profile('terminal', runTerminal);
     if (shouldRun({ interval: 5, priority: THROTTLE_LOW }))
       profile('construction', runConstruction);

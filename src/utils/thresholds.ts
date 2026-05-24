@@ -1,4 +1,6 @@
 export const MINERAL_STORAGE_FLOOR = 5000;
+export const FACTORY_ENERGY_FLOOR = 50_000;
+export const FACTORY_BATTERY_CAP = 500;
 
 /**
  * Structure HP fraction below which repairs are triggered.

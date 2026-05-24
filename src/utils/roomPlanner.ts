@@ -191,6 +191,20 @@ export function ensureRoomPlan(room: Room): void {
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
 
+  // Factory tracking (RCL 7+)
+  if ((room.controller?.level ?? 0) >= 7) {
+    if (mem.factoryId) {
+      const f = Game.getObjectById(mem.factoryId);
+      if (!f) mem.factoryId = undefined;
+    }
+    if (!mem.factoryId) {
+      const factories = room.find(FIND_MY_STRUCTURES, {
+        filter: (s): s is StructureFactory => s.structureType === STRUCTURE_FACTORY,
+      });
+      if (factories.length > 0) mem.factoryId = factories[0]!.id;
+    }
+  }
+
   // Compute base layout plan once — drives construction manager placement.
   // Clear stale plans when the version changes so rooms auto-replan on next tick.
   if (mem.layoutPlan && mem.layoutPlan.version !== LAYOUT_PLAN_VERSION) {

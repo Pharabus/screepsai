@@ -111,6 +111,7 @@ export function getPlannedReserved(room: Room): Set<string> {
     return set;
   set.add(`${plan.storagePos.x},${plan.storagePos.y}`);
   set.add(`${plan.terminalPos.x},${plan.terminalPos.y}`);
+  if (plan.factoryPos) set.add(`${plan.factoryPos.x},${plan.factoryPos.y}`);
   for (const p of plan.towerPositions as ({ x: number; y: number } | undefined)[])
     if (p) set.add(`${p.x},${p.y}`);
   for (const p of plan.labPositions as ({ x: number; y: number } | undefined)[])
@@ -421,6 +422,36 @@ export function placeTerminal(room: Room): void {
 
   const pos = findOpenPosition(room, room.storage.pos, 1, 3);
   if (pos) room.createConstructionSite(pos, STRUCTURE_TERMINAL);
+}
+
+export function placeFactory(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 7) return;
+  if (hasUnbuiltLinkSites(room)) return;
+
+  const existing = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_FACTORY,
+  });
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_FACTORY,
+  });
+  if (existing.length > 0 || sites.length > 0) return;
+
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
+
+  if (plan?.factoryPos) {
+    const { x, y } = plan.factoryPos;
+    const pos = new RoomPosition(x, y, room.name);
+    const blocked =
+      pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+    if (!blocked) room.createConstructionSite(pos, STRUCTURE_FACTORY);
+    return;
+  }
+
+  if (!room.storage) return;
+  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_FACTORY);
 }
 
 export function placeExtractor(room: Room): void {
@@ -1050,6 +1081,7 @@ export function runConstruction(): void {
     placeCorridorRoads(room);
     placeRemoteRoads(room);
     placeTerminal(room);
+    placeFactory(room);
     placeExtractor(room);
     placeMineralContainer(room);
     clearBlockingExtensions(room);

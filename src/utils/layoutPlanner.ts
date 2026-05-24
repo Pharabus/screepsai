@@ -80,12 +80,13 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 1;
+export const LAYOUT_PLAN_VERSION = 3;
 
 export interface LayoutPlan {
   version: number;
   storagePos: { x: number; y: number };
   terminalPos: { x: number; y: number };
+  factoryPos?: { x: number; y: number };
   towerPositions: { x: number; y: number }[];
   labPositions: { x: number; y: number }[];
   extensionPositions: { x: number; y: number }[];
@@ -430,6 +431,26 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     }
   }
 
+  // Step 3b: Factory position — adjacent to storage (within 2), prefer next to terminal
+  let factoryPos: { x: number; y: number } | undefined;
+  outerFactory: for (let r = 1; r <= 3; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const x = storagePos.x + dx;
+        const y = storagePos.y + dy;
+        if (!inBounds(x, y)) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        if (reserved.has(`${x},${y}`)) continue;
+        if (!isTileBuildable(liveMap, x, y, STRUCTURE_FACTORY)) continue;
+        if (!isAccessible(x, y, terrain, liveMap, reserved)) continue;
+        factoryPos = { x, y };
+        reserved.add(`${x},${y}`);
+        break outerFactory;
+      }
+    }
+  }
+
   // Step 4: Tower positions — seed from live towers, fill remaining slots spread around spawn
   const towerPositions = pickTowerPositions(room, liveMap, spawn.pos, reserved, terrain, 6);
   for (const t of towerPositions) reserved.add(`${t.x},${t.y}`);
@@ -511,6 +532,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     version: LAYOUT_PLAN_VERSION,
     storagePos,
     terminalPos,
+    factoryPos,
     towerPositions,
     labPositions,
     extensionPositions,

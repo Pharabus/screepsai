@@ -444,8 +444,8 @@ describe('roomPlanner', () => {
 
       ensureRoomPlan(room);
 
-      // Stale plan cleared; a fresh plan (version 1) computed
-      expect(Memory.rooms['W1N1'].layoutPlan?.version).toBe(1);
+      // Stale plan cleared; a fresh plan (current version) computed
+      expect(Memory.rooms['W1N1'].layoutPlan?.version).toBe(3);
     });
 
     it('preserves a current layoutPlan without recomputing', () => {
@@ -460,7 +460,7 @@ describe('roomPlanner', () => {
       Memory.rooms['W1N1'] = {
         sources: [],
         layoutPlan: {
-          version: 1,
+          version: 3,
           storagePos: { x: 10, y: 10 },
           terminalPos: { x: 11, y: 10 },
           towerPositions: [],
@@ -481,7 +481,7 @@ describe('roomPlanner', () => {
 
   describe('pathDist computation', () => {
     const STUB_LAYOUT = {
-      version: 1,
+      version: 3,
       storagePos: { x: 25, y: 25 },
       terminalPos: { x: 26, y: 25 },
       towerPositions: [],
@@ -599,7 +599,7 @@ describe('roomPlanner', () => {
         W1N1: {
           sources: [],
           layoutPlan: {
-            version: 1,
+            version: 3,
             storagePos: { x: 25, y: 25 },
             terminalPos: { x: 26, y: 25 },
             towerPositions: [],
@@ -652,7 +652,7 @@ describe('roomPlanner', () => {
         W1N1: {
           sources: [],
           layoutPlan: {
-            version: 1,
+            version: 3,
             storagePos: { x: 25, y: 25 },
             terminalPos: { x: 26, y: 25 },
             towerPositions: [],

@@ -36,6 +36,7 @@ interface CreepMemory {
     | StructureTower
     | StructureLink
     | StructureLab
+    | StructureFactory
   >;
   /** FSM state name */
   state?: string;
@@ -104,12 +105,16 @@ interface RoomMemory {
     version: number;
     storagePos: { x: number; y: number };
     terminalPos: { x: number; y: number };
+    factoryPos?: { x: number; y: number };
     towerPositions: { x: number; y: number }[];
     labPositions: { x: number; y: number }[];
     extensionPositions: { x: number; y: number }[];
     /** Up to 3 spawn positions (index 0 = primary/live spawn, 1-2 = 2nd/3rd RCL 7-8 spawns). */
     spawnPositions?: { x: number; y: number }[];
   };
+  // Factory (RCL 7+)
+  factoryId?: Id<StructureFactory>;
+  factoryRecipe?: ResourceConstant;
   // Best spawn position suggestion for a not-yet-claimed room
   suggestedSpawnPos?: { x: number; y: number; score: number };
   /**
