@@ -79,7 +79,11 @@ export const EXTENSION_STAMP: [number, number][] = [
   [4, 4],
 ];
 
+/** Bump when layout semantics change to auto-invalidate stale cached plans. */
+export const LAYOUT_PLAN_VERSION = 1;
+
 export interface LayoutPlan {
+  version: number;
   storagePos: { x: number; y: number };
   terminalPos: { x: number; y: number };
   towerPositions: { x: number; y: number }[];
@@ -504,6 +508,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   }
 
   return {
+    version: LAYOUT_PLAN_VERSION,
     storagePos,
     terminalPos,
     towerPositions,

@@ -1,4 +1,4 @@
-import { computeLayout } from './layoutPlanner';
+import { computeLayout, LAYOUT_PLAN_VERSION } from './layoutPlanner';
 
 /**
  * Room planning layer.
@@ -191,7 +191,11 @@ export function ensureRoomPlan(room: Room): void {
   // a container built).
   mem.minerEconomy = mem.sources.some((s) => !!s.containerId);
 
-  // Compute base layout plan once — drives construction manager placement
+  // Compute base layout plan once — drives construction manager placement.
+  // Clear stale plans when the version changes so rooms auto-replan on next tick.
+  if (mem.layoutPlan && mem.layoutPlan.version !== LAYOUT_PLAN_VERSION) {
+    mem.layoutPlan = undefined;
+  }
   if (!mem.layoutPlan) {
     const plan = computeLayout(room);
     if (plan) mem.layoutPlan = plan;

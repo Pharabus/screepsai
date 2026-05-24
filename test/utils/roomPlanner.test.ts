@@ -410,8 +410,78 @@ describe('roomPlanner', () => {
     });
   });
 
+  describe('layoutPlan versioning', () => {
+    it('clears a stale layoutPlan and triggers recompute when version does not match', () => {
+      const spawnPos = new (globalThis as any).RoomPosition(16, 31, 'W1N1');
+      const spawn = { pos: spawnPos };
+
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: undefined,
+        storage: undefined,
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_SPAWNS) return [spawn];
+          return [];
+        }),
+        findPath: vi.fn(() => []),
+        getTerrain: vi.fn(() => ({ get: () => 0 })),
+      });
+
+      // Stale plan with version 0 (current is 1)
+      Memory.rooms['W1N1'] = {
+        sources: [],
+        layoutPlan: {
+          version: 0,
+          storagePos: { x: 25, y: 25 },
+          terminalPos: { x: 26, y: 25 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      ensureRoomPlan(room);
+
+      // Stale plan cleared; a fresh plan (version 1) computed
+      expect(Memory.rooms['W1N1'].layoutPlan?.version).toBe(1);
+    });
+
+    it('preserves a current layoutPlan without recomputing', () => {
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: undefined,
+        storage: undefined,
+        find: vi.fn(() => []),
+        getTerrain: vi.fn(() => ({ get: () => 0 })),
+      });
+
+      Memory.rooms['W1N1'] = {
+        sources: [],
+        layoutPlan: {
+          version: 1,
+          storagePos: { x: 10, y: 10 },
+          terminalPos: { x: 11, y: 10 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [],
+        },
+      } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      ensureRoomPlan(room);
+
+      // Plan unchanged — storagePos still at (10,10), not recalculated
+      expect(Memory.rooms['W1N1'].layoutPlan?.storagePos).toEqual({ x: 10, y: 10 });
+      expect(room.getTerrain).not.toHaveBeenCalled();
+    });
+  });
+
   describe('pathDist computation', () => {
     const STUB_LAYOUT = {
+      version: 1,
       storagePos: { x: 25, y: 25 },
       terminalPos: { x: 26, y: 25 },
       towerPositions: [],
@@ -529,6 +599,7 @@ describe('roomPlanner', () => {
         W1N1: {
           sources: [],
           layoutPlan: {
+            version: 1,
             storagePos: { x: 25, y: 25 },
             terminalPos: { x: 26, y: 25 },
             towerPositions: [],
@@ -581,6 +652,7 @@ describe('roomPlanner', () => {
         W1N1: {
           sources: [],
           layoutPlan: {
+            version: 1,
             storagePos: { x: 25, y: 25 },
             terminalPos: { x: 26, y: 25 },
             towerPositions: [],

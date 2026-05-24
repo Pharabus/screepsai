@@ -101,6 +101,7 @@ interface RoomMemory {
   labFlushing?: boolean;
   // Pre-computed base layout (src/utils/layoutPlanner.ts)
   layoutPlan?: {
+    version: number;
     storagePos: { x: number; y: number };
     terminalPos: { x: number; y: number };
     towerPositions: { x: number; y: number }[];
