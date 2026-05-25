@@ -125,6 +125,46 @@ describe('scout', () => {
       expect(creep.memory.targetRoom).toBe('W1N2');
     });
 
+    it('skips unreachable rooms within 50000-tick blocked window', () => {
+      Game.time = 10000;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 5001, scoutedSources: 0, scoutUnreachable: true } as any;
+
+      // 10000 - 5001 = 4999 ticks since marked unreachable — within 50k window
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
+    it('retries unreachable rooms after 50000 ticks', () => {
+      Game.time = 60000;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 1000, scoutedSources: 0, scoutUnreachable: true } as any;
+
+      // 60000 - 1000 = 59000 ticks — past the 50k blocked window
+      expect(findScoutTarget('W1N1')).toBe('W2N1');
+    });
+
+    it('clears scoutUnreachable flag when scout successfully enters the room', () => {
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: undefined,
+        find: vi.fn(() => []),
+      });
+
+      Memory.rooms['W2N1'] = { scoutUnreachable: true } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      scout.run(creep);
+
+      expect(Memory.rooms['W2N1'].scoutUnreachable).toBeUndefined();
+    });
+
     it('never re-targets owned rooms, even when stale', () => {
       Game.time = 100_000; // very stale
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;

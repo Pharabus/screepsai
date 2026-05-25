@@ -11,6 +11,9 @@ function pickScoutTarget(creep: Creep): string | undefined {
 
 const SCOUT_MAX_DEPTH = 3;
 const SCOUT_STALE_TICKS = 5000;
+// Rooms flagged scoutUnreachable use this longer cooldown (~4.6 h at 3 t/s)
+// so the spawner doesn't waste scouts on routes blocked by enemy rooms.
+const SCOUT_BLOCKED_TICKS = 50_000;
 // Timeout for reaching a target room. At 1 tile/tick a [MOVE]-only scout
 // takes ~40t per room; depth-3 needs ~200t plus border-wait padding.
 const SCOUT_STUCK_TICKS = 300;
@@ -50,8 +53,9 @@ export function findScoutTarget(homeRoom: string): string | undefined {
         rmem?.scoutAttempted !== undefined ? Game.time - rmem.scoutAttempted : Infinity;
       if (!rmem?.scoutedAt) {
         if (attemptAge > SCOUT_STALE_TICKS) unscouted.push(neighbor);
-      } else if (Game.time - rmem.scoutedAt > SCOUT_STALE_TICKS) {
-        stale.push(neighbor);
+      } else {
+        const threshold = rmem.scoutUnreachable ? SCOUT_BLOCKED_TICKS : SCOUT_STALE_TICKS;
+        if (Game.time - rmem.scoutedAt > threshold) stale.push(neighbor);
       }
 
       queue.push({ room: neighbor, depth: entry.depth + 1 });
@@ -65,6 +69,7 @@ function markUnreachable(targetRoom: string): void {
   const rmem = (Memory.rooms[targetRoom] ??= {});
   rmem.scoutedAt = Game.time;
   rmem.scoutedSources = 0;
+  rmem.scoutUnreachable = true;
 }
 
 // 1000 energy drops survive ~1000t at base decay (1/1000 per tick rounded up),
@@ -169,6 +174,7 @@ const states: StateMachineDefinition = {
         rmem.scoutedSourceData = sources.map((s) => ({ id: s.id, x: s.pos.x, y: s.pos.y }));
         rmem.scoutedAt = Game.time;
         delete rmem.scoutAttempted;
+        delete rmem.scoutUnreachable;
 
         const controller = creep.room.controller;
         rmem.scoutedHasController = !!controller;

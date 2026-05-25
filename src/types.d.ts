@@ -143,6 +143,8 @@ interface RoomMemory {
   scoutedAt?: number;
   /** Set when a scout departs for this room; cleared on arrival. Prevents respawn loops when scout dies at border. */
   scoutAttempted?: number;
+  /** Set by markUnreachable when stuck-timer fires; causes a 10× longer rescouting cooldown. Cleared on successful arrival. */
+  scoutUnreachable?: boolean;
   scoutedSources?: number;
   /** Source data recorded by scouts, so miners can path without visibility */
   scoutedSourceData?: { id: Id<Source>; x: number; y: number }[];
