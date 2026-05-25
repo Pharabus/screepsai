@@ -1,6 +1,6 @@
 import {
   ENERGY_TERMINAL_BUFFER,
-  MINERAL_TERMINAL_CEILING,
+  MINERAL_TERMINAL_SELL_FLOOR,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
   BUY_INTERVAL,
@@ -29,9 +29,9 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
   for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
     const amount = terminal.store.getUsedCapacity(resource);
-    if (amount <= MINERAL_TERMINAL_CEILING) continue;
+    if (amount <= MINERAL_TERMINAL_SELL_FLOOR) continue;
 
-    const surplus = amount - MINERAL_TERMINAL_CEILING;
+    const surplus = amount - MINERAL_TERMINAL_SELL_FLOOR;
     const orders = Game.market.getAllOrders({ type: ORDER_BUY, resourceType: resource });
     // Rank by revenue-per-deal (min(surplus, remaining) * price), not just price.
     // A high-price decoy with remainingAmount=1 wastes a 10-tick cooldown for 1 unit;

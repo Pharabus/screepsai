@@ -254,6 +254,112 @@ describe('runTerminal', () => {
     consoleSpy.mockRestore();
   });
 
+  it('sells when terminal mineral is between MINERAL_TERMINAL_SELL_FLOOR and MINERAL_TERMINAL_CEILING (previously deadlocked)', () => {
+    // Live bug: terminal H=18169, storage H=5000 → total ~23k but terminal portion
+    // was below the old 20k sell line. New floor at 10k makes 15k H sellable.
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 15000, energy: 20000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // surplus = 15000 - 10000 = 5000; order has 5000 remaining → deal amount = 5000
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 1.0, remainingAmount: 5000, roomName: 'W2N2' },
+    ]);
+    // calcTransactionCost returns 100 (from beforeEach), well within energy buffer check
+    // energy guard: 20000 >= 100 (energyCost) + 5000 (ENERGY_TERMINAL_BUFFER) ✓
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', 5000, 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('computes surplus against the new 10k floor (not the old 20k ceiling)', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 15000, energy: 50000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // With the 10k floor: surplus = 15000 - 10000 = 5000.
+    // With the old 20k ceiling it would have been -5000 (skipped entirely).
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 1.0, remainingAmount: 10000, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    // Deal amount = min(surplus=5000, remaining=10000) = 5000
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', 5000, 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('does NOT sell when terminal mineral is at or below the 10k floor', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 8000, energy: 50000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 1.0, remainingAmount: 10000, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    // getAllOrders should not even be called since amount (8000) <= floor (10000)
+    expect(Game.market.getAllOrders).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('does NOT sell when terminal mineral is exactly at the 10k floor', () => {
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: {
+        store: mockTerminalStore({ H: 10000, energy: 50000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 1.0, remainingAmount: 10000, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it('skips energy resources', () => {
     (Game as any).time = 100;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

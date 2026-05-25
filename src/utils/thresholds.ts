@@ -13,6 +13,8 @@ export const FACTORY_BATTERY_CAP = 500;
  */
 export const REPAIR_THRESHOLD = 0.75;
 export const MINERAL_TERMINAL_CEILING = 20_000;
+/** Terminal mineral above this amount is sold as surplus. Sits below MINERAL_TERMINAL_CEILING (the combined hold/throttle cap) so there is always a sellable band — without this gap the terminal can never cross its own sell line and minerals never sell. */
+export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;
 export const ENERGY_TERMINAL_BUFFER = 5_000;
 export const TERMINAL_ENERGY_FLOOR = 15_000;
 
