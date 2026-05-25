@@ -57,7 +57,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).LAB_REACTION_AMOUNT = 5;
 (globalThis as any).LAB_COOLDOWN = 10;
 
-// Reactions (tier 1-3 subset for testing)
+// Reactions (tier 1-3 subset for testing, X catalyst matches real Screeps table)
 (globalThis as any).REACTIONS = {
   // Tier 1: base mineral pairs
   H: {
@@ -67,12 +67,6 @@ import { resetTickCache } from '../../src/utils/tickCache';
     U: 'UH',
     Z: 'ZH',
     G: 'GH',
-    // Tier 3: tier2 + H → tier3 boost
-    ZHO2: 'XZHO2',
-    LHO2: 'XLHO2',
-    GHO2: 'XGHO2',
-    KHO2: 'XKHO2',
-    UHO2: 'XUHO2',
   },
   O: {
     H: 'OH',
@@ -87,7 +81,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
     GH: 'GHO2',
     KH: 'KHO2',
     UH: 'UHO2',
-    // Tier 3: tier2 + O (some)
+    // GH2O + O → GHO2 (alternative path through OH intermediate)
     GH2O: 'GHO2',
   },
   Z: { K: 'ZK', H: 'ZH', O: 'ZO' },
@@ -95,14 +89,23 @@ import { resetTickCache } from '../../src/utils/tickCache';
   K: { H: 'KH', O: 'KO', Z: 'ZK' },
   U: { H: 'UH', O: 'UO', L: 'UL' },
   G: { H: 'GH', O: 'GO' },
-  // Tier 2 compounds as keys (react with H or O to produce tier3)
+  // X catalyst: combines with tier-2 compounds to produce tier-3 boosts
+  X: {
+    ZHO2: 'XZHO2',
+    LHO2: 'XLHO2',
+    GHO2: 'XGHO2',
+    KHO2: 'XKHO2',
+    UHO2: 'XUHO2',
+    GH2O: 'XGH2O',
+  },
+  // Tier 2 compounds as keys (react with O to produce tier2)
   ZH: { O: 'ZHO2' },
   LH: { O: 'LHO2' },
   GH: { O: 'GHO2' },
   KH: { O: 'KHO2' },
   UH: { O: 'UHO2' },
   OH: { ZH: 'ZH2O', LH: 'LH2O', GH: 'GH2O', KH: 'KH2O', UH: 'UH2O' },
-  // Tier 2 hydrides (compound + OH)
+  // Tier 2 hydrides (compound + OH → hydride, hydride + O → tier2)
   ZH2O: { O: 'ZHO2' },
   LH2O: { O: 'LHO2' },
   GH2O: { O: 'GHO2' },

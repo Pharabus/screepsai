@@ -1,4 +1,4 @@
-import { runLabs } from '../../src/managers/labs';
+import { getChainBuyNeeds, runLabs } from '../../src/managers/labs';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 function mockLab(overrides: Record<string, any> = {}): any {
@@ -498,5 +498,69 @@ describe('runLabs', () => {
     const mem = Memory.rooms['W1N1'];
     expect(mem?.activeReaction).toBeDefined();
     expect(mem?.activeReaction?.output).toBe('OH');
+  });
+});
+
+describe('getChainBuyNeeds', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  function makeRoom(
+    storageResources: Record<string, number>,
+    terminalResources: Record<string, number> = {},
+  ): any {
+    const storageStore: Record<string, any> = { ...storageResources };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageResources[r] ?? 0) : 0)),
+    });
+
+    const terminalStore: Record<string, any> = { ...terminalResources };
+    Object.defineProperty(terminalStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (terminalResources[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: { store: terminalStore },
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+      },
+    };
+    (Game as any).rooms = { W1N1: room };
+    return room;
+  }
+
+  it('surfaces missing leaf inputs for the top-priority goal rather than returning empty', () => {
+    // Live stuck-state: O and H are stocked but G and X (catalyst) are missing.
+    // The old chainMissingInputs would return [] (stuck at OH "producing" step);
+    // the new whole-chain scan must return the actually missing leaf inputs.
+    makeRoom({ O: 3000, H: 15000, OH: 59, G: 0 }, { X: 0 });
+
+    const needs = getChainBuyNeeds(makeRoom({ O: 3000, H: 15000, OH: 59, G: 0 }, { X: 0 }));
+
+    // Must not be empty — the bug would return []
+    expect(needs.length).toBeGreaterThan(0);
+    // G and X are base minerals / catalyst that are missing from the XGHO2 chain
+    expect(needs).toContain('G' as ResourceConstant);
+  });
+
+  it('returns empty when all leaf inputs for the top goal are stocked', () => {
+    // All leaf inputs for the highest-priority achievable goal are available
+    // (≥ MIN_STEP_AMOUNT = 200) — nothing to buy.
+    makeRoom({ O: 500, H: 500, G: 500, X: 500 });
+
+    const needs = getChainBuyNeeds(makeRoom({ O: 500, H: 500, G: 500, X: 500 }));
+
+    // Fully stocked leaves → nothing to buy
+    expect(needs).toHaveLength(0);
   });
 });

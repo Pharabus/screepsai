@@ -92,24 +92,30 @@ export function findNextChainStep(
 }
 
 /**
- * Return the resources needed by the first unblocked step of the chain that
- * are below MIN_STEP_AMOUNT. Used by the terminal to decide what to buy.
- * Only looks at the lowest runnable gap (the step that would unblock the chain).
+ * Scan every step in the chain and return all leaf inputs (base minerals /
+ * catalyst) that are below MIN_STEP_AMOUNT.  Intermediate compounds whose
+ * output is produced by an earlier step in the same chain are never returned
+ * — those are made in-lab, not bought.
+ *
+ * This whole-chain scan ensures that missing inputs deep in the reaction tree
+ * (e.g. the X catalyst or base minerals for ghodium branches) are surfaced
+ * even when a shallow step's inputs happen to be fully stocked.  Returns []
+ * when every leaf input is already at or above MIN_STEP_AMOUNT (fully stocked,
+ * nothing to buy).
  */
 export function chainMissingInputs(
   chain: ReactionStep[],
   available: Map<ResourceConstant, number>,
 ): ResourceConstant[] {
+  // Inputs produced by an earlier step are made in-lab, not bought. Only
+  // leaf inputs (base minerals + catalyst) are buy candidates.
+  const producedInChain = new Set<ResourceConstant>(chain.map((s) => s.output));
+  const missing = new Set<ResourceConstant>();
   for (const step of chain) {
-    const amt1 = available.get(step.input1) ?? 0;
-    const amt2 = available.get(step.input2) ?? 0;
-    const missing: ResourceConstant[] = [];
-    if (amt1 < MIN_STEP_AMOUNT) missing.push(step.input1);
-    if (amt2 < MIN_STEP_AMOUNT) missing.push(step.input2);
-    if (missing.length > 0) return missing;
-    // Both inputs are available for this step — check if output needs to be produced
-    const outAmt = available.get(step.output) ?? 0;
-    if (outAmt < MIN_STEP_AMOUNT) return []; // producing, no need to buy anything here
+    for (const input of [step.input1, step.input2]) {
+      if (producedInChain.has(input)) continue; // produced upstream, don't buy
+      if ((available.get(input) ?? 0) < MIN_STEP_AMOUNT) missing.add(input);
+    }
   }
-  return [];
+  return [...missing];
 }
