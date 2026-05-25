@@ -226,6 +226,8 @@ interface Memory {
   // Toggles — default off, flip from the in-game console.
   profiling?: boolean;
   visuals?: boolean;
+  /** When true, `buyForLabs` skips all market purchases (kill-switch to stop credit bleed). */
+  pauseLabBuying?: boolean;
 }
 
 // Screeps provides a global require for loading modules

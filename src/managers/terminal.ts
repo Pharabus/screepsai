@@ -100,6 +100,8 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 }
 
 function buyForLabs(room: Room, terminal: StructureTerminal): void {
+  // Kill-switch: pause all lab-input market purchases (set from the console).
+  if (Memory.pauseLabBuying) return;
   // Gate: need at least 3 labs and an active or pending reaction
   const mem = Memory.rooms[room.name];
   if (!mem?.labIds || mem.labIds.length < 3) return;
