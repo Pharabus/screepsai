@@ -16,13 +16,15 @@ export function getReactionProduct(
   return (REACTIONS as Record<string, Record<string, string>>)[r1]?.[r2];
 }
 
-// Priority-ordered target compounds, from most defensively useful to most economic.
-// The chain builder works backward from these through the REACTIONS table.
+// Priority-ordered target compounds. XGH2O (upgrade boost) is first — upgrade
+// throughput is the current strategic priority; the defensive X-tier boosts and
+// the tier-2 precursors follow as fallbacks. The chain builder works backward
+// from these through the REACTIONS table.
 export const REACTION_GOALS: ResourceConstant[] = [
+  'XGH2O' as ResourceConstant, // UPGRADE boost (+100% upgrade) — prioritized
   'XGHO2' as ResourceConstant, // TOUGH boost (50% dmg reduction)
   'XLHO2' as ResourceConstant, // HEAL boost
   'XKHO2' as ResourceConstant, // RANGED_ATTACK boost
-  'XGH2O' as ResourceConstant, // UPGRADE boost
   'XZHO2' as ResourceConstant, // DISMANTLE boost
   'GHO2' as ResourceConstant, // TOUGH tier 2 precursor
   'LHO2' as ResourceConstant, // HEAL tier 2 precursor
