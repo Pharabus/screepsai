@@ -268,8 +268,8 @@ Fix throughput gaps and missing infrastructure in the current room. These items 
 
 #### Economy throughput fixes
 
-- [ ] **Distance-aware remote hauler count** — `spawner.ts` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2. Cache path length in `RoomMemory.remoteDistance`.
-- [ ] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
+- [x] **Distance-aware remote hauler count** — `spawner.ts` uses flat `sourceCount * 2`. Replace with `Math.ceil(roundTripTicks * sourceRate / carryCapacity)` where `roundTripTicks` is estimated from `PathFinder.search` distance cached in room memory. For W43N59 (~50 tiles, 400 carry) this means 3–4 haulers, not 2. Cache path length in `RoomMemory.remoteDistance`.
+- [x] **Home hauler count: +1 per active remote room** — Remote energy arriving home needs distribution capacity. Current `haulersNeeded` counts only home sources; add `remoteRooms.length` to the total so there are enough haulers to handle the combined delivery load (spawn/ext fill + remote energy throughput).
 
 #### Base infrastructure
 
@@ -297,6 +297,10 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 - [x] **Expand labs 3 → 9 at RCL 7** — `MAX_LABS[7]` raised from 6 to 9 in `construction.ts` (v1.0.145). LAB_STAMP already had 9 usable positions (indices 0-8 all within Chebyshev-2 of both input labs). `runLabs` iterates all non-input labIds with no hardcoded limit — scales to 7 output labs automatically.
 - [ ] **Upgrader boost dispatch wiring** — Wire `lab.boostCreep()` into the upgrader spawn→dispatch flow for XGH2O (+100% upgrade). Skip if compound stockpile < 30 × WORK parts. Requires a "boosting" state on spawned upgraders + lab reservation logic so the chosen lab isn't consumed by reactions while a creep is inbound. `src/roles/upgrader.ts`, `src/managers/labs.ts`.
 - [ ] **Boost application framework** — Designate combat/upgrader creeps to be boosted before departing spawn. Requires filling a lab with the target compound, routing the fresh creep to `lab.boostCreep()` before dispatching to its role. Useful for TOUGH-boosted defenders and WORK-boosted upgraders. Prerequisite for boosted defenders (Phase 3) and boosted keeper killer (Phase 4).
+  - **Step 1 done** — `src/utils/boost.ts` `ensureBoosted(creep)` gate + memory model (`CreepMemory.boosts`, `RoomMemory.boostLabId`) + 9 unit tests. Role-agnostic; fails open so a creep never stalls. Not yet wired.
+  - **Step 2 (next)** — reserve `boostLabId` in `labs.ts` (exclude from reactions) + hauler delivers the boost compound to it.
+  - **Step 3** — spawner stockpile gate (`storage+terminal ≥ 30 × parts`, plus an energy floor) stamps `memory.boosts` + reserves the lab; wire upgrader to XGH2O. Closes the Phase 2 "Upgrader boost dispatch wiring" item.
+  - **Step 4 (Phase 3)** — reuse the gate for defenders with TOUGH/ATTACK boosts.
 
 #### Factory pipeline
 

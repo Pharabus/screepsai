@@ -20,6 +20,8 @@ type CreepRoleName =
 
 interface CreepMemory {
   role: CreepRoleName;
+  /** Desired boosts to apply before the creep starts its role; consumed by ensureBoosted() in src/utils/boost.ts. Entries are removed as applied; the field is deleted once all are done (or on fail-open). */
+  boosts?: { part: BodyPartConstant; compound: ResourceConstant }[];
   /** ID of the assigned target (source, container, controller, mineral, etc.) */
   targetId?: Id<
     | Source
@@ -112,6 +114,8 @@ interface RoomMemory {
     /** Up to 3 spawn positions (index 0 = primary/live spawn, 1-2 = 2nd/3rd RCL 7-8 spawns). */
     spawnPositions?: { x: number; y: number }[];
   };
+  /** Lab reserved for boosting (excluded from reactions). Set by the spawner when a boost is pending; read by ensureBoosted() to locate the boost compound. */
+  boostLabId?: Id<StructureLab>;
   // Factory (RCL 7+)
   factoryId?: Id<StructureFactory>;
   factoryRecipe?: ResourceConstant;
