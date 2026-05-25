@@ -1459,3 +1459,233 @@ describe('hauler delivery priority', () => {
     expect(creep.transfer).not.toHaveBeenCalled();
   });
 });
+
+describe('hauler boost lab servicing', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('withdraws boost compound from storage when lab is below mineral target', () => {
+    const boostLab = mockLab('boostLab', {
+      store: mockLabStore({ UH: 100 }, { UH: 2900, energy: 2000 }), // 100 stored, needs more
+    });
+    const storage = {
+      id: 'stor1' as any,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, UH: 2000 }, 1000000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab') return boostLab;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab',
+        boostCompound: 'UH',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Needs 1500 target - 100 stored = 1400 compound; carry is 300
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'UH', 300);
+  });
+
+  it('delivers boost compound to the boost lab when carrying it', () => {
+    const boostLab = mockLab('boostLab', {
+      store: mockLabStore({ UH: 100 }, { UH: 2900, energy: 2000 }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab') return boostLab;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab',
+        boostCompound: 'UH',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ UH: 200 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(boostLab, 'UH');
+  });
+
+  it('withdraws energy from storage when boost lab energy is below target', () => {
+    const boostLab = mockLab('boostLab', {
+      store: mockLabStore(
+        { UH: 1500, energy: 0 }, // compound is topped up, energy is empty
+        { UH: 0, energy: 2000 },
+      ),
+    });
+    const storage = {
+      id: 'stor1' as any,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 1000000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab') return boostLab;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab',
+        boostCompound: 'UH',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Lab energy (0) < BOOST_LAB_ENERGY_TARGET (1000) → withdraw energy from storage
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('delivers energy to boost lab when carrying energy and lab energy is below target', () => {
+    const boostLab = mockLab('boostLab', {
+      store: mockLabStore({ UH: 1500, energy: 0 }, { UH: 0, energy: 2000 }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab') return boostLab;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab',
+        boostCompound: 'UH',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 200 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(boostLab, RESOURCE_ENERGY);
+  });
+
+  it('does not activate boost lab logic when boostLabId is not set', () => {
+    const storage = {
+      id: 'stor1' as any,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, UH: 2000 }, 1000000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    // No boostLabId in memory
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Should not withdraw UH (no boost lab configured) — only energy if needed
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'UH', expect.anything());
+  });
+
+  it('does not activate boost lab logic when boostCompound is not set', () => {
+    const boostLab = mockLab('boostLab', {
+      store: mockLabStore({}, { energy: 2000 }),
+    });
+    const storage = {
+      id: 'stor1' as any,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, UH: 2000 }, 1000000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab') return boostLab;
+      return null;
+    });
+    // boostLabId is set but boostCompound is NOT set — must be inert
+    (Memory as any).rooms = { W1N1: { boostLabId: 'boostLab' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'UH', expect.anything());
+  });
+});

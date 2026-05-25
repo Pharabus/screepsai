@@ -1,4 +1,9 @@
 export const MINERAL_STORAGE_FLOOR = 5000;
+
+/** Target amount of boost compound to maintain in the reserved boost lab (covers several creeps, well under LAB_MINERAL_CAPACITY=3000). */
+export const BOOST_LAB_MINERAL_TARGET = 1500;
+/** Target energy to maintain in the reserved boost lab (under LAB_ENERGY_CAPACITY=2000). */
+export const BOOST_LAB_ENERGY_TARGET = 1000;
 export const FACTORY_ENERGY_FLOOR = 50_000;
 export const FACTORY_BATTERY_CAP = 500;
 

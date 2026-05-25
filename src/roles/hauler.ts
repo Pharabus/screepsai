@@ -9,6 +9,8 @@ import {
   MINERAL_STORAGE_FLOOR,
   TERMINAL_ENERGY_FLOOR,
   FACTORY_ENERGY_FLOOR,
+  BOOST_LAB_MINERAL_TARGET,
+  BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
@@ -223,6 +225,11 @@ function pickup(creep: Creep): boolean {
       return true;
     }
   }
+
+  // Boost lab service — top up compound and energy in the reserved boost lab.
+  // Runs after link drain so it doesn't starve the link pipeline, and before
+  // generic dropped-energy / containers so the lab stays stocked.
+  if (pickupBoostLab(creep, mem)) return true;
 
   // Dropped energy — decay-sensitive
   const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
@@ -481,6 +488,68 @@ function pickupLabOutput(creep: Creep, mem: RoomMemory | undefined): boolean {
   return false;
 }
 
+/**
+ * Service the reserved boost lab: top it up with its compound (from storage,
+ * then terminal) and energy (from storage). Gated entirely on boostLabId AND
+ * boostCompound being set in RoomMemory — inert when either is absent.
+ *
+ * Priority: after lab flush/input/output and after storage-link drain, but
+ * before generic dropped-energy and source containers. This placement means
+ * the boost lab is serviced promptly while still losing to urgent spawn-energy
+ * and decay-critical large drops, matching the existing lab priority slot.
+ */
+function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
+  if (!mem?.boostLabId || !mem.boostCompound) return false;
+  const lab = Game.getObjectById(mem.boostLabId);
+  if (!lab) return false;
+
+  const compound = mem.boostCompound;
+
+  // Needs compound?
+  const compoundStored = lab.store.getUsedCapacity(compound) ?? 0;
+  if (compoundStored < BOOST_LAB_MINERAL_TARGET) {
+    const storage = creep.room.storage;
+    const terminal = creep.room.terminal;
+    const inStorage = storage?.store.getUsedCapacity(compound) ?? 0;
+    const inTerminal = terminal?.store.getUsedCapacity(compound) ?? 0;
+    const source: StructureStorage | StructureTerminal | null =
+      inStorage > 0 ? (storage ?? null) : inTerminal > 0 ? (terminal ?? null) : null;
+    if (source) {
+      const needed = BOOST_LAB_MINERAL_TARGET - compoundStored;
+      const available = inStorage > 0 ? inStorage : inTerminal;
+      const toWithdraw = Math.min(needed, creep.store.getFreeCapacity(), available);
+      if (toWithdraw > 0) {
+        creep.memory.targetId = source.id;
+        if (creep.withdraw(source, compound, toWithdraw) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, source, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#ff88ff' },
+          });
+        }
+        return true;
+      }
+    }
+  }
+
+  // Needs energy?
+  const energyStored = lab.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (energyStored < BOOST_LAB_ENERGY_TARGET) {
+    const storage = creep.room.storage;
+    if (storage && (storage.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0) > 0) {
+      creep.memory.targetId = storage.id;
+      if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storage, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ff88ff' },
+        });
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function pickupForTerminal(creep: Creep): boolean {
   const storage = creep.room.storage;
   const terminal = creep.room.terminal;
@@ -546,6 +615,7 @@ function deliver(creep: Creep): void {
   // If the room has no storage or terminal (young colony), drop the mineral rather
   // than getting permanently stuck in DELIVER with no valid target.
   if (creep.store.getUsedCapacity() > creep.store.getUsedCapacity(RESOURCE_ENERGY)) {
+    if (deliverToBoostLab(creep)) return;
     if (deliverToLabInput(creep)) return;
     if (deliverToTerminalOrStorage(creep)) return;
     const mineralType = (Object.keys(creep.store) as ResourceConstant[]).find(
@@ -575,6 +645,8 @@ function deliver(creep: Creep): void {
   }
 
   if (deliverToFactory(creep)) return;
+
+  if (deliverToBoostLab(creep)) return;
 
   if (deliverToControllerContainer(creep)) return;
 
@@ -626,6 +698,47 @@ function deliverToFactory(creep: Creep): boolean {
     });
   }
   return true;
+}
+
+function deliverToBoostLab(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.boostLabId || !mem.boostCompound) return false;
+  const lab = Game.getObjectById(mem.boostLabId);
+  if (!lab) return false;
+
+  const compound = mem.boostCompound;
+
+  // If carrying the boost compound, deliver it to the lab
+  if ((creep.store.getUsedCapacity(compound) ?? 0) > 0) {
+    if ((lab.store.getFreeCapacity(compound) ?? 0) > 0) {
+      if (creep.transfer(lab, compound) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, lab, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ff88ff' },
+        });
+      }
+      return true;
+    }
+  }
+
+  // If carrying energy and the lab needs energy, deliver it
+  if ((creep.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0) > 0) {
+    const energyStored = lab.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    if (
+      energyStored < BOOST_LAB_ENERGY_TARGET &&
+      (lab.store.getFreeCapacity(RESOURCE_ENERGY) ?? 0) > 0
+    ) {
+      if (creep.transfer(lab, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, lab, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ff88ff' },
+        });
+      }
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function deliverToLabInput(creep: Creep): boolean {

@@ -116,6 +116,8 @@ interface RoomMemory {
   };
   /** Lab reserved for boosting (excluded from reactions). Set by the spawner when a boost is pending; read by ensureBoosted() to locate the boost compound. */
   boostLabId?: Id<StructureLab>;
+  /** Compound the reserved boostLabId is loaded with (by the hauler). Set alongside boostLabId by the spawner; consumed by ensureBoosted() via the lab. */
+  boostCompound?: ResourceConstant;
   // Factory (RCL 7+)
   factoryId?: Id<StructureFactory>;
   factoryRecipe?: ResourceConstant;

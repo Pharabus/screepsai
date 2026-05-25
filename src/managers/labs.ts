@@ -210,6 +210,7 @@ export function runLabs(): void {
     const inputSet = new Set(mem.inputLabIds as Id<StructureLab>[]);
     for (const labId of mem.labIds) {
       if (inputSet.has(labId)) continue;
+      if (labId === mem.boostLabId) continue;
       const lab = Game.getObjectById(labId);
       if (!lab || lab.cooldown > 0) continue;
       if (!isOperational(lab)) continue;

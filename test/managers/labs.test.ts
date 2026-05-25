@@ -420,6 +420,36 @@ describe('runLabs', () => {
     expect(inputLab2.runReaction).not.toHaveBeenCalled();
   });
 
+  it('skips the reserved boost lab in the output reaction loop, while reacting on other output labs', () => {
+    const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
+    const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
+    const boostLab = mockLab({ id: 'boostLab', capacity: { OH: 3000 } });
+    const outputLab = mockLab({ id: 'lab3', capacity: { OH: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'boostLab') return boostLab;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    setupRoom(7, {
+      labIds: ['lab1', 'lab2', 'boostLab', 'lab3'],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+    });
+
+    (Memory.rooms['W1N1'] as any).boostLabId = 'boostLab';
+
+    runLabs();
+
+    // The reserved boost lab must NOT react — it holds the boost compound, not a reaction product
+    expect(boostLab.runReaction).not.toHaveBeenCalled();
+    // Other output labs should still react normally
+    expect(outputLab.runReaction).toHaveBeenCalledWith(inputLab1, inputLab2);
+  });
+
   it('selects a reaction when none is active', () => {
     const inputLab1 = mockLab({ id: 'lab1', stored: {} });
     const inputLab2 = mockLab({ id: 'lab2', stored: {} });
