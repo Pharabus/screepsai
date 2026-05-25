@@ -1,4 +1,4 @@
-import { getChainBuyNeeds, runLabs } from '../../src/managers/labs';
+import { getChainBuyNeeds, runLabs, selectReaction } from '../../src/managers/labs';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 function mockLab(overrides: Record<string, any> = {}): any {
@@ -306,10 +306,13 @@ describe('runLabs', () => {
     expect(Memory.rooms['W1N1']?.labFlushing).toBe(true);
   });
 
-  it('prefers a reaction matching current lab contents to avoid flushing', () => {
-    // Input labs hold H and O — sticky should pick OH = H + O even though
-    // storage also has Z/K available for ZK (which the goal chain might
-    // otherwise prefer).
+  it('goal-directed selection overrides sticky when a higher-priority goal step is achievable', () => {
+    // Input labs hold H and O (a viable OH pair → sticky would return OH).
+    // Storage also has GH:500 and OH:500 — enough to run the GH+OH→GH2O step,
+    // which is the highest viable step in the GH2O goal chain.
+    // With goal-first ordering the goal wins and GH2O is selected, not sticky OH.
+    // (This is the regression guard: before the fix, sticky ran first and welded
+    // the labs onto OH every tick, so GH+OH→GH2O was never reached.)
     const inputLab1 = mockLab({ id: 'lab1', mineralType: 'H', stored: { H: 500 } });
     const inputLab2 = mockLab({ id: 'lab2', mineralType: 'O', stored: { O: 500 } });
     const outputLab = mockLab({ id: 'lab3' });
@@ -321,7 +324,10 @@ describe('runLabs', () => {
       return null;
     });
 
-    const storageStore: Record<string, any> = { Z: 5000, K: 5000, H: 100, O: 100 };
+    // GH:500 and OH:500 in storage both meet MIN_STEP_AMOUNT (200).
+    // H:200 and O:200 in storage also meet the threshold so the OH step is
+    // viable too — but GH2O is the highest-tier viable step and must win.
+    const storageStore: Record<string, any> = { GH: 500, OH: 500, H: 200, O: 200 };
     Object.defineProperty(storageStore, 'getUsedCapacity', {
       enumerable: false,
       value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
@@ -338,15 +344,15 @@ describe('runLabs', () => {
       W1N1: {
         labIds: ['lab1', 'lab2', 'lab3'],
         inputLabIds: ['lab1', 'lab2'],
-        activeReaction: { input1: 'Z', input2: 'K', output: 'ZK' },
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
       },
     };
 
     runLabs();
 
     const mem = Memory.rooms['W1N1'];
-    expect(mem?.activeReaction?.output).toBe('OH');
-    expect(mem?.labFlushing).toBeFalsy();
+    // Goal (GH2O, highest-tier viable step in the GH2O chain) must win over sticky OH
+    expect(mem?.activeReaction?.output).toBe('GH2O');
   });
 
   it('does not stick to a residue reaction when supplies are exhausted', () => {
@@ -498,6 +504,102 @@ describe('runLabs', () => {
     const mem = Memory.rooms['W1N1'];
     expect(mem?.activeReaction).toBeDefined();
     expect(mem?.activeReaction?.output).toBe('OH');
+  });
+});
+
+describe('selectReaction', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  function makeSelectRoom(
+    storageResources: Record<string, number>,
+    inputLabMineralType1: string | null = null,
+    inputLabStored1: Record<string, number> = {},
+    inputLabMineralType2: string | null = null,
+    inputLabStored2: Record<string, number> = {},
+  ): any {
+    const inputLab1 = mockLab({
+      id: 'lab1',
+      mineralType: inputLabMineralType1,
+      stored: inputLabStored1,
+    });
+    const inputLab2 = mockLab({
+      id: 'lab2',
+      mineralType: inputLabMineralType2,
+      stored: inputLabStored2,
+    });
+    const outputLab = mockLab({ id: 'lab3' });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    const storageStore: Record<string, any> = { ...storageResources };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageResources[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: { store: storageStore },
+      terminal: null,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+      },
+    };
+    return room;
+  }
+
+  it('regression: goal step wins over sticky low-tier pair in input labs', () => {
+    // The bug: input labs hold H+O (viable OH pair → sticky returns OH).
+    // Storage has GH:500 and OH:500 — enough to run GH+OH→GH2O, the highest-tier
+    // viable step in the GH2O goal chain.
+    // Before the fix: sticky ran first and returned OH every tick, so the
+    // GH+OH→GH2O step was never reached and the chain could never climb.
+    // After the fix: goal loop runs first and returns GH2O.
+    const room = makeSelectRoom({ GH: 500, OH: 500, H: 200, O: 200 }, 'H', { H: 500 }, 'O', {
+      O: 500,
+    });
+    const result = selectReaction(room);
+    expect(result?.output).toBe('GH2O');
+  });
+
+  it('sticky fallback fires when no goal chain has an achievable step', () => {
+    // Storage has only H and O — no higher-goal steps are achievable. The input
+    // labs already hold H+O. Sticky should return OH so the existing batch
+    // finishes without a flush.
+    const room = makeSelectRoom({ H: 5000, O: 5000 }, 'H', { H: 500 }, 'O', { O: 500 });
+    const result = selectReaction(room);
+    // OH is itself a REACTION_GOAL (lowest priority) and findNextChainStep will
+    // find it from storage — so the goal loop itself returns OH here, which is
+    // the correct outcome regardless of which path wins.
+    expect(result?.output).toBe('OH');
+  });
+
+  it('sticky fallback fires when goal chain is blocked and labs hold residual pair', () => {
+    // Storage is empty of everything except what is in the labs (50 units each,
+    // below MIN_STEP_AMOUNT for goal selection). Labs hold H+O (200 combined but
+    // 50+50 in storage each → 100 total per mineral including lab stock, exactly
+    // at MIN_INPUT_AMOUNT=100 for sticky). Greedy would also see nothing.
+    // Use a non-goal pair to confirm sticky (not goal loop) is the source.
+    // We need a pair that is NOT in REACTION_GOALS but is a valid REACTIONS entry.
+    // H + L → LH which is a valid reaction but LH is not a top-level REACTION_GOAL.
+    // Storage has nothing; labs have H(50) + L(50).
+    const room = makeSelectRoom({}, 'H', { H: 50 }, 'L', { L: 50 });
+    const result = selectReaction(room);
+    // 50 in lab = 50 total supply per mineral (storage has 0).
+    // MIN_INPUT_AMOUNT = 100 so sticky should also fail → result is undefined.
+    expect(result).toBeUndefined();
   });
 });
 

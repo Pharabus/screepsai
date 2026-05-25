@@ -81,23 +81,28 @@ function findStickyReaction(
 /**
  * Goal-directed chain selection: try each REACTION_GOAL in priority order,
  * build its production chain, and return the highest viable step.
- * Falls back to greedy if no goal chain is achievable.
+ * If no goal step is achievable, finish whatever the input labs already hold
+ * (sticky — avoids a needless flush cycle). Falls back to greedy last.
  */
-function selectReaction(room: Room): ReactionStep | undefined {
+export function selectReaction(room: Room): ReactionStep | undefined {
   const available = buildAvailableMap(room);
 
-  // Stickiness check first — prevents needless flush cycles when the prior
-  // reaction's residual minerals still form a viable pair.
-  const sticky = findStickyReaction(room, available);
-  if (sticky) return sticky;
-
-  // Try each goal in priority order
+  // Goal-directed selection takes precedence: pursue the highest viable step of
+  // the highest-priority achievable goal. (The sticky check must NOT run first —
+  // if the input labs hold a low-tier pair like H+O, stickiness would return OH
+  // every tick and the goal loop would never be reached, welding the labs onto
+  // an intermediate indefinitely.)
   for (const goal of REACTION_GOALS) {
     const chain = buildReactionChain(goal);
     if (chain.length === 0) continue;
     const step = findNextChainStep(chain, available);
     if (step) return step;
   }
+
+  // No achievable goal step — finish whatever the input labs already hold to
+  // avoid a needless flush of residual minerals.
+  const sticky = findStickyReaction(room, available);
+  if (sticky) return sticky;
 
   // Fallback: greedy — pick reaction with most available inputs
   let best:
