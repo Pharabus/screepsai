@@ -165,7 +165,8 @@ After opening a second remote room (W44N58) we observed storage drop from 72k �
 
 Fixes deployed:
 
-- [x] **Upgrader pause at low storage** — `upgradersNeeded()` returns 0 when storage exists and stored < 5k, so storage can refill before adding upgrader load.
+- [x] **Upgrader pause at low storage** — `upgradersNeeded()` returns 0 when storage exists and stored < 5k, so storage can refill before adding upgrader load. **Refined for colonies:** at low storage a room still below RCL 8 keeps **1** upgrader (its body is storage-capped, so it stays small and pulls from source containers) — only a built-out RCL 8 room fully pauses. The original hard-zero trapped a struggling colony (W44N57: empty storage → 0 upgraders → controller never progresses).
+- [x] **Cap haulers per source** — `MAX_HAULERS_PER_SOURCE` (5) bounds the distance-scaled per-source hauler count in both `haulersNeeded` (local) and `remoteHaulersWanted` (remote). A pathDist-100 source previously demanded ~8 haulers, saturating the spawn; we now cap coverage and accept some uncollected energy. The real fix for such sources is a road/tunnel that shortens the path.
 - [x] **Upgrader body cap by storage tier** — bodies are capped at 600 energy below 15k storage, 1100 below 50k, full `energyCapacityAvailable` above. Stops a 15-WORK upgrader from draining storage faster than miners can refill it.
 - [x] **Remote miner prespawn** — spawner now queues the next remote miner 150 ticks before its predecessor's TTL (`REMOTE_MINER_PRESPAWN_TICKS`), eliminating cross-room travel gaps.
 - [x] **Hauler recycle removed** — the 50-tick hauler threshold in `RECYCLE_THRESHOLDS` removed; combat roles (defender/rangedDefender/healer) still recycle at 100 ticks. Haulers now stay alive through brief idle periods.

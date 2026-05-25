@@ -16,6 +16,13 @@ import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
 import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
 
+// Upper bound on haulers assigned to a single source. A very distant source
+// (e.g. pathDist 100 across swamp) would otherwise demand 8+ haulers to move
+// its 10 energy/tick; we cap coverage and accept some uncollected energy rather
+// than saturate the spawn. The real fix for such sources is a road/tunnel that
+// shortens the path.
+const MAX_HAULERS_PER_SOURCE = 5;
+
 type SpawnRequest = {
   role: CreepRoleName;
   minCount: number;
@@ -180,7 +187,10 @@ export function haulersNeeded(room: Room): number {
     // Apply swamp correction for far sources: pathDist is plain-tile count but
     // high-dist paths typically traverse swamp, making hauler round-trips ~1.5x longer.
     const effectiveDist = dist > 60 ? Math.ceil(dist * 1.5) : dist;
-    count += Math.max(1, Math.ceil((effectiveDist * 2 * SOURCE_RATE) / haulerCarry));
+    count += Math.min(
+      MAX_HAULERS_PER_SOURCE,
+      Math.max(1, Math.ceil((effectiveDist * 2 * SOURCE_RATE) / haulerCarry)),
+    );
   }
 
   count = Math.max(count, 2);
@@ -209,7 +219,12 @@ export function upgradersNeeded(room: Room): number {
 
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
-  if (room.storage && stored < 5_000) return 0; // pause — let remotes refill before resuming drain
+  if (room.storage && stored < 5_000) {
+    // Growing room: keep one (storage-capped, therefore small) upgrader so the
+    // controller still progresses. A built-out RCL 8 room fully pauses to
+    // preserve storage.
+    return (room.controller?.level ?? 0) < 8 ? 1 : 0;
+  }
   if (stored < 100_000) return 1;
   if (stored < 200_000) return 2;
   if (stored < 500_000) return 3;
@@ -348,9 +363,9 @@ export function remoteHaulersWanted(
   const haulerBody = buildBody([CARRY, CARRY, MOVE, MOVE], room.energyCapacityAvailable, 8);
   const carryCapacity = haulerBody.filter((p) => p === CARRY).length * 50;
   if (carryCapacity === 0) return sourceCount * flatPerSource;
-  const haulersPerSource = Math.max(
-    flatPerSource,
-    Math.ceil((roundTripTicks * sourceRate) / carryCapacity),
+  const haulersPerSource = Math.min(
+    MAX_HAULERS_PER_SOURCE,
+    Math.max(flatPerSource, Math.ceil((roundTripTicks * sourceRate) / carryCapacity)),
   );
   return haulersPerSource * sourceCount;
 }

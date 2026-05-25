@@ -470,6 +470,29 @@ describe('haulersNeeded', () => {
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(4); // 2 baseline + 2 remotes
   });
+
+  it('caps per-source contribution at MAX_HAULERS_PER_SOURCE (5) for very distant source (pathDist=100)', () => {
+    // dist=100, effectiveDist=ceil(100*1.5)=150 (>60 swamp correction), haulerCarry=400
+    // uncapped: ceil(150*2*10/400) = ceil(7.5) = 8 → would return 8, now capped to 5
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 39, y: 20, containerId: 'cnt1' as any, pathDist: 100 }],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(5); // capped at MAX_HAULERS_PER_SOURCE
+  });
+
+  it('does not apply cap for a normal short-distance source (pathDist=25)', () => {
+    // dist=25, haulerCarry=400: ceil(25*2*10/400) = ceil(1.25) = 2 → well below cap
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, pathDist: 25 }],
+      },
+    };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
+    expect(haulersNeeded(room)).toBe(2); // normal result, cap not reached
+  });
 });
 
 describe('upgradersNeeded', () => {
@@ -479,11 +502,23 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(2);
   });
 
-  it('returns 0 when storage exists but is below 5k (pause to let remotes refill)', () => {
+  it('returns 1 (not 0) when storage < 5k and controller is below RCL 8 (growing room)', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
       energyCapacityAvailable: 1500,
+      controller: { level: 4, ticksToDowngrade: 50_000 },
+      storage: { store: { getUsedCapacity: () => 4_999 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 when storage < 5k and controller is RCL 8 (fully built room pauses)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 1500,
+      controller: { level: 8, ticksToDowngrade: 50_000 },
       storage: { store: { getUsedCapacity: () => 4_999 } },
     });
     expect(upgradersNeeded(room)).toBe(0);
@@ -1140,6 +1175,29 @@ describe('remoteHaulersWanted', () => {
     (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 320 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(12);
+  });
+
+  it('caps per-source haulers at MAX_HAULERS_PER_SOURCE (5) for very long roundTripTicks', () => {
+    // roundTripTicks = 800, sourceRate = 10, carryCapacity = 800
+    // uncapped: ceil(800 × 10 / 800) = 10; Math.max(3, 10) = 10; capped to 5
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 800 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(5);
+  });
+
+  it('cap applies per-source so 2 very-distant sources yields 2×MAX cap (10)', () => {
+    // roundTripTicks = 800 → uncapped 10 per source; capped to 5 per source; 2 sources → 10
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 800 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 2, true)).toBe(10);
+  });
+
+  it('cap does not affect short-distance remotes (normal result preserved)', () => {
+    // roundTripTicks = 120, sourceRate = 10, carryCapacity = 800
+    // ceil(120 × 10 / 800) = 2; Math.max(3, 2) = 3 (lower bound wins) — well below cap
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
   });
 });
 
