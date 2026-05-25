@@ -9,6 +9,8 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).HEAL = 'heal';
 (globalThis as any).CLAIM = 'claim';
 (globalThis as any).TOUGH = 'tough';
+(globalThis as any).HEAL_POWER = 12;
+(globalThis as any).TOWER_ENERGY_COST = 10;
 
 // Find constants (numeric values matching Screeps runtime)
 (globalThis as any).FIND_SOURCES = 101;

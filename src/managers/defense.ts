@@ -14,6 +14,7 @@
 
 import { threatScore } from '../utils/threat';
 import { recordHostile, requestNeighborSegment } from '../utils/neighbors';
+import { getStructuresByType } from '../utils/tickCache';
 
 // Hostile is treated as inside the base perimeter when within this range of
 // a spawn, storage, or the controller.
@@ -28,6 +29,14 @@ const THREAT_MEMORY_TICKS = 50;
 const THREAT_PER_DEFENDER = 200;
 
 const MAX_DEFENDERS_PER_ROOM = 4;
+
+// Threat score one energised tower can handle on its own. A lone invader
+// (~260) sits well under this, so a single tower solos it with no defender.
+const THREAT_PER_TOWER = 500;
+
+// Conservative per-tower damage/tick estimate (HP) for the heal comparison —
+// mid-range between optimal 600 (range <=5) and 150 (range >=20).
+const TOWER_DPS_ESTIMATE = 300;
 
 function hostileNearCriticalStructure(room: Room): boolean {
   const hostiles = room.find(FIND_HOSTILE_CREEPS, {
@@ -109,6 +118,23 @@ export function defendersNeeded(room: Room): number {
 
   const threat = mem.lastThreatScore ?? 0;
   if (threat <= 0) return 0;
+
+  // Towers fire every tick on their own. If the room has energised towers whose
+  // combined capacity covers this threat — AND the enemy can't out-heal their
+  // fire — skip defenders entirely. Safe mode remains the backstop for a real
+  // breach, and towers keep firing regardless.
+  const towers = (
+    (getStructuresByType(room)[STRUCTURE_TOWER] as StructureTower[] | undefined) ?? []
+  ).filter((t) => t.my && t.store.getUsedCapacity(RESOURCE_ENERGY) >= TOWER_ENERGY_COST);
+  if (towers.length > 0 && threat <= towers.length * THREAT_PER_TOWER) {
+    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const hostileHeal = hostiles.reduce(
+      (sum, h) => sum + h.body.filter((p) => p.type === HEAL && p.hits > 0).length * HEAL_POWER,
+      0,
+    );
+    const enemyOutHealsTowers = hostileHeal >= towers.length * TOWER_DPS_ESTIMATE;
+    if (!enemyOutHealsTowers) return 0; // towers solo it
+  }
 
   const n = Math.ceil(threat / THREAT_PER_DEFENDER);
   return Math.min(n, MAX_DEFENDERS_PER_ROOM);

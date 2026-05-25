@@ -295,10 +295,15 @@ This treats "breach of the base perimeter" as the trigger — scouts wandering t
 Threat is tracked per room in `RoomMemory.threatLastSeen` / `lastThreatScore`. While the last sighting is within 50 ticks:
 
 ```
-defendersNeeded(room) = min(ceil(threatScore / 200), 4)
+# Towers fire every tick — skip defenders when they can solo the threat:
+if energised towers AND threat <= towers × 500 (THREAT_PER_TOWER)
+   AND hostileHeal/tick < towers × 300 (TOWER_DPS_ESTIMATE):
+      defendersNeeded = 0
+else:
+      defendersNeeded = min(ceil(threatScore / 200), 4)
 ```
 
-The spawner prepends a `defender` request with that `minCount` to the head of the spawn queue. The 50-tick memory window prevents an attacker who briefly steps out of sight from cancelling a defender mid-spawn. When the room has been clear for longer than the window, defender production stops naturally — no standing army in peacetime.
+A lone invader that a single tower vaporises no longer spawns a wasted defender. The heal check is the safety valve — a squad that out-heals tower fire (the case focus-fire can't win alone) still spawns defenders. The spawner prepends a `defender` request with that `minCount` to the head of the spawn queue. The 50-tick memory window prevents an attacker who briefly steps out of sight from cancelling a defender mid-spawn. When the room has been clear for longer than the window, defender production stops naturally — no standing army in peacetime.
 
 ### NPC Invader response (hunter)
 

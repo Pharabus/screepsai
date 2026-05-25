@@ -83,6 +83,69 @@ describe('defendersNeeded', () => {
     };
     expect(defendersNeeded(room)).toBe(4);
   });
+
+  // --- tower-gating: towers solo a threat they can handle, so no defender ---
+
+  function mockTower(energy: number, my = true): any {
+    return {
+      structureType: STRUCTURE_TOWER,
+      my,
+      store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? energy : 0) },
+    };
+  }
+
+  function roomWith(towers: any[], hostiles: any[] = []): any {
+    return mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: any) => {
+        if (type === FIND_STRUCTURES) return towers;
+        if (type === FIND_HOSTILE_CREEPS) return hostiles;
+        return [];
+      }),
+    });
+  }
+
+  it('returns 0 when an energised tower can solo a lone invader', () => {
+    Game.time = 1000;
+    Memory.rooms['W1N1'] = { threatLastSeen: 999, lastThreatScore: 260 };
+    const room = roomWith([mockTower(800)], [makeHostile({ threatScore: 260 })]);
+    expect(defendersNeeded(room)).toBe(0);
+  });
+
+  it('still spawns defenders when the room has no tower', () => {
+    Game.time = 1000;
+    Memory.rooms['W1N1'] = { threatLastSeen: 999, lastThreatScore: 260 };
+    const room = roomWith([], [makeHostile({ threatScore: 260 })]);
+    expect(defendersNeeded(room)).toBeGreaterThan(0);
+  });
+
+  it('still spawns defenders when an empty tower cannot fire', () => {
+    Game.time = 1000;
+    Memory.rooms['W1N1'] = { threatLastSeen: 999, lastThreatScore: 260 };
+    const room = roomWith([mockTower(0)], [makeHostile({ threatScore: 260 })]);
+    expect(defendersNeeded(room)).toBeGreaterThan(0);
+  });
+
+  it('spawns defenders when the enemy out-heals the towers (heal exception)', () => {
+    Game.time = 1000;
+    Memory.rooms['W1N1'] = { threatLastSeen: 999, lastThreatScore: 260 };
+    // 30 HEAL parts × HEAL_POWER(12) = 360 heal/tick > 1 tower × TOWER_DPS_ESTIMATE(300)
+    const healer = mockCreep({
+      owner: { username: 'Enemy' },
+      _threatScore: 260,
+      body: Array.from({ length: 30 }, () => ({ type: HEAL, hits: 100 })),
+    });
+    const room = roomWith([mockTower(800)], [healer]);
+    expect(defendersNeeded(room)).toBeGreaterThan(0);
+  });
+
+  it('spawns defenders when threat exceeds tower capacity', () => {
+    Game.time = 1000;
+    // 2000 threat > 1 tower × THREAT_PER_TOWER(500) — towers cannot solo it
+    Memory.rooms['W1N1'] = { threatLastSeen: 999, lastThreatScore: 2000 };
+    const room = roomWith([mockTower(800)], [makeHostile({ threatScore: 2000 })]);
+    expect(defendersNeeded(room)).toBe(4);
+  });
 });
 
 describe('runDefense — safe mode guard', () => {

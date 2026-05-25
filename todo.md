@@ -220,6 +220,7 @@ Current defense: tower focus-fire, safe mode, melee defenders. Sufficient for NP
 
 - [x] **Ranged defender role** — `src/roles/rangedDefender.ts`. KITE state: kites at range 3, uses `rangedMassAttack` when 2+ hostiles in range 3, retreats when gap drops to ≤1. RALLY state: moves toward spawn when no hostiles. `defenderComposition()` in spawner returns melee/ranged/healer mix: ≤200 threat = melee only; 201–600 = melee+ranged; >600 = melee+2ranged+healer (bumps ranged +1 if any enemy has HEAL parts, capped at 4 total).
 - [x] **Healer role** — `src/roles/healer.ts`. FOLLOW state: moves adjacent to `partnerName` creep (cached from `creep.memory.partnerName`), uses `heal()` at range 1 or `rangedHeal()` within range 3. RALLY state: moves to spawn when partner absent. Paired with melee defender in high-threat compositions.
+- [x] **Tower-aware defender gating** — `defendersNeeded` no longer spawns a defender for every threat>0. If the room has energised towers (energy ≥ `TOWER_ENERGY_COST`) whose capacity (`towers × THREAT_PER_TOWER` 500) covers the threat AND the enemy can't out-heal their fire (`hostileHeal/tick < towers × TOWER_DPS_ESTIMATE` 300), it returns 0 — a tower-soloable invader no longer spawns a wasted melee+ranged pair. Falls back to the old `min(ceil(threat/200),4)` beyond tower capacity, against healing squads, or with no towers. Towers fire regardless and safe mode is the backstop.
 
 #### Intel & strategic (completed)
 
