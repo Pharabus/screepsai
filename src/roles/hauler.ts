@@ -557,7 +557,9 @@ function pickupForTerminal(creep: Creep): boolean {
 
   for (const resource of Object.keys(storage.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
-    if (storage.store.getUsedCapacity(resource) > MINERAL_STORAGE_FLOOR) {
+    // Batteries are factory products meant to be sold, not lab stockpile — always flow to terminal
+    const floor = resource === RESOURCE_BATTERY ? 0 : MINERAL_STORAGE_FLOOR;
+    if (storage.store.getUsedCapacity(resource) > floor) {
       creep.memory.targetId = storage.id;
       if (creep.withdraw(storage, resource) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {

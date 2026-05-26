@@ -1,5 +1,6 @@
 import {
   ENERGY_TERMINAL_BUFFER,
+  FACTORY_BATTERY_CAP,
   MINERAL_TERMINAL_SELL_FLOOR,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
@@ -28,10 +29,13 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
   let sold = false;
   for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
+    // Batteries use a lower floor — they're factory products for sale, not lab stockpile
+    const sellFloor =
+      resource === RESOURCE_BATTERY ? FACTORY_BATTERY_CAP : MINERAL_TERMINAL_SELL_FLOOR;
     const amount = terminal.store.getUsedCapacity(resource);
-    if (amount <= MINERAL_TERMINAL_SELL_FLOOR) continue;
+    if (amount <= sellFloor) continue;
 
-    const surplus = amount - MINERAL_TERMINAL_SELL_FLOOR;
+    const surplus = amount - sellFloor;
     const orders = Game.market.getAllOrders({ type: ORDER_BUY, resourceType: resource });
     // Rank by revenue-per-deal (min(surplus, remaining) * price), not just price.
     // A high-price decoy with remainingAmount=1 wastes a 10-tick cooldown for 1 unit;
