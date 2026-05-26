@@ -19,7 +19,12 @@ import { profile, formatStats, resetStatsNow } from './utils/profiler';
 import { shouldRun, THROTTLE_HIGH, THROTTLE_NORMAL, THROTTLE_LOW } from './utils/throttle';
 import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
-import { startClaim, canClaimAnotherRoom, scoreClaimTarget } from './utils/colonyPlanner';
+import {
+  startClaim,
+  canClaimAnotherRoom,
+  scoreClaimTarget,
+  getColonyScores,
+} from './utils/colonyPlanner';
 import { roles } from './roles';
 
 // Console-callable exports.
@@ -93,22 +98,43 @@ export const claim = (targetRoom: string, homeRoom?: string): string => {
 };
 
 /**
- * Show the lifecycle state of every entry in Memory.colonies.
+ * Show the lifecycle state of every entry in Memory.colonies, plus per-room
+ * investment priority scores for all owned rooms.
  */
 export const colonies = (): string => {
-  const cs = Memory.colonies;
-  if (!cs || Object.keys(cs).length === 0) return 'no colonies tracked';
   const lines: string[] = [];
-  for (const [room, state] of Object.entries(cs)) {
-    const claimAge = state.claimedAt ? Game.time - state.claimedAt : undefined;
-    const activeAge = state.activeAt ? Game.time - state.activeAt : undefined;
-    const ageStr = state.activeAt
-      ? `, active for ${activeAge}t`
-      : state.claimedAt
-        ? `, claimed ${claimAge}t ago`
-        : `, started ${Game.time - state.selectedAt}t ago`;
-    lines.push(`${room}: home=${state.homeRoom}, status=${state.status}${ageStr}`);
+
+  // Per-owned-room priority scores (empire view)
+  const scores = getColonyScores();
+  if (Object.keys(scores).length > 0) {
+    lines.push('--- owned rooms (priority scores) ---');
+    const sorted = Object.entries(scores).sort(([, a], [, b]) => b - a);
+    for (const [room, score] of sorted) {
+      const r = Game.rooms[room];
+      const rcl = r?.controller?.level ?? '?';
+      const stored = r?.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+      lines.push(`  ${room}: RCL=${rcl} storage=${stored} score=${score.toFixed(1)}`);
+    }
   }
+
+  // Colony lifecycle states
+  const cs = Memory.colonies;
+  if (!cs || Object.keys(cs).length === 0) {
+    lines.push('no colonies tracked');
+  } else {
+    lines.push('--- colony lifecycle ---');
+    for (const [room, state] of Object.entries(cs)) {
+      const claimAge = state.claimedAt ? Game.time - state.claimedAt : undefined;
+      const activeAge = state.activeAt ? Game.time - state.activeAt : undefined;
+      const ageStr = state.activeAt
+        ? `, active for ${activeAge}t`
+        : state.claimedAt
+          ? `, claimed ${claimAge}t ago`
+          : `, started ${Game.time - state.selectedAt}t ago`;
+      lines.push(`  ${room}: home=${state.homeRoom}, status=${state.status}${ageStr}`);
+    }
+  }
+
   const cap = canClaimAnotherRoom();
   lines.push(cap.ok ? '(GCL allows another claim)' : `(${cap.reason})`);
   return lines.join('\n');

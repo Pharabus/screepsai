@@ -14,10 +14,12 @@ import {
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
+import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 
 beforeEach(() => {
   resetGameGlobals();
   resetTickCache();
+  resetColonyScoreCache();
 });
 
 describe('buildSpawnQueue', () => {
@@ -546,43 +548,48 @@ describe('upgradersNeeded', () => {
     expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('returns 1 when storage is below 50k', () => {
+  it('returns 1 when storage is below 50k (mature RCL 7 room)', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
+      controller: { level: 7 },
       storage: { store: { getUsedCapacity: () => 30_000 } },
     });
     expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('returns 1 when storage is between 50k and 100k', () => {
+  it('returns 1 when storage is between 50k and 100k (mature RCL 7 room)', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
+      controller: { level: 7 },
       storage: { store: { getUsedCapacity: () => 60_000 } },
     });
     expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('returns 2 when storage is above 100k', () => {
+  it('returns 2 when storage is above 100k (mature RCL 7 room)', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({
       name: 'W1N1',
+      controller: { level: 7 },
       storage: { store: { getUsedCapacity: () => 120_000 } },
     });
     expect(upgradersNeeded(room)).toBe(2);
   });
 
-  it('returns 3 at 200k and 4 at 500k storage', () => {
+  it('returns 3 at 200k and 4 at 500k storage (mature RCL 7 room)', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const at200k = mockRoom({
       name: 'W1N1',
+      controller: { level: 7 },
       storage: { store: { getUsedCapacity: () => 250_000 } },
     });
     expect(upgradersNeeded(at200k)).toBe(3);
 
     const at500k = mockRoom({
       name: 'W1N1',
+      controller: { level: 7 },
       storage: { store: { getUsedCapacity: () => 600_000 } },
     });
     expect(upgradersNeeded(at500k)).toBe(4);
@@ -592,6 +599,136 @@ describe('upgradersNeeded', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({ name: 'W1N1' });
     expect(upgradersNeeded(room)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Young-colony upgrade investment truth table
+// ---------------------------------------------------------------------------
+
+describe('upgradersNeeded — young colony (RCL < 6)', () => {
+  /** Creates a room with 2 active-miner sources so score > YOUNG_COLONY_MIN_SCORE. */
+  function youngRoomWithIncome(stored: number, rcl = 4): any {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' },
+          { id: 's2', x: 20, y: 10, containerId: 'c2', minerName: 'm2' },
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      m1: { name: 'm1', memory: { role: 'miner' } },
+      m2: { name: 'm2', memory: { role: 'miner' } },
+    };
+    return mockRoom({
+      name: 'W1N1',
+      controller: { level: rcl, ticksToDowngrade: 50_000 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? stored : 0) } },
+      find: vi.fn(() => []),
+    });
+  }
+
+  beforeEach(() => {
+    resetColonyScoreCache();
+  });
+
+  it('young colony with healthy income → more upgraders than 1 at moderate storage', () => {
+    const room = youngRoomWithIncome(20_000);
+    // stored=20k ≥ 15k threshold → should return 3
+    expect(upgradersNeeded(room)).toBe(3);
+  });
+
+  it('young colony at hard floor (stored < 5k) → backs off to 1', () => {
+    // Hard floor applies first, before score check
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 4, ticksToDowngrade: 50_000 },
+      storage: { store: { getUsedCapacity: () => 3_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('young colony with income but construction sites + low storage → 1 (builders not starved)', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' },
+          { id: 's2', x: 20, y: 10, containerId: 'c2', minerName: 'm2' },
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      m1: { name: 'm1', memory: { role: 'miner' } },
+      m2: { name: 'm2', memory: { role: 'miner' } },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 4, ticksToDowngrade: 50_000 },
+      // stored=12k — above hard floor (5k) but below builder-guard threshold (20k)
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 12_000 : 0) } },
+      // Construction sites present
+      find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [{}] : [])),
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('young colony with income, construction sites, but high storage → pushes harder (3)', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' },
+          { id: 's2', x: 20, y: 10, containerId: 'c2', minerName: 'm2' },
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      m1: { name: 'm1', memory: { role: 'miner' } },
+      m2: { name: 'm2', memory: { role: 'miner' } },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 4, ticksToDowngrade: 50_000 },
+      // stored=25k — above the 20k builder-guard threshold
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 25_000 : 0) } },
+      find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [{}] : [])),
+    });
+    expect(upgradersNeeded(room)).toBe(3);
+  });
+
+  it('young income-starved colony (no miners) → conservative 1', () => {
+    // score = 0 → falls back to single upgrader regardless of storage
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 4 },
+      storage: { store: { getUsedCapacity: () => 50_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('mature RCL-7 room with 30k storage → unchanged at 1 (W43N58 behavior)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      storage: { store: { getUsedCapacity: () => 30_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('mature RCL-7 room with 110k storage → unchanged at 2', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      storage: { store: { getUsedCapacity: () => 110_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(2);
   });
 });
 

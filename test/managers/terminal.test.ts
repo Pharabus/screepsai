@@ -1,5 +1,6 @@
-import { runTerminal } from '../../src/managers/terminal';
+import { runTerminal, resetColonySendCache } from '../../src/managers/terminal';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
+import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 
 function mockTerminalStore(resources: Record<string, number>): any {
   const store: Record<string, any> = { ...resources };
@@ -726,5 +727,233 @@ describe('runTerminal — lab buying', () => {
     const allOrdersCalls = (Game.market.getAllOrders as any).mock.calls;
     const buyCalls = allOrdersCalls.filter((c: any) => c[0]?.type === ORDER_SELL);
     expect(buyCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Score-driven colony energy funnel
+// ---------------------------------------------------------------------------
+
+describe('runTerminal — colony energy send', () => {
+  /** Tick that satisfies COLONY_SEND_INTERVAL (100). */
+  const SEND_TICK = 100;
+
+  function makeTerminalStore(resources: Record<string, number>): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        if (r) return resources[r] ?? 0;
+        return Object.values(resources).reduce((a, b) => a + b, 0);
+      }),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => 300_000),
+    });
+    return store;
+  }
+
+  function makeColonySendSetup() {
+    // Home room: W1N1 — RCL 7, 90k storage, terminal with 20k energy
+    const homeTerminal: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const home = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0),
+        },
+      },
+      terminal: homeTerminal,
+    });
+
+    // Colony A: W2N1 — RCL 4, 10k storage (below 30k target), terminal present
+    // High priority: rclFactor=4, 1 active source → score ~12 (modest)
+    const colATerminal: any = {
+      store: makeTerminalStore({ energy: 5_000 }),
+      cooldown: 0,
+    };
+    const colARoom: any = {
+      name: 'W2N1',
+      controller: { my: true, level: 4 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 10_000 : 0) },
+      },
+      terminal: colATerminal,
+    };
+
+    // Colony B: W2N2 — RCL 5, 5k storage (more urgent), same sources
+    const colBTerminal: any = {
+      store: makeTerminalStore({ energy: 3_000 }),
+      cooldown: 0,
+    };
+    const colBRoom: any = {
+      name: 'W2N2',
+      controller: { my: true, level: 5 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5_000 : 0) },
+      },
+      terminal: colBTerminal,
+    };
+
+    (Game as any).rooms = {
+      W1N1: home,
+      W2N1: colARoom,
+      W2N2: colBRoom,
+    };
+
+    // Both colonies parented by W1N1
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
+      W2N2: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
+    };
+
+    // Source data so scores are non-zero (1 active-miner source each)
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true },
+      W2N1: {
+        sources: [{ id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' }],
+      },
+      W2N2: {
+        sources: [{ id: 's2', x: 10, y: 10, containerId: 'c2', minerName: 'm2' }],
+      },
+    };
+    (Game as any).creeps = {
+      m1: { name: 'm1', memory: { role: 'miner' } },
+      m2: { name: 'm2', memory: { role: 'miner' } },
+    };
+
+    // Distance: both colonies are equidistant for simplicity
+    (Game as any).map = {
+      ...Game.map,
+      getRoomLinearDistance: (_a: string, _b: string) => 1,
+    };
+
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    return { home, homeTerminal };
+  }
+
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+    resetColonySendCache();
+  });
+
+  it('sends energy to the highest-priority colony with a terminal below storage threshold', () => {
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    runTerminal();
+
+    // W2N2 has RCL 5 (rclFactor=3 vs W2N1 rclFactor=4) AND lower storage (5k vs 10k).
+    // BUT W2N1 (RCL 4) has a higher rclFactor (4 > 3), so it should receive first
+    // since score is sorted by score descending.
+    // W2N1 score ≈ 4 × 10 × (10k/20k) = 20; W2N2 score ≈ 3 × 10 × (5k/20k) = 7.5
+    expect(homeTerminal.send).toHaveBeenCalledWith(
+      RESOURCE_ENERGY,
+      10_000,
+      'W2N1',
+      'colony energy support',
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('does not send when home storage is below HOME_SURPLUS_FLOOR (80k)', () => {
+    (Game as any).time = SEND_TICK;
+    makeColonySendSetup();
+
+    // Override home storage to be below floor
+    (Game as any).rooms['W1N1'].storage.store.getUsedCapacity = () => 50_000;
+    const homeTerminal = (Game as any).rooms['W1N1'].terminal;
+
+    runTerminal();
+
+    expect(homeTerminal.send).not.toHaveBeenCalled();
+  });
+
+  it('does not send when colony storage is already at or above target (30k)', () => {
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+
+    // Both colonies above COLONY_STORAGE_TARGET
+    (Game as any).rooms['W2N1'].storage.store.getUsedCapacity = () => 35_000;
+    (Game as any).rooms['W2N2'].storage.store.getUsedCapacity = () => 40_000;
+
+    runTerminal();
+
+    expect(homeTerminal.send).not.toHaveBeenCalled();
+  });
+
+  it('does not send when colony has no terminal (RCL < 6, pre-terminal stage)', () => {
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+
+    // Remove both colony terminals
+    (Game as any).rooms['W2N1'].terminal = undefined;
+    (Game as any).rooms['W2N2'].terminal = undefined;
+
+    runTerminal();
+
+    expect(homeTerminal.send).not.toHaveBeenCalled();
+  });
+
+  it('respects hysteresis — does not resend on the same route within COLONY_SEND_HYSTERESIS_TICKS', () => {
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // First send at tick 100 — W2N1 is the best candidate and receives the energy
+    runTerminal();
+    expect(homeTerminal.send).toHaveBeenCalledTimes(1);
+    expect(homeTerminal.send).toHaveBeenCalledWith(
+      RESOURCE_ENERGY,
+      10_000,
+      'W2N1',
+      expect.any(String),
+    );
+
+    // Mark W2N2 as well-stocked so it is not a fallback candidate
+    (Game as any).rooms['W2N2'].storage.store.getUsedCapacity = () => 35_000;
+
+    // Advance to tick 200 — multiple of COLONY_SEND_INTERVAL (100) so
+    // sendEnergyToColonies IS entered. W2N2 is ineligible (storage ≥ 30k) and
+    // W2N1's route has lastSent=100, so 200-100=100 < 300 → _lastColonySend
+    // guard blocks the resend.
+    (Game as any).time = SEND_TICK + 100;
+    runTerminal();
+
+    // Still only 1 total call — the _lastColonySend guard blocked the resend to W2N1
+    expect(homeTerminal.send).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
+  });
+
+  it('sends again after the hysteresis window expires', () => {
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // First send at tick 100
+    runTerminal();
+    expect(homeTerminal.send).toHaveBeenCalledTimes(1);
+
+    // Advance to tick 500 — multiple of 100, and 500-100=400 > 300 so hysteresis
+    // has expired and the second send should go through.
+    (Game as any).time = SEND_TICK + 400;
+    runTerminal();
+
+    // Second send went through — cumulative count is now 2
+    expect(homeTerminal.send).toHaveBeenCalledTimes(2);
+    consoleSpy.mockRestore();
   });
 });

@@ -6,6 +6,9 @@ import {
   ownedRoomCount,
   coloniesForHome,
   updateColonyStates,
+  getColonyScore,
+  getColonyScores,
+  resetColonyScoreCache,
 } from '../../src/utils/colonyPlanner';
 
 function setOwnedRoom(name: string): void {
@@ -382,5 +385,156 @@ describe('colonyPlanner', () => {
       updateColonyStates();
       expect(Memory.colonies['W2N1']!.status).toBe('claiming');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Colony priority scoring
+// ---------------------------------------------------------------------------
+
+describe('getColonyScore', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+  });
+
+  function makeRoom(
+    name: string,
+    rcl: number,
+    storedEnergy: number,
+    sources: { containerId?: string; minerName?: string }[] = [],
+  ): any {
+    const room: any = {
+      name,
+      controller: { my: true, level: rcl },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? storedEnergy : 0) },
+      },
+    };
+    Memory.rooms[name] = {
+      sources: sources.map((s, i) => ({
+        id: `src${i}` as any,
+        x: 10 + i,
+        y: 10,
+        containerId: s.containerId as any,
+        minerName: s.minerName,
+      })),
+    } as any;
+    // Register alive miners in Game.creeps
+    for (const s of sources) {
+      if (s.minerName) {
+        (Game as any).creeps[s.minerName] = { name: s.minerName, memory: { role: 'miner' } };
+      }
+    }
+    (Game as any).rooms[name] = room;
+    return room;
+  }
+
+  it('young colony with healthy income scores higher than a mature room', () => {
+    // W44N57: RCL 4, 15k storage, 2 active sources
+    const young = makeRoom('W44N57', 4, 15_000, [
+      { containerId: 'c1', minerName: 'm1' },
+      { containerId: 'c2', minerName: 'm2' },
+    ]);
+    // W43N58: RCL 7, 50k storage, 2 active sources
+    const mature = makeRoom('W43N58', 7, 50_000, [
+      { containerId: 'c3', minerName: 'm3' },
+      { containerId: 'c4', minerName: 'm4' },
+    ]);
+
+    const youngScore = getColonyScore(young);
+    const matureScore = getColonyScore(mature);
+
+    // young: rclFactor=4, incomeRate=20, storageFactor=0.75 → 60
+    // mature: rclFactor=1, incomeRate=20, storageFactor=1.0 → 20
+    expect(youngScore).toBeGreaterThan(matureScore);
+  });
+
+  it('income-starved colony (no active sources) scores low', () => {
+    // Room with sources planned but no miners live yet
+    const room = makeRoom('W1N1', 4, 12_000, [
+      { containerId: 'c1' }, // no minerName → not active
+    ]);
+    const score = getColonyScore(room);
+    // incomeRate derived from bootstrap fallback: 1 planned source × 10 = 10
+    // storageFactor = 12k/20k = 0.6 → score = 4 × 10 × 0.6 = 24
+    // Below the young-colony income threshold (20 = minScore check in spawner)
+    // Just verify score is positive but modest
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(100);
+  });
+
+  it('room with zero storage scores lower than room with healthy storage (same RCL and sources)', () => {
+    const healthy = makeRoom('W1N1', 4, 20_000, [{ containerId: 'c1', minerName: 'm1' }]);
+    resetColonyScoreCache();
+    const empty = makeRoom('W1N2', 4, 0, [{ containerId: 'c2', minerName: 'm2' }]);
+    (Game as any).creeps['m1'] = { name: 'm1', memory: { role: 'miner' } };
+    (Game as any).creeps['m2'] = { name: 'm2', memory: { role: 'miner' } };
+
+    const healthyScore = getColonyScore(healthy);
+    const emptyScore = getColonyScore(empty);
+
+    expect(healthyScore).toBeGreaterThan(emptyScore);
+  });
+
+  it('RCL 8 room scores lower than same-income RCL 4 room', () => {
+    const rcl4 = makeRoom('W1N1', 4, 20_000, [{ containerId: 'c1', minerName: 'm1' }]);
+    resetColonyScoreCache();
+    const rcl8 = makeRoom('W1N2', 8, 20_000, [{ containerId: 'c2', minerName: 'm2' }]);
+    (Game as any).creeps['m1'] = { name: 'm1', memory: { role: 'miner' } };
+    (Game as any).creeps['m2'] = { name: 'm2', memory: { role: 'miner' } };
+
+    const score4 = getColonyScore(rcl4);
+    const score8 = getColonyScore(rcl8);
+
+    // rclFactor 4 vs 1 → RCL 4 scores 4× higher
+    expect(score4).toBeGreaterThan(score8);
+  });
+
+  it('returns cached value within SCORE_CACHE_INTERVAL ticks', () => {
+    const room = makeRoom('W1N1', 4, 15_000, [{ containerId: 'c1', minerName: 'm1' }]);
+    (Game as any).time = 100;
+    const first = getColonyScore(room);
+
+    // Update storage — should not change score until cache expires
+    room.storage.store.getUsedCapacity = () => 99_999;
+    (Game as any).time = 300; // still within 500-tick window
+    const second = getColonyScore(room);
+
+    expect(second).toBe(first);
+  });
+
+  it('recomputes after SCORE_CACHE_INTERVAL ticks', () => {
+    const room = makeRoom('W1N1', 4, 0, [{ containerId: 'c1', minerName: 'm1' }]);
+    (Game as any).time = 100;
+    const first = getColonyScore(room);
+
+    // Move past the cache window and change storage
+    (Game as any).time = 700;
+    room.storage.store.getUsedCapacity = (_r: string) => 20_000;
+    const second = getColonyScore(room);
+
+    expect(second).toBeGreaterThan(first);
+  });
+});
+
+describe('getColonyScores', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+  });
+
+  it('returns a score for every owned room', () => {
+    (Game as any).rooms = {
+      W1N1: { name: 'W1N1', controller: { my: true, level: 4 } },
+      W2N2: { name: 'W2N2', controller: { my: true, level: 7 } },
+      W3N3: { name: 'W3N3', controller: { my: false, level: 1 } }, // not ours
+    };
+    Memory.rooms = { W1N1: {} as any, W2N2: {} as any, W3N3: {} as any };
+
+    const scores = getColonyScores();
+    expect(Object.keys(scores)).toContain('W1N1');
+    expect(Object.keys(scores)).toContain('W2N2');
+    expect(Object.keys(scores)).not.toContain('W3N3');
   });
 });

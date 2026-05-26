@@ -8,7 +8,7 @@ import {
   MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
 import { getChainBuyNeeds } from './labs';
-import { coloniesForHome } from '../utils/colonyPlanner';
+import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 
 // Matches the 10-tick terminal cooldown so we capture every available sell
 // window. Running every tick would do the same but cost more CPU on no-op
@@ -192,9 +192,19 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   }
 }
 
-// Inter-room energy support for young colonies. A home room with an established
-// terminal and storage surplus can ship energy to a colony whose own terminal
-// is online but whose storage is still building up.
+// ---------------------------------------------------------------------------
+// Score-driven inter-room energy support
+// ---------------------------------------------------------------------------
+// A home room with an established terminal and energy surplus can ship energy
+// to the highest-priority colony whose own terminal is online but storage is
+// still building. The receiver is chosen by colony priority score (higher RCL
+// gap + healthy income = higher score) so available surplus flows to where it
+// accelerates the empire most.
+//
+// Currently dormant for W44N57 (no terminal at RCL 4) — auto-engages once it
+// reaches RCL 6 and builds a terminal.
+// ---------------------------------------------------------------------------
+
 const COLONY_SEND_INTERVAL = 100;
 /** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
 const COLONY_SEND_AMOUNT = 10_000;
@@ -202,6 +212,20 @@ const COLONY_SEND_AMOUNT = 10_000;
 const HOME_SURPLUS_FLOOR = 80_000;
 /** Stop topping a colony up once its storage clears this bar. */
 const COLONY_STORAGE_TARGET = 30_000;
+/**
+ * Minimum ticks between sends on the same home→colony route. Prevents the
+ * same shipment from being repeated every 100 ticks before the previous one
+ * has been absorbed (hysteresis). The receiver's storage must also drop back
+ * below COLONY_STORAGE_TARGET for a subsequent send to trigger.
+ */
+const COLONY_SEND_HYSTERESIS_TICKS = 300;
+
+/**
+ * Module-scope hysteresis tracker — keyed "senderRoom->receiverRoom", value is
+ * the tick of the last successful send on that route. Lives on the heap so it
+ * clears on global reset (harmless: worst case one extra send after a reset).
+ */
+const _lastColonySend = new Map<string, number>();
 
 function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   const homeStorage = home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
@@ -209,32 +233,68 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER)
     return;
 
+  // Collect all eligible receivers and rank by investment priority.
+  // Eligible = colony room with terminal, storage below target, enough free capacity.
+  const candidates: Array<{
+    colonyRoom: string;
+    score: number;
+    colonyStorage: number;
+    dist: number;
+  }> = [];
+
   for (const { room: colonyRoom, state } of coloniesForHome(home.name)) {
     if (state.status === 'claiming') continue; // no terminal exists yet
     const target = Game.rooms[colonyRoom];
-    // A claimed room without our visibility can't have a usable terminal yet.
     if (!target?.controller?.my) continue;
     const colonyTerminal = target.terminal;
-    if (!colonyTerminal) continue; // RCL < 6 colony — colonyBuilder handles bootstrap locally
+    if (!colonyTerminal) continue; // RCL < 6 — no terminal yet; auto-engages when it builds one
     const colonyStorage = target.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-    if (colonyStorage >= COLONY_STORAGE_TARGET) continue;
+    if (colonyStorage >= COLONY_STORAGE_TARGET) continue; // already well-stocked
     if (colonyTerminal.store.getFreeCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT) continue;
 
-    const result = terminal.send(
-      RESOURCE_ENERGY,
-      COLONY_SEND_AMOUNT,
-      colonyRoom,
-      'colony bootstrap',
-    );
-    if (result === OK) {
-      console.log(
-        `[terminal] ${home.name}: sent ${COLONY_SEND_AMOUNT} energy to colony ${colonyRoom}`,
-      );
-      return; // one send per interval
-    } else {
-      console.log(`[terminal] ${home.name}: colony send to ${colonyRoom} failed: ${result}`);
-    }
+    // Hysteresis: skip if a shipment on this route already landed recently.
+    // Only applies when a previous send has been recorded (lastSent > 0) so
+    // the very first shipment on a route is never blocked regardless of Game.time.
+    const routeKey = `${home.name}->${colonyRoom}`;
+    const lastSent = _lastColonySend.get(routeKey) ?? 0;
+    if (lastSent > 0 && Game.time - lastSent < COLONY_SEND_HYSTERESIS_TICKS) continue;
+
+    const score = getColonyScore(target);
+    // Geographic distance — used as a tie-breaker so the closest eligible
+    // sender routes to each receiver (Harabi "geographically closest source").
+    const dist = Game.map.getRoomLinearDistance(home.name, colonyRoom);
+    candidates.push({ colonyRoom, score, colonyStorage, dist });
   }
+
+  if (candidates.length === 0) return;
+
+  // Sort: highest priority score first, then most urgent (lowest storage),
+  // then closest (shortest route = cheapest transaction fee).
+  candidates.sort(
+    (a, b) => b.score - a.score || a.colonyStorage - b.colonyStorage || a.dist - b.dist,
+  );
+
+  const best = candidates[0]!;
+  const result = terminal.send(
+    RESOURCE_ENERGY,
+    COLONY_SEND_AMOUNT,
+    best.colonyRoom,
+    'colony energy support',
+  );
+  if (result === OK) {
+    _lastColonySend.set(`${home.name}->${best.colonyRoom}`, Game.time);
+    console.log(
+      `[terminal] ${home.name}: sent ${COLONY_SEND_AMOUNT} energy to ${best.colonyRoom}` +
+        ` (score=${best.score.toFixed(1)}, storage=${best.colonyStorage})`,
+    );
+  } else {
+    console.log(`[terminal] ${home.name}: colony send to ${best.colonyRoom} failed: ${result}`);
+  }
+}
+
+/** Clears the hysteresis tracker — call in tests' beforeEach to prevent cross-test contamination. */
+export function resetColonySendCache(): void {
+  _lastColonySend.clear();
 }
 
 export function runTerminal(): void {

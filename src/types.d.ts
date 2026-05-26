@@ -228,6 +228,13 @@ interface Memory {
   visuals?: boolean;
   /** When true, `buyForLabs` skips all market purchases (kill-switch to stop credit bleed). */
   pauseLabBuying?: boolean;
+  /**
+   * When true, `runVisuals` draws a sorted CPU-stats table (Memory.stats) on
+   * the first owned room alongside the normal per-room header. Requires
+   * Memory.visuals to also be true. Toggle from the console:
+   *   Memory.profileOverlay = true
+   */
+  profileOverlay?: boolean;
 }
 
 // Screeps provides a global require for loading modules

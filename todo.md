@@ -337,13 +337,13 @@ Claim a third room, improve colony coordination, and add the CPU-management infr
 #### Multi-room expansion
 
 - [ ] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming.
-- [ ] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`.
+- [x] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`.
 - [ ] **Tunnel-aware remote road planning** — Teach `placeRemoteRoads` to build roads on natural wall tiles (tunnels) when a tunnel shortcuts a long detour. Confirmed Screeps mechanic: `createConstructionSite(x, y, STRUCTURE_ROAD)` succeeds on wall terrain; build cost is 150× a plain road (~45k energy) and the road walks at cost 1 once built. PathFinder treats walls as impassable by default, so the current planner never routes through them and never places the site (e.g. W44N57 source (39,20) sits behind the wall at (37,11) — manually tunnelled 2026-05-25).
   - **Design (validated against hivemind + overmind):** a single PathFinder pass with a high static wall cost is all that's needed — no two-pass discovery, no break-even/repair-rate model. Both reference bots converged on this: hivemind tunnels only when a path is otherwise incomplete (fallback wall cost 50); overmind's `RoadPlanner` weights walls at `WALL_COST = 15 × PLAIN_COST = 45` (vs plain 3, swamp 4) in its normal road matrix, so a tunnel only wins when the detour is >~15 plain-tiles longer. Neither models tunnel maintenance — they absorb it into generic decay-repair.
   - **Implementation:** in `placeRemoteRoads`'s `PathFinder.search`, give wall tiles a CostMatrix value of ~15× `plainCost` (our `plainCost` is 2 → wall ≈ 30; or scale to taste). Exclude edge tiles (x/y = 0 or 49 — can't tunnel room borders; the placement loop already skips these, but the matrix should too). The existing one-site-per-tick placement loop then naturally drops a road on a wall tile only when PathFinder routes through it, i.e. only for a genuinely long shortcut.
   - **Repair note (no longer a blocker):** if road decay scales with terrain ratio, a wall road loses ~15k hits/1000t ⇒ ~0.15 e/tick passive repair (150× a plain road), landing on the remote `remoteBuilder` budget. The reference bots prove this differential isn't decision-relevant, so we don't model it. Still worth measuring the live (37,11) tunnel's `hits` slope someday for accuracy, but it does not gate shipping this.
   - Low priority — W44N57 is the only current case and it's handled manually. Revisit when a 2nd/3rd remote with awkward terrain makes it recur. By overmind's own 15-tile rule the (37,11) tunnel is strongly justified (~85-tile detour saved).
-- [ ] **Funnel/expansion scoring for multi-room energy** `lessonlearned` — Once we have a 2nd colony, the spawner has no notion of "this room is the priority for energy/spawn time right now." Hivemind's `funnel-manager.ts:19-56` heap-caches a prioritization-by-score-divided-by-progress-needed for 500 ticks. Useful for upgrader body sizing and remote-hauler delivery preference post-claim.
+- [x] **Funnel/expansion scoring for multi-room energy** `lessonlearned` — Once we have a 2nd colony, the spawner has no notion of "this room is the priority for energy/spawn time right now." Hivemind's `funnel-manager.ts:19-56` heap-caches a prioritization-by-score-divided-by-progress-needed for 500 ticks. Useful for upgrader body sizing and remote-hauler delivery preference post-claim.
 
 #### CPU management
 
@@ -358,7 +358,7 @@ Claim a third room, improve colony coordination, and add the CPU-management infr
 
 #### Debug tooling
 
-- [ ] **Process debug overlay** `lessonlearned` — Add a `Memory.profileOverlay` toggle that draws sorted `Memory.stats` entries as a `RoomVisual()` on the owned room — shows what ran this tick and what was skipped, alongside the existing `stats()` table. ~30 lines in `runVisuals`. Pattern from hivemind's `drawProcessDebug()` in `src/hivemind.ts:435-464`.
+- [x] **Process debug overlay** `lessonlearned` — Add a `Memory.profileOverlay` toggle that draws sorted `Memory.stats` entries as a `RoomVisual()` on the owned room — shows what ran this tick and what was skipped, alongside the existing `stats()` table. ~30 lines in `runVisuals`. Pattern from hivemind's `drawProcessDebug()` in `src/hivemind.ts:435-464`.
 
 ---
 

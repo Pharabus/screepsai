@@ -14,9 +14,22 @@ import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { REPAIR_THRESHOLD, BOOST_LAB_MINERAL_TARGET } from '../utils/thresholds';
-import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
+import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
+
+/**
+ * Minimum colony score below which a young colony (RCL < 6) falls back to
+ * the conservative single-upgrader path. A score of 0 means the room has no
+ * active miners and no income to sustain extra drain; any positive income with
+ * even a small storage buffer clears this gate comfortably.
+ *
+ * Score formula (see colonyPlanner.ts): rclFactor × incomeRate × storageFactor.
+ * An RCL-4 room with 1 active source and 2k storage = 4 × 10 × 0.1 = 4 (below
+ * threshold → conservative). With 2 active sources and 5k storage = 4 × 20 × 0.25
+ * = 20 (at threshold → young path unlocked).
+ */
+const YOUNG_COLONY_MIN_SCORE = 20;
 
 // Upper bound on haulers assigned to a single source. A very distant source
 // (e.g. pathDist 100 across swamp) would otherwise demand 8+ haulers to move
@@ -211,22 +224,56 @@ export function haulersNeeded(room: Room): number {
 }
 
 /**
- * Upgrader count. In miner economy, scale to storage energy reserves.
- * Deliberately conservative below 100k to let the economy build surplus
- * before adding upgrade drain. In bootstrap, keep 2 minimum.
+ * Upgrader count. Branches on colony maturity:
+ *
+ * BOOTSTRAP (no miner economy): keep 2 so containers get built quickly.
+ *
+ * YOUNG COLONY (RCL < 6): invest own income aggressively to accelerate RCL.
+ *   Safety constraints:
+ *   (a) Income-gated: only push harder when colony score ≥ YOUNG_COLONY_MIN_SCORE
+ *       (ensures miners/haulers are covering income before we add drain).
+ *   (b) Hard floor: at stored < 5k, keep exactly 1 small upgrader — never 0,
+ *       so the controller still progresses; never more, to protect spawn energy.
+ *   (c) Don't starve builders: when construction sites exist AND storage is
+ *       below 20k, cap at 1 so builders also get spawn time. Upgrading alone
+ *       won't level the room if the RCL-5 links / RCL-6 structures aren't built.
+ *
+ * MATURE COLONY (RCL 6+): existing conservative logic — W43N58 behavior
+ *   unchanged. Deliberately 1 upgrader below 100k so storage rebuilds before
+ *   adding upgrade drain (Phase 17 stabilisation).
  */
 export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
 
+  const rcl = room.controller?.level ?? 0;
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
 
+  // (b) Hard floor: applies to all economy levels
   if (room.storage && stored < 5_000) {
-    // Growing room: keep one (storage-capped, therefore small) upgrader so the
-    // controller still progresses. A built-out RCL 8 room fully pauses to
-    // preserve storage.
-    return (room.controller?.level ?? 0) < 8 ? 1 : 0;
+    return rcl < 8 ? 1 : 0;
   }
+
+  // YOUNG COLONY (RCL 1-5): invest own income aggressively
+  if (rcl < 6) {
+    // (a) Income gate: score below threshold → conservative single upgrader
+    const score = getColonyScore(room);
+    if (score < YOUNG_COLONY_MIN_SCORE) return 1;
+
+    // (c) Builder starvation guard: limit upgraders when sites need spawn time too
+    const sites = cached(
+      'spawner:sites:' + room.name,
+      () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
+    );
+    if (sites > 0 && stored < 20_000) return 1;
+
+    // Healthy income, no construction bottleneck: push harder toward next RCL
+    if (stored < 15_000) return 2;
+    if (stored < 40_000) return 3;
+    return 4;
+  }
+
+  // MATURE COLONY (RCL 6+): conservative — preserve W43N58 stabilisation
   if (stored < 100_000) return 1;
   if (stored < 200_000) return 2;
   if (stored < 500_000) return 3;
@@ -645,23 +692,35 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       maxRepeats: 8,
       minCount: haulersNeeded(room),
     });
-    // Scale upgrader body to storage reserves: 5W below 15k, 10W below 50k, full above.
-    // Cap at energyCapacityAvailable so the body never exceeds what the room can afford
-    // (e.g. RCL 1 after a downgrade has 300 cap, below the 600 floor tier).
+    // Scale upgrader body to storage reserves.
+    // Young colonies (RCL < 6) use lower storage thresholds so they build a
+    // larger body sooner — investing income aggressively rather than hoarding.
+    // Mature rooms (RCL 6+) keep the conservative 600/1100/full tiers that
+    // prevent a 15-WORK upgrader from draining storage faster than miners fill it.
+    //
+    // Cap at energyCapacityAvailable so the body never exceeds what the room
+    // can actually spawn (e.g. RCL 1 post-downgrade has only 300 capacity).
     const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
     const isCtrlEmergency = !!(
       room.controller &&
       room.controller.ticksToDowngrade < 10_000 &&
       room.controller.level < 5
     );
+    const isYoungColony = (room.controller?.level ?? 0) < 6;
     const upgraderEnergyCap = Math.min(
       isCtrlEmergency
         ? room.energyCapacityAvailable
-        : storedEnergy < 15_000
-          ? 600 // 5 WORK
-          : storedEnergy < 50_000
-            ? 1100 // 10 WORK
-            : room.energyCapacityAvailable,
+        : isYoungColony
+          ? storedEnergy < 5_000
+            ? 600 // minimal — hard floor, keep body cheap
+            : storedEnergy < 15_000
+              ? 1100 // 10 WORK — invest harder once storage builds
+              : room.energyCapacityAvailable // full body above 15k
+          : storedEnergy < 15_000
+            ? 600 // mature: 5 WORK — conservative below 15k
+            : storedEnergy < 50_000
+              ? 1100 // 10 WORK below 50k
+              : room.energyCapacityAvailable, // full above 50k
       room.energyCapacityAvailable,
     );
     queue.push({

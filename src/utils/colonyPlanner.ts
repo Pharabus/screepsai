@@ -12,10 +12,118 @@
  * Target selection is currently manual via the `claim(roomName)` console command.
  * Auto-selection can layer on top of scoreClaimTarget(). The 'selected' status
  * intentionally has no automatic transition — operators commit explicitly.
+ *
+ * Colony priority scoring: each owned room receives an investment priority score
+ * (higher = more worth dedicating upgrader spawn time to right now). See
+ * getColonyScore() for the formula. Scores are heap-cached every
+ * SCORE_CACHE_INTERVAL ticks — not stored in Memory.
  */
 
 import { hostilesSeen, getNeighbor } from './neighbors';
 import { getMyUsername } from './identity';
+
+// ---------------------------------------------------------------------------
+// Colony priority scoring
+// ---------------------------------------------------------------------------
+
+/** Ticks between score recomputation. A 500-tick window matches the labs
+ *  reaction re-evaluation cadence and keeps the cache warm across most ticks. */
+const SCORE_CACHE_INTERVAL = 500;
+
+/**
+ * Module-scope heap cache: { score, computedAt } keyed by room name.
+ * Lives on the JavaScript heap, NOT in Memory — a global reset clears it and
+ * the first call post-reset recomputes cheaply from live state.
+ */
+const _colonyScoreCache = new Map<string, { score: number; computedAt: number }>();
+
+/**
+ * Energy/tick produced by a single fully-saturated source.
+ * Proxy: 3000 energy per 300-tick regen cycle = 10 e/t.
+ * Used as the income unit in score computation.
+ */
+const SCORE_SOURCE_RATE = 10;
+
+/**
+ * Stored-energy level at which a room is considered "income-healthy" (factor 1.0).
+ * Below this the storageFactor collapses toward 0.1, so income-starved rooms
+ * never score as highly as rooms with buffer.
+ */
+const SCORE_INCOME_REFERENCE = 20_000;
+
+/**
+ * Per-colony investment priority score (higher → more worth upgrading now).
+ * Recomputed every SCORE_CACHE_INTERVAL ticks and heap-cached (not in Memory).
+ *
+ * Formula:  rclFactor × incomeRate × storageFactor
+ *
+ *   rclFactor     = max(8 - rcl, 1)
+ *                   Young rooms (RCL 4 → 4, RCL 5 → 3, RCL 6 → 2, RCL 7 → 1).
+ *                   Rooms far from the RCL cap need more investment to become
+ *                   self-sufficient and should be prioritised over near-maxed rooms.
+ *
+ *   incomeRate    = activeSources × SCORE_SOURCE_RATE   [energy/tick]
+ *                   Income proxy: each source with a container and a living miner
+ *                   produces ~10 e/t. Falls back to total planned sources × 10
+ *                   during bootstrap (no miners yet) so young colonies still get
+ *                   a non-zero income estimate rather than collapsing to 0.
+ *
+ *   storageFactor = clamp(storedEnergy / SCORE_INCOME_REFERENCE, 0.1, 1.0)
+ *                   Collapses the score when storage is near-empty — an
+ *                   income-starved room cannot absorb more upgrade drain and
+ *                   should not rank highly regardless of its RCL gap.
+ */
+export function getColonyScore(room: Room): number {
+  const entry = _colonyScoreCache.get(room.name);
+  if (entry !== undefined && Game.time - entry.computedAt < SCORE_CACHE_INTERVAL) {
+    return entry.score;
+  }
+  const score = _computeColonyScore(room);
+  _colonyScoreCache.set(room.name, { score, computedAt: Game.time });
+  return score;
+}
+
+function _computeColonyScore(room: Room): number {
+  const rcl = room.controller?.level ?? 0;
+  const mem = Memory.rooms[room.name];
+
+  // Active sources: container present + miner assigned + miner alive
+  const activeSources =
+    mem?.sources?.filter((s) => s.containerId && s.minerName && !!Game.creeps[s.minerName])
+      .length ?? 0;
+  // Bootstrap fallback: use planned source count when no miners are alive yet
+  const sourceCount = activeSources > 0 ? activeSources : (mem?.sources?.length ?? 0);
+  const incomeRate = sourceCount * SCORE_SOURCE_RATE;
+
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  const storageFactor = Math.max(Math.min(stored / SCORE_INCOME_REFERENCE, 1.0), 0.1);
+
+  // rclFactor: never below 1 so even a maxed RCL-8 room gets a non-zero score
+  const rclFactor = Math.max(8 - rcl, 1);
+
+  return rclFactor * incomeRate * storageFactor;
+}
+
+/**
+ * Returns a snapshot of all owned-room scores keyed by room name.
+ * Used by the colonies() console command and the visuals overlay.
+ */
+export function getColonyScores(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
+    out[room.name] = getColonyScore(room);
+  }
+  return out;
+}
+
+/**
+ * Clears the heap score cache. Call in tests' beforeEach to prevent
+ * stale values leaking between test cases.
+ */
+export function resetColonyScoreCache(): void {
+  _colonyScoreCache.clear();
+}
 
 /** Maximum linear range from a home room to consider claiming. */
 const MAX_CLAIM_DISTANCE = 3;
