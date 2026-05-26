@@ -290,9 +290,12 @@ function mineralMinersNeeded(room: Room): number {
       filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
     }).length > 0;
   if (!hasExtractor) return 0;
-  // Don't mine minerals until energy reserves are healthy
+  // RCL 7+ has a mature enough economy to support the ~1.7 energy/tick overhead
+  // of mineral mining at a lower reserve threshold; credits from mineral sales
+  // fuel lab buying before 100k storage is reached.
+  const floor = rcl >= 7 ? 70_000 : 100_000;
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  if (stored < 100_000) return 0;
+  if (stored < floor) return 0;
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
