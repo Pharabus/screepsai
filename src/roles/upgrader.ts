@@ -3,6 +3,7 @@ import { harvestFromBestSource, STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { moveTo } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { ensureBoosted } from '../utils/boost';
 
 const states: StateMachineDefinition = {
   GATHER: {
@@ -72,6 +73,7 @@ const states: StateMachineDefinition = {
 
 export const upgrader: Role = {
   run(creep: Creep): void {
+    if (!ensureBoosted(creep)) return;
     runStateMachine(creep, states, 'GATHER');
   },
 };

@@ -13,8 +13,10 @@ import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../util
 import { selectRemoteRooms } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
-import { REPAIR_THRESHOLD } from '../utils/thresholds';
+import { REPAIR_THRESHOLD, BOOST_LAB_MINERAL_TARGET } from '../utils/thresholds';
 import { coloniesForHome, updateColonyStates } from '../utils/colonyPlanner';
+
+const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
 
 // Upper bound on haulers assigned to a single source. A very distant source
 // (e.g. pathDist 100 across swamp) would otherwise demand 8+ haulers to move
@@ -438,6 +440,110 @@ export function keeperKillersNeeded(home: Room): number {
   ).length;
 }
 
+/**
+ * Returns true when all conditions for boosting upgraders with GH2O are met:
+ *  1. RCL 7+ (at RCL 6, reserving the only output lab would halt reactions)
+ *  2. At least 2 output labs available (inputLabIds has 2, labIds has ≥2 non-input labs)
+ *  3. GH2O stock (storage + terminal + reserved boost lab) ≥ BOOST_LAB_MINERAL_TARGET (1500)
+ *  4. Storage energy > STORAGE_ENERGY_FLOOR (10k) — don't boost while energy-starved
+ *
+ * The boost lab's own GH2O counts toward the threshold: reserving the lab moves up
+ * to 1500 GH2O out of storage into it, so a storage-only sum would drop to the
+ * threshold and flip-flop the gate (releasing the lab) the moment a boost is
+ * consumed. Counting the lab keeps the sum invariant under that movement.
+ */
+export function upgraderBoostWanted(room: Room): boolean {
+  if (!room.controller || room.controller.level < 7) return false;
+
+  const mem = Memory.rooms[room.name];
+  if (!mem) return false;
+
+  const inputLabCount = mem.inputLabIds?.length ?? 0;
+  const totalLabCount = mem.labIds?.length ?? 0;
+  const outputLabCount = totalLabCount - inputLabCount;
+  if (inputLabCount < 2 || outputLabCount < 2) return false;
+
+  const gh2oInStorage = room.storage?.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
+  const gh2oInTerminal = room.terminal?.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
+  let gh2oInBoostLab = 0;
+  if (mem.boostLabId) {
+    const boostLab = Game.getObjectById(mem.boostLabId);
+    if (boostLab && boostLab.mineralType === RESOURCE_GHODIUM_ACID) {
+      gh2oInBoostLab = boostLab.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
+    }
+  }
+  if (gh2oInStorage + gh2oInTerminal + gh2oInBoostLab < BOOST_LAB_MINERAL_TARGET) return false;
+
+  const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (storedEnergy <= STORAGE_ENERGY_FLOOR) return false;
+
+  return true;
+}
+
+/**
+ * Reserves or releases the boost lab for upgrader GH2O boosting.
+ * When upgraderBoostWanted: ensures boostLabId points to a valid output lab and
+ * sets boostCompound = GH2O.
+ * When not wanted: clears both fields so the lab rejoins reactions.
+ * Must be called every tick so the hauler keeps the lab topped.
+ */
+export function reserveBoostLab(room: Room): void {
+  const mem = Memory.rooms[room.name];
+  if (!mem) return;
+
+  if (!upgraderBoostWanted(room)) {
+    delete mem.boostLabId;
+    delete mem.boostCompound;
+    return;
+  }
+
+  const inputLabSet = new Set<string>(mem.inputLabIds ?? []);
+  const outputLabIds = (mem.labIds ?? []).filter((id) => !inputLabSet.has(id));
+
+  // Validate existing boostLabId
+  if (mem.boostLabId) {
+    const existing = Game.getObjectById(mem.boostLabId);
+    if (existing && !inputLabSet.has(mem.boostLabId)) {
+      // Still valid — keep it and ensure compound is set
+      mem.boostCompound = RESOURCE_GHODIUM_ACID;
+      return;
+    }
+    // Invalid or became an input lab — fall through to pick a new one
+    delete mem.boostLabId;
+  }
+
+  // Pick a stable output lab — prefer one whose mineralType is null or already GH2O;
+  // otherwise the first output lab by id order (deterministic, avoid churn).
+  const sortedOutputLabIds = outputLabIds.slice().sort();
+  let chosen: Id<StructureLab> | undefined;
+
+  // First pass: prefer a lab already loaded with GH2O or empty
+  for (const id of sortedOutputLabIds) {
+    const lab = Game.getObjectById(id as Id<StructureLab>);
+    if (!lab) continue;
+    if (!lab.mineralType || lab.mineralType === RESOURCE_GHODIUM_ACID) {
+      chosen = id as Id<StructureLab>;
+      break;
+    }
+  }
+
+  // Second pass: fall back to first valid output lab
+  if (!chosen) {
+    for (const id of sortedOutputLabIds) {
+      const lab = Game.getObjectById(id as Id<StructureLab>);
+      if (lab) {
+        chosen = id as Id<StructureLab>;
+        break;
+      }
+    }
+  }
+
+  if (chosen) {
+    mem.boostLabId = chosen;
+    mem.boostCompound = RESOURCE_GHODIUM_ACID;
+  }
+}
+
 export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
@@ -562,6 +668,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       role: 'upgrader',
       body: buildUpgraderBody(upgraderEnergyCap),
       minCount: upgradersNeeded(room),
+      ...(upgraderBoostWanted(room)
+        ? {
+            memory: {
+              role: 'upgrader' as CreepRoleName,
+              homeRoom: room.name,
+              boosts: [{ part: WORK, compound: RESOURCE_GHODIUM_ACID }],
+            },
+          }
+        : {}),
     });
     // Builder: [WORK, CARRY, MOVE, MOVE] × up to 4 = max 4W 4C 8M (800 energy)
     // Needs more MOVE for travel between source and construction sites.
@@ -778,6 +893,9 @@ export function runSpawner(): void {
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
+
+    // Reserve or release the boost lab every tick so the hauler keeps it topped.
+    reserveBoostLab(room);
 
     const queue = buildSpawnQueue(room);
 

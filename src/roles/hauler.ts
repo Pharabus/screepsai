@@ -505,6 +505,25 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
 
   const compound = mem.boostCompound;
 
+  // Flush guard: if the lab holds a different mineral type, withdraw it so the
+  // lab can accept GH2O. Without this an upgrader would stall at the lab forever
+  // waiting for a compound that can never be loaded (labs hold only one type).
+  if (
+    lab.mineralType &&
+    lab.mineralType !== compound &&
+    (lab.store.getUsedCapacity(lab.mineralType) ?? 0) > 0
+  ) {
+    const wrongMineral = lab.mineralType;
+    creep.memory.targetId = lab.id as Id<StructureLab>;
+    if (creep.withdraw(lab, wrongMineral) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, lab, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ff88ff' },
+      });
+    }
+    return true;
+  }
+
   // Needs compound?
   const compoundStored = lab.store.getUsedCapacity(compound) ?? 0;
   if (compoundStored < BOOST_LAB_MINERAL_TARGET) {

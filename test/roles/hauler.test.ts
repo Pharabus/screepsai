@@ -1688,4 +1688,93 @@ describe('hauler boost lab servicing', () => {
 
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'UH', expect.anything());
   });
+
+  it('withdraws wrong mineral from boost lab before loading GH2O (flush guard)', () => {
+    // Boost lab was previously used for a reaction and holds 'OH' — the wrong compound.
+    // The flush guard must withdraw 'OH' first so the lab can accept GH2O.
+    const boostLab = mockLab('boostLab1', {
+      mineralType: 'OH',
+      store: mockLabStore({ OH: 800 }),
+    });
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab1') return boostLab;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        id: 'stor1' as any,
+        pos: new RoomPosition(26, 26, 'W1N1'),
+        store: mockStore({ energy: 50000, GH2O: 2000 }, 1000000),
+      },
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab1',
+        boostCompound: 'GH2O',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_flush',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_flush: creep } as any;
+
+    hauler.run(creep);
+
+    // The flush guard should withdraw the wrong mineral ('OH') from the lab
+    expect(creep.withdraw).toHaveBeenCalledWith(boostLab, 'OH');
+  });
+
+  it('loads GH2O into boost lab when lab is clean (no wrong mineral)', () => {
+    // Boost lab is empty — no flush needed, should proceed to load GH2O from storage
+    const boostLab = mockLab('boostLab2', {
+      mineralType: null,
+      store: mockLabStore({}),
+    });
+    const storage = {
+      id: 'stor2' as any,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, GH2O: 2000 }, 1000000),
+    };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'boostLab2') return boostLab;
+      if (id === 'stor2') return storage;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = {
+      W1N1: {
+        boostLabId: 'boostLab2',
+        boostCompound: 'GH2O',
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_load',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_load: creep } as any;
+
+    hauler.run(creep);
+
+    // No wrong mineral — should withdraw GH2O from storage to load the lab
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', expect.any(Number));
+  });
 });
