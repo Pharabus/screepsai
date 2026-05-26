@@ -56,6 +56,25 @@ function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'ke
   return 'remote';
 }
 
+/**
+ * Storage-gated cap on how many remote rooms this colony should run.
+ * Hysteresis: scale up to 2 at REMOTE_ROOM_SCALE_THRESHOLD (100k), but a colony
+ * already running 2 keeps them until storage falls below 70% of that — prevents
+ * churn when storage oscillates near the threshold. Below the bar: 1.
+ *
+ * Exported so the spawner can gate scouting on remote demand: a colony already
+ * at its cap gains nothing from more remotes and must not burn spawn bandwidth
+ * re-scouting territory it cannot exploit.
+ */
+export function remoteRoomCap(homeRoom: Room): number {
+  const stored = homeRoom.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  const currentCount = Memory.rooms[homeRoom.name]?.remoteRooms?.length ?? 0;
+  const scaleDown = Math.round(REMOTE_ROOM_SCALE_THRESHOLD * 0.7);
+  return stored >= REMOTE_ROOM_SCALE_THRESHOLD || (currentCount >= 2 && stored >= scaleDown)
+    ? 2
+    : 1;
+}
+
 export function selectRemoteRooms(homeRoom: Room): void {
   // Remote mining only pays off once there's storage to accumulate the energy.
   // Before that the room's 550-cap spawn/extensions fill quickly and the remote
@@ -77,16 +96,9 @@ export function selectRemoteRooms(homeRoom: Room): void {
   scored.sort((a, b) => b.score - a.score);
 
   const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Auto-scale with hysteresis: scale up at 100k, scale down only below 70k.
-  // Prevents churn when storage oscillates near the threshold — a room that
-  // was selected stays selected until storage is well below the scale-up bar.
-  const stored = homeRoom.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  const currentCount = mem.remoteRooms?.length ?? 0;
-  const SCALE_DOWN_THRESHOLD = Math.round(REMOTE_ROOM_SCALE_THRESHOLD * 0.7);
-  const cap =
-    stored >= REMOTE_ROOM_SCALE_THRESHOLD || (currentCount >= 2 && stored >= SCALE_DOWN_THRESHOLD)
-      ? 2
-      : 1;
+  // Auto-scale with hysteresis (see remoteRoomCap). Must read the cap before
+  // reassigning mem.remoteRooms below so the hysteresis sees the current count.
+  const cap = remoteRoomCap(homeRoom);
   const selected = scored.slice(0, cap);
   mem.remoteRooms = selected.map((r) => r.name);
 

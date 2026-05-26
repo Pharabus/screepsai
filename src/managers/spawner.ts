@@ -10,7 +10,7 @@ import { cached, getStructuresByType } from '../utils/tickCache';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
-import { selectRemoteRooms } from '../utils/remotePlanner';
+import { selectRemoteRooms, remoteRoomCap } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { REPAIR_THRESHOLD, BOOST_LAB_MINERAL_TARGET } from '../utils/thresholds';
@@ -910,8 +910,13 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
     }
-    // Scout: only spawn when there's a room to explore
-    if (findScoutTarget(room.name)) {
+    // Scout: only when the colony still has remote-room capacity to fill AND
+    // there's a room to explore. A colony already at its storage-gated remote
+    // cap gains nothing from more remotes, so it must not burn spawn bandwidth
+    // re-scouting depth-3 territory it cannot exploit. Drops below cap again
+    // (e.g. a remote lost or storage grown) automatically resume scouting.
+    const remoteCount = mem?.remoteRooms?.length ?? 0;
+    if (remoteCount < remoteRoomCap(room) && findScoutTarget(room.name)) {
       queue.push({
         role: 'scout',
         pattern: [MOVE],

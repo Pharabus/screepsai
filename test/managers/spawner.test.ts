@@ -302,6 +302,55 @@ describe('buildSpawnQueue', () => {
 
     expect(scout).toBeUndefined();
   });
+
+  it('scout does not spawn when the colony is at its remote cap', () => {
+    // 1 remote + low storage => remoteRoomCap is 1, so the colony is at cap and
+    // must not scout — even though W3N1 is unscouted and findScoutTarget would
+    // otherwise return it.
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+        remoteRooms: ['W2N1'],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+    Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W3N1' }) as any;
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: { store: { getUsedCapacity: () => 20_000 } },
+    });
+    const queue = buildSpawnQueue(room);
+
+    expect(queue.find((r) => r.role === 'scout')).toBeUndefined();
+  });
+
+  it('scout spawns when below remote cap with a room to explore', () => {
+    // 1 remote + 150k storage => remoteRoomCap is 2, so the colony is below cap
+    // and may scout for a second remote.
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+        remoteRooms: ['W2N1'],
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+    Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W3N1' }) as any;
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: { store: { getUsedCapacity: () => 150_000 } },
+    });
+    const queue = buildSpawnQueue(room);
+
+    expect(queue.find((r) => r.role === 'scout')).toBeDefined();
+  });
 });
 
 describe('minersNeeded', () => {

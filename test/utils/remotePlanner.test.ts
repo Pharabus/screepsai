@@ -1,5 +1,9 @@
 import { resetGameGlobals, mockRoom, mockCreep } from '../mocks/screeps';
-import { evaluateRemoteRoom, selectRemoteRooms } from '../../src/utils/remotePlanner';
+import {
+  evaluateRemoteRoom,
+  selectRemoteRooms,
+  remoteRoomCap,
+} from '../../src/utils/remotePlanner';
 import { recordHostile } from '../../src/utils/neighbors';
 import { flushSegments } from '../../src/utils/segments';
 
@@ -614,6 +618,35 @@ describe('remotePlanner', () => {
       // remoteDistance should be initialised but empty (no spawn = no PathFinder call)
       expect(Memory.rooms['W1N1'].remoteDistance).toBeDefined();
       expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBeUndefined();
+    });
+  });
+
+  describe('remoteRoomCap', () => {
+    it('caps at 1 below the scale-up threshold', () => {
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(99_999) });
+      expect(remoteRoomCap(room)).toBe(1);
+    });
+
+    it('caps at 2 at or above the scale-up threshold (100k)', () => {
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      expect(remoteRoomCap(room)).toBe(2);
+    });
+
+    it('holds at 2 in the hysteresis band (>=70k) when already running 2 remotes', () => {
+      Memory.rooms['W1N1'] = { remoteRooms: ['W2N1', 'W1N2'] } as any;
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(80_000) });
+      expect(remoteRoomCap(room)).toBe(2);
+    });
+
+    it('drops to 1 below the scale-down threshold (70k) even when running 2', () => {
+      Memory.rooms['W1N1'] = { remoteRooms: ['W2N1', 'W1N2'] } as any;
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(69_000) });
+      expect(remoteRoomCap(room)).toBe(1);
+    });
+
+    it('returns 1 when the room has no storage', () => {
+      const room = mockRoom({ name: 'W1N1' });
+      expect(remoteRoomCap(room)).toBe(1);
     });
   });
 });
