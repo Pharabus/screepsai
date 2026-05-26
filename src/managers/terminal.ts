@@ -25,6 +25,16 @@ const MAX_ENERGY_FEE_FRACTION = 0.5;
 // Base minerals that can be purchased on the market (not compound outputs)
 const BUYABLE_MINERALS = new Set<string>(['H', 'O', 'U', 'L', 'K', 'Z', 'X', 'G']);
 
+/**
+ * Verbose per-interval "why we didn't sell" diagnostics. Gated behind
+ * Memory.terminalDebug — in steady state these fire every window (e.g. batteries
+ * trickling in just above the sell floor with surplus < MIN_DEAL_SIZE) and spam
+ * the console. Actual sells and deal failures always log unconditionally.
+ */
+function sellDebug(msg: string): void {
+  if (Memory.terminalDebug) console.log(msg);
+}
+
 function sellSurplus(room: Room, terminal: StructureTerminal): void {
   let sold = false;
   for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
@@ -53,13 +63,13 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
     }
 
     if (!bestOrder) {
-      console.log(`[terminal] ${room.name}: ${resource} surplus=${surplus}, no viable buy orders`);
+      sellDebug(`[terminal] ${room.name}: ${resource} surplus=${surplus}, no viable buy orders`);
       continue;
     }
     const bestPrice = bestOrder.price;
 
     if (sold) {
-      console.log(
+      sellDebug(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, bestBuy=${bestPrice.toFixed(3)} (queued)`,
       );
       continue;
@@ -67,7 +77,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 
     const dealAmount = Math.min(surplus, bestOrder.remainingAmount);
     if (dealAmount < MIN_DEAL_SIZE) {
-      console.log(
+      sellDebug(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, deal too small (${dealAmount})`,
       );
       continue;
@@ -77,7 +87,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
     // fix #3: energy-fee profitability guard (1 energy ≈ 1 credit approximation)
     const revenue = dealAmount * bestOrder.price;
     if (energyCost > revenue * MAX_ENERGY_FEE_FRACTION) {
-      console.log(
+      sellDebug(
         `[terminal] ${room.name}: ${resource} skipping (energy fee ${energyCost} > ${Math.round(revenue * MAX_ENERGY_FEE_FRACTION)} limit)`,
       );
       continue;
@@ -85,7 +95,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 
     const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
     if (terminalEnergy < energyCost + ENERGY_TERMINAL_BUFFER) {
-      console.log(
+      sellDebug(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, skipping (need ${energyCost} energy, have ${terminalEnergy})`,
       );
       continue;

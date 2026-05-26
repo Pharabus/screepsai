@@ -195,6 +195,7 @@ describe('runTerminal', () => {
     (Game as any).market.getAllOrders = vi.fn(() => [
       { id: 'decoy', price: 500, remainingAmount: 1, roomName: 'W2N2' },
     ]);
+    Memory.terminalDebug = true; // surface the gated "why we didn't sell" diagnostic
 
     runTerminal();
 
@@ -223,6 +224,7 @@ describe('runTerminal', () => {
     (Game as any).market.getAllOrders = vi.fn(() => [
       { id: 'cheap', price: 0.5, remainingAmount: 200, roomName: 'W2N2' },
     ]);
+    Memory.terminalDebug = true; // surface the gated "why we didn't sell" diagnostic
 
     runTerminal();
 
@@ -247,6 +249,7 @@ describe('runTerminal', () => {
     (Game as any).rooms = { W1N1: room };
 
     (Game as any).market.getAllOrders = vi.fn(() => []);
+    Memory.terminalDebug = true; // surface the gated "why we didn't sell" diagnostic
 
     runTerminal();
 

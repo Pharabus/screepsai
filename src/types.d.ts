@@ -235,6 +235,14 @@ interface Memory {
    *   Memory.profileOverlay = true
    */
   profileOverlay?: boolean;
+  /**
+   * When true, `sellSurplus` logs verbose per-interval diagnostics explaining
+   * why it did NOT sell a resource this window (deal too small, no viable buy
+   * orders, insufficient terminal energy, etc.). Off by default — in steady
+   * state these fire every interval (e.g. batteries trickling in just above the
+   * sell floor) and spam the console. Actual sells/failures always log.
+   */
+  terminalDebug?: boolean;
 }
 
 // Screeps provides a global require for loading modules
