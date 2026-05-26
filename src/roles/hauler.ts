@@ -785,7 +785,9 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
 
   // Keep a working buffer in storage so pickupLabInput can load labs without
   // touching the terminal (which requires an extra trip across the room).
-  if (storage && storage.store.getUsedCapacity(mineralType) < MINERAL_STORAGE_FLOOR) {
+  // Batteries are factory products for sale — no lab buffer needed, skip to terminal.
+  const deliverFloor = mineralType === RESOURCE_BATTERY ? 0 : MINERAL_STORAGE_FLOOR;
+  if (storage && storage.store.getUsedCapacity(mineralType) < deliverFloor) {
     if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {
         priority: PRIORITY_HAULER,
