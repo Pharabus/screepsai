@@ -5,7 +5,7 @@ export const BOOST_LAB_MINERAL_TARGET = 1500;
 /** Target energy to maintain in the reserved boost lab (under LAB_ENERGY_CAPACITY=2000). */
 export const BOOST_LAB_ENERGY_TARGET = 1000;
 export const FACTORY_ENERGY_FLOOR = 50_000;
-export const FACTORY_BATTERY_CAP = 500;
+export const FACTORY_BATTERY_CAP = 400;
 
 /**
  * Structure HP fraction below which repairs are triggered.
