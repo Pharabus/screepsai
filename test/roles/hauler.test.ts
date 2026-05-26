@@ -1778,3 +1778,209 @@ describe('hauler boost lab servicing', () => {
     expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', expect.any(Number));
   });
 });
+
+describe('hauler pool dispatcher integration', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    // Pool disabled by default
+    (Memory as any).haulerPool = false;
+  });
+
+  // Helper: a container mock compatible with getStructuresByType (needs structureType)
+  function poolContainer(id: string, energy: number, x: number, y: number): any {
+    return {
+      id,
+      structureType: STRUCTURE_CONTAINER,
+      pos: new RoomPosition(x, y, 'W1N1'),
+      store: mockStore({ energy }, 2000),
+    };
+  }
+
+  it('flag OFF: hauler picks the globally-fullest container (legacy behaviour unchanged)', () => {
+    // cA (1900, far) is fullest; cB (1800, near hauler) is second.
+    // Without pool the hauler picks cA (fullest-first).
+    const cA = poolContainer('cA', 1900, 10, 10); // far from hauler
+    const cB = poolContainer('cB', 1800, 40, 40); // near hauler
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_STRUCTURES) return [cA, cB];
+        return [];
+      }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'cA') return cA;
+      if (id === 'cB') return cB;
+      return null;
+    });
+    (Memory as any).rooms = { W1N1: {} };
+    (Memory as any).haulerPool = false;
+
+    const testHauler = mockCreep({
+      name: 'h1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(38, 38, 'W1N1'), // near cB
+    });
+    // Add a second hauler so the pool (if it ran) would spread them
+    const otherHauler = mockCreep({
+      name: 'h2',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(12, 12, 'W1N1'), // near cA
+    });
+    (Game as any).creeps = { h1: testHauler, h2: otherHauler };
+
+    hauler.run(testHauler);
+
+    // Flag off → legacy fullest-first → testHauler picks cA (1900 energy)
+    expect(testHauler.withdraw).toHaveBeenCalledWith(cA, RESOURCE_ENERGY);
+    expect(testHauler.withdraw).not.toHaveBeenCalledWith(cB, RESOURCE_ENERGY);
+  });
+
+  it('flag ON: hauler uses the pool-assigned container even if not the globally-fullest', () => {
+    // cA (1900, near h2) is globally fullest.
+    // cB (1800, near h1/testHauler) is second.
+    // Pool: round1 → cA (1900) highest, nearest hauler is h2 (near cA) → h2 assigned to cA.
+    //        round2 → cB (1800) now highest remaining, nearest hauler is h1 → h1 assigned to cB.
+    // testHauler (h1) should withdraw from cB, NOT cA.
+    const cA = poolContainer('cA', 1900, 10, 10); // near h2
+    const cB = poolContainer('cB', 1800, 40, 40); // near h1 (testHauler)
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_STRUCTURES) return [cA, cB];
+        return [];
+      }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'cA') return cA;
+      if (id === 'cB') return cB;
+      return null;
+    });
+    (Memory as any).rooms = { W1N1: {} };
+    (Memory as any).haulerPool = true;
+
+    const testHauler = mockCreep({
+      name: 'h1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(38, 38, 'W1N1'), // near cB
+    });
+    const otherHauler = mockCreep({
+      name: 'h2',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(12, 12, 'W1N1'), // near cA
+    });
+    (Game as any).creeps = { h1: testHauler, h2: otherHauler };
+
+    hauler.run(testHauler);
+
+    // Pool assigned h1 → cB (pool spreads haulers vs both converging on cA)
+    expect(testHauler.withdraw).toHaveBeenCalledWith(cB, RESOURCE_ENERGY);
+    expect(testHauler.withdraw).not.toHaveBeenCalledWith(cA, RESOURCE_ENERGY);
+  });
+
+  it('flag ON: falls through to legacy logic when hauler has no pool assignment', () => {
+    // Only one container (cA), two haulers. Pool assigns h2 (nearest) to cA.
+    // h1 has no assignment → falls through to legacy logic → still picks cA (only container).
+    const cA = poolContainer('cA', 1500, 10, 10);
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_STRUCTURES) return [cA];
+        return [];
+      }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'cA') return cA;
+      return null;
+    });
+    (Memory as any).rooms = { W1N1: {} };
+    (Memory as any).haulerPool = true;
+
+    const testHauler = mockCreep({
+      name: 'h1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(30, 30, 'W1N1'),
+    });
+    const otherHauler = mockCreep({
+      name: 'h2',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(11, 11, 'W1N1'), // nearest to cA → pool assigns h2 to cA
+    });
+    (Game as any).creeps = { h1: testHauler, h2: otherHauler };
+
+    hauler.run(testHauler);
+
+    // h1 has no assignment (pool only needed one hauler for cA, h2 was nearest).
+    // Falls through to legacy sorted selection → still picks cA (only container).
+    expect(testHauler.withdraw).toHaveBeenCalledWith(cA, RESOURCE_ENERGY);
+  });
+
+  it('flag ON: falls through to legacy fullest-first when pool-assigned container is empty', () => {
+    // Pool assigns h1 → cB (h2 nearest to cA wins round1; h1 gets cB in round2).
+    // Game.getObjectById('cB') returns 0 energy (race: drained between pool compute and check).
+    // Pool check falls through → legacy fullest-first picks cA (1500, first in room.find order).
+    const cA = poolContainer('cA', 1500, 10, 10); // 'cA' < 'cB' → wins round1 id tie
+    const cB = poolContainer('cB', 1500, 40, 40); // near testHauler (h1) → h1 gets cB
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_STRUCTURES) return [cA, cB];
+        return [];
+      }),
+    });
+
+    // cB via getObjectById is empty (race condition); cA still has energy
+    const emptyCB = { id: 'cB', store: mockStore({}, 2000) }; // 0 energy
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'cA') return cA;
+      if (id === 'cB') return emptyCB;
+      return null;
+    });
+    (Memory as any).rooms = { W1N1: {} };
+    (Memory as any).haulerPool = true;
+
+    const testHauler = mockCreep({
+      name: 'h1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(38, 38, 'W1N1'), // near cB
+    });
+    const otherHauler = mockCreep({
+      name: 'h2',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', homeRoom: 'W1N1' },
+      store: mockStore({}),
+      pos: new RoomPosition(12, 12, 'W1N1'), // near cA → gets cA in round1
+    });
+    (Game as any).creeps = { h1: testHauler, h2: otherHauler };
+
+    hauler.run(testHauler);
+
+    // Pool assigned h1 → cB, but cB returns 0 energy from getObjectById → falls through.
+    // Legacy fullest-first: getStructuresByType returns original cA (1500 ≥ 1000), picks cA.
+    // Note: creep.withdraw is called with the object from room.find (cA), not from getObjectById.
+    expect(testHauler.withdraw).toHaveBeenCalledWith(cA, RESOURCE_ENERGY);
+    expect(testHauler.withdraw).not.toHaveBeenCalledWith(emptyCB, RESOURCE_ENERGY);
+  });
+});

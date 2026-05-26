@@ -243,6 +243,14 @@ interface Memory {
    * sell floor) and spam the console. Actual sells/failures always log.
    */
   terminalDebug?: boolean;
+  /**
+   * When true, the per-room hauler pool dispatcher (`src/managers/haulerPool.ts`)
+   * governs the source-container pickup leg: haulers are pre-assigned to
+   * containers based on fill level + proximity so they stop all converging on
+   * the globally-fullest container. Off by default (dark-deploy safe); flip
+   * from the console to activate, revert to disable with no other changes needed.
+   */
+  haulerPool?: boolean;
 }
 
 // Screeps provides a global require for loading modules

@@ -5,6 +5,7 @@ import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { cached, getStructuresByType } from '../utils/tickCache';
+import { assignHaulers } from '../managers/haulerPool';
 import {
   MINERAL_STORAGE_FLOOR,
   TERMINAL_ENERGY_FLOOR,
@@ -270,7 +271,31 @@ function pickup(creep: Creep): boolean {
   // container can wait a few ticks while we collect a 4k-energy ruin.
   if (pickupAbandonedLoot(creep)) return true;
 
-  // Full source containers (>= 1000 energy)
+  // Full source containers (>= 1000 energy).
+  // When the hauler pool is active, use the dispatcher's pre-computed assignment
+  // instead of independently picking the globally-fullest container. If the pool
+  // has no assignment for this hauler (or the assigned container is now empty),
+  // fall through to the legacy fullest-first selection below.
+  // Flag-off path is a true no-op — the pool block is never entered.
+  if (Memory.haulerPool) {
+    const poolAssignment = assignHaulers(creep.room);
+    const assignedId = poolAssignment[creep.name];
+    if (assignedId) {
+      const container = Game.getObjectById(assignedId);
+      if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        creep.memory.targetId = assignedId;
+        if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, container, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#ffaa00' },
+          });
+        }
+        return true;
+      }
+      // Assigned container is now empty or gone — fall through to legacy logic
+    }
+    // No pool assignment — fall through to legacy logic
+  }
   const fullSourceContainer = findFullSourceContainer(creep.room, mem);
   if (fullSourceContainer) {
     creep.memory.targetId = fullSourceContainer.id;
@@ -308,7 +333,28 @@ function pickup(creep: Creep): boolean {
     }
   }
 
-  // Any source container with energy
+  // Any source container with energy.
+  // Pool check mirrors the one above: if the dispatcher has an assignment and
+  // the container still has energy, use it. Otherwise legacy sorted selection.
+  if (Memory.haulerPool) {
+    const poolAssignment = assignHaulers(creep.room);
+    const assignedId = poolAssignment[creep.name];
+    if (assignedId) {
+      const container = Game.getObjectById(assignedId);
+      if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        creep.memory.targetId = assignedId;
+        if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+          moveTo(creep, container, {
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#ffaa00' },
+          });
+        }
+        return true;
+      }
+      // Assigned container empty/gone — fall through to legacy sorted selection
+    }
+    // No pool assignment — fall through to legacy sorted selection
+  }
   const containersWithEnergy = (
     (getStructuresByType(creep.room)[STRUCTURE_CONTAINER] ?? []) as StructureContainer[]
   ).filter((s) => s.store.getUsedCapacity(RESOURCE_ENERGY) > 0);
