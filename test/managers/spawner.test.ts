@@ -1040,8 +1040,24 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     };
     // 2 existing haulers for this room — still below quota of 3
     (Game as any).creeps = {
-      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
-      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh1: {
+        name: 'rh1',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
+      rh2: {
+        name: 'rh2',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
     };
 
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
@@ -1060,9 +1076,33 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     };
     // 3 existing haulers — at quota
     (Game as any).creeps = {
-      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
-      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
-      rh3: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh1: {
+        name: 'rh1',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
+      rh2: {
+        name: 'rh2',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
+      rh3: {
+        name: 'rh3',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
     };
 
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
@@ -1081,8 +1121,24 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     };
     // 2 existing haulers — at quota for non-reserved
     (Game as any).creeps = {
-      rh1: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
-      rh2: { memory: { role: 'remoteHauler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      rh1: {
+        name: 'rh1',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
+      rh2: {
+        name: 'rh2',
+        memory: {
+          role: 'remoteHauler',
+          homeRoom: 'W1N1',
+          targetRoom: 'W2N1',
+          missionId: 'remoteMining:W2N1',
+        },
+      },
     };
 
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });

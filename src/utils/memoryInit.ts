@@ -19,4 +19,5 @@ export function initMemory(): void {
   // without needing to guard.
   if (!Memory.creeps) Memory.creeps = {};
   if (!Memory.rooms) Memory.rooms = {};
+  if (!Memory.missions) Memory.missions = { remoteMining: {} };
 }

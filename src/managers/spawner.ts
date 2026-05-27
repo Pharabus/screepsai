@@ -15,6 +15,16 @@ import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import { REPAIR_THRESHOLD, BOOST_LAB_MINERAL_TARGET } from '../utils/thresholds';
 import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
+import {
+  ensureRemoteMiningMission,
+  syncMission,
+  setMissionStatus,
+  getActiveMissionHaulerCount,
+  garbageCollectMissions,
+  syncAllMissions,
+  getRemoteMissionKey,
+  STALL_HOSTILE_TICKS,
+} from '../utils/missions';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
 
@@ -73,16 +83,6 @@ function countRemoteMiners(remoteRoom: string): number {
     let count = 0;
     for (const c of Object.values(Game.creeps)) {
       if (c.memory.role === 'miner' && c.memory.targetRoom === remoteRoom) count++;
-    }
-    return count;
-  });
-}
-
-function countRemoteHaulers(remoteRoom: string): number {
-  return cached('spawner:remoteHaulers:' + remoteRoom, () => {
-    let count = 0;
-    for (const c of Object.values(Game.creeps)) {
-      if (c.memory.role === 'remoteHauler' && c.memory.targetRoom === remoteRoom) count++;
     }
     return count;
   });
@@ -826,9 +826,19 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       if (sourceCount === 0) continue;
 
       const existingRemoteMiners = countRemoteMiners(remoteRoom);
-      const existingRemoteHaulers = countRemoteHaulers(remoteRoom);
       const totalMiners = countCreepsByRole('miner', room.name);
       const totalHaulers = countCreepsByRole('remoteHauler', room.name);
+
+      // Sync mission record and detect stall (active hostiles suppress new spawns)
+      const mission = ensureRemoteMiningMission(room.name, remoteRoom);
+      syncMission(remoteRoom);
+      const hostileLastSeen = remoteMem?.hostileLastSeen ?? 0;
+      const isStalled = hostileLastSeen > 0 && Game.time - hostileLastSeen < STALL_HOSTILE_TICKS;
+      if (isStalled && mission.status !== 'stalled') {
+        setMissionStatus(remoteRoom, 'stalled');
+      } else if (!isStalled && mission.status === 'stalled') {
+        setMissionStatus(remoteRoom, 'active');
+      }
 
       // Spawn remote miners: 1 per source, prespawning when TTL is low so the
       // source is never left unmined between a miner dying and its replacement arriving.
@@ -866,7 +876,11 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       }
 
       const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isHighCapacity);
-      if (existingRemoteHaulers < haulersWanted) {
+      // Use mission-tracked hauler count instead of a live scan. syncMission() above
+      // already refreshed mission.haulerIds, so this is O(1). Stalled remotes skip
+      // spawning so we don't send creeps into a hostile room.
+      const activeHaulers = getActiveMissionHaulerCount(remoteRoom);
+      if (!isStalled && activeHaulers < haulersWanted) {
         queue.push({
           role: 'remoteHauler',
           pattern: [CARRY, CARRY, MOVE, MOVE],
@@ -876,6 +890,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
             role: 'remoteHauler' as CreepRoleName,
             homeRoom: room.name,
             targetRoom: remoteRoom,
+            missionId: getRemoteMissionKey(remoteRoom),
           },
         });
       }
@@ -891,6 +906,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
             role: 'reserver' as CreepRoleName,
             homeRoom: room.name,
             targetRoom: remoteRoom,
+            missionId: getRemoteMissionKey(remoteRoom),
           },
         });
       }
@@ -941,12 +957,19 @@ export function runSpawner(): void {
   // room flips to 'bootstrapping' on the same tick the claim lands.
   updateColonyStates();
 
+  // Prune stale mission records once every 100 ticks (cheap — only touches retiring missions)
+  if (Game.time % 100 === 0) garbageCollectMissions();
+
   // Ensure room plans are up to date before making spawn decisions
   for (const room of Object.values(Game.rooms)) {
     if (room.controller?.my) {
       ensureRoomPlan(room);
       // Periodically re-evaluate remote room selection
-      if (Game.time % 100 === 0) selectRemoteRooms(room);
+      if (Game.time % 100 === 0) {
+        selectRemoteRooms(room);
+        // Retire missions for any remotes that selectRemoteRooms just removed
+        syncAllMissions(Memory.rooms[room.name]?.remoteRooms ?? []);
+      }
       // Scan remote rooms we have visibility into
       const remoteRooms = Memory.rooms[room.name]?.remoteRooms ?? [];
       for (const remoteName of remoteRooms) {

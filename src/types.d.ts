@@ -56,6 +56,12 @@ interface CreepMemory {
   _idleLastTick?: number;
   /** Movement priority used by pushBlocker — higher priority creeps may push lower-priority blockers */
   movePriority?: number;
+  /**
+   * Mission this creep is assigned to — set at spawn time for remote haulers and reservers.
+   * Format: 'remoteMining:<roomName>'. Used by missions.ts to scan live creeps and keep
+   * RemoteMiningMission.haulerIds / reserverId in sync without needing spawn callbacks.
+   */
+  missionId?: string;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
@@ -285,9 +291,42 @@ interface ColonyState {
   transitRooms?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Mission records (src/utils/missions.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * A RemoteMiningMission represents the "remote mining <room>" goal as a single
+ * typed object in Memory. It owns the hauler IDs and reserver ID for a remote,
+ * tracks lifecycle status (active / stalled / retiring), and is the foundation
+ * for future empire-level coordination.
+ *
+ * Miner tracking stays in RoomMemory.sources[n].minerName to avoid two sources
+ * of truth. haulerIds and reserverId are derived caches refreshed each tick by
+ * syncMission() — the creep's own memory.missionId is the authoritative record.
+ */
+interface RemoteMiningMission {
+  homeRoom: string;
+  remoteRoom: string;
+  status: 'active' | 'stalled' | 'retiring';
+  /** Game.time when the mission was created */
+  createdAt: number;
+  /** Game.time of the last syncMission() call */
+  lastSynced: number;
+  /** Names of remoteHauler creeps serving this remote (derived from missionId scan) */
+  haulerIds: string[];
+  /** Name of the active reserver creep, or null when none is alive */
+  reserverId: string | null;
+}
+
 interface Memory {
   creeps: { [name: string]: CreepMemory };
   rooms: { [name: string]: RoomMemory };
+  /** Mission records keyed by mission type then mission ID. */
+  missions?: {
+    /** One record per remote room being actively mined. Key = remote room name. */
+    remoteMining: Record<string, RemoteMiningMission>;
+  };
   /** Multi-room expansion targets keyed by the room being claimed. */
   colonies?: { [targetRoom: string]: ColonyState };
   /**
