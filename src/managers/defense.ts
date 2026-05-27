@@ -129,6 +129,7 @@ export function runDefense(): void {
       if (!mem.combatActive) {
         // First tick of a new attack — open a combat record.
         mem.combatActive = true;
+        mem.combatStartedAt = Game.time;
         mem.combatSafeModeLogged = false;
         mem.combatTowerDrainLogged = false;
         const owners = [
@@ -148,7 +149,7 @@ export function runDefense(): void {
       mem.combatActive = false;
       mem.combatSafeModeLogged = false;
       mem.combatTowerDrainLogged = false;
-      const duration = mem.threatLastSeen ? Game.time - mem.threatLastSeen : 0;
+      const duration = mem.combatStartedAt ? Game.time - mem.combatStartedAt : 0;
       logCombat({
         tick: Game.time,
         room: room.name,

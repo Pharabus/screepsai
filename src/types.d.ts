@@ -76,6 +76,8 @@ interface RoomMemory {
    * and to gate one-shot per-combat log events.
    */
   combatActive?: boolean;
+  /** Game.time when combatActive was first set — used to compute duration in threat_ended. */
+  combatStartedAt?: number;
   /** Cleared at combat start; set once a safe_mode_unavailable event is logged this combat. */
   combatSafeModeLogged?: boolean;
   /** Cleared at combat start; set once a tower_energy_low event is logged this combat. */
