@@ -67,6 +67,7 @@ function findOpenPosition(
   near: RoomPosition,
   minRange = 2,
   maxRange = 5,
+  excluded?: Set<string>,
 ): RoomPosition | undefined {
   const terrain = room.getTerrain();
 
@@ -78,6 +79,7 @@ function findOpenPosition(
         const y = near.y + dy;
         if (x < 2 || x > 47 || y < 2 || y > 47) continue;
         if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        if (excluded?.has(`${x},${y}`)) continue; // skip layout-plan-reserved tiles
 
         const pos = new RoomPosition(x, y, room.name);
         const blocked =
@@ -531,6 +533,11 @@ export function placeLinks(room: Room): void {
 
   const mem = Memory.rooms[room.name];
 
+  // Compute once — spawn/extension/tower/lab/storage/terminal/perimeter tiles that
+  // are layout-plan-reserved. Links must not land on these (a storage link at the
+  // planned spawn-2 position would block the spawn from ever being built).
+  const reserved = getPlannedReserved(room);
+
   // Priority 1: storage link (receiver — must exist before source links are useful)
   if (room.storage && !mem?.storageLinkId) {
     const existing = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
@@ -540,7 +547,7 @@ export function placeLinks(room: Room): void {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
     if (existing.length === 0 && existingSites.length === 0) {
-      const pos = findOpenPosition(room, room.storage.pos, 1, 2);
+      const pos = findOpenPosition(room, room.storage.pos, 1, 2, reserved);
       if (pos) {
         room.createConstructionSite(pos, STRUCTURE_LINK);
         return;
@@ -581,7 +588,7 @@ export function placeLinks(room: Room): void {
           ? Game.getObjectById(entry.containerId as Id<StructureContainer>)
           : undefined;
         const anchor = container?.pos ?? source.pos;
-        const pos = findOpenPosition(room, anchor, 1, container ? 1 : 2);
+        const pos = findOpenPosition(room, anchor, 1, container ? 1 : 2, reserved);
         if (pos) {
           room.createConstructionSite(pos, STRUCTURE_LINK);
           return;
@@ -599,7 +606,7 @@ export function placeLinks(room: Room): void {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
     if (existing.length === 0 && existingSites.length === 0) {
-      const pos = findOpenPosition(room, room.controller.pos, 2, 3);
+      const pos = findOpenPosition(room, room.controller.pos, 2, 3, reserved);
       if (pos) {
         room.createConstructionSite(pos, STRUCTURE_LINK);
         return;
