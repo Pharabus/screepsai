@@ -18,7 +18,9 @@ import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
 import { shouldRun, THROTTLE_HIGH, THROTTLE_NORMAL, THROTTLE_LOW } from './utils/throttle';
 import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
+import { replanPerimeterForRoom } from './utils/perimeterPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
+import { formatCombatLog } from './utils/combatLog';
 import {
   startClaim,
   canClaimAnotherRoom,
@@ -44,12 +46,18 @@ export const status = () => {
     const containers = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
     const links = mem?.sources?.filter((s) => !!s.linkId).length ?? 0;
     const storageLink = mem?.storageLinkId ? 'yes' : 'no';
+    const perim = mem?.perimeterPlan;
+    const perimStr = perim
+      ? `perimTiles=${perim.perimeterTiles.length} gates=${perim.gateTiles.length}`
+      : 'perim=none';
     lines.push(
-      `${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}, links=${links}, storageLink=${storageLink}`,
+      `${room.name}: RCL ${rcl}, economy=${economy}, sources=${sources}, containers=${containers}, links=${links}, storageLink=${storageLink}, ${perimStr}`,
     );
   }
   return lines.join('\n') || 'no owned rooms';
 };
+
+export const replanPerimeter = (roomName: string): string => replanPerimeterForRoom(roomName);
 
 export const replanLayout = (roomName: string): string => {
   const room = Game.rooms[roomName];
@@ -68,6 +76,8 @@ export const replanLayout = (roomName: string): string => {
 };
 
 export const neighbors = () => summarizeNeighbors();
+
+export const combatLog = () => formatCombatLog();
 
 export const suggestSpawn = (roomName: string): string => {
   const result = findBestSpawnPosition(roomName);
@@ -160,7 +170,9 @@ global.stats = stats;
 global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
+global.replanPerimeter = replanPerimeter;
 global.neighbors = neighbors;
+global.combatLog = combatLog;
 global.suggestSpawn = suggestSpawn;
 global.claim = claim;
 global.colonies = colonies;

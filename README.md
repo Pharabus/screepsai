@@ -261,7 +261,7 @@ For each room with towers, each tick (`src/managers/towers.ts`):
 
 1. If any hostile is present, **every tower in the room focus-fires the highest-threat target** (see Defense below). Concentrating fire kills healers before they can negate the damage, which a closest-target approach can fail to do.
 2. Otherwise, each tower heals the closest damaged friendly creep.
-3. Otherwise, if the tower is at ≥50% energy, it repairs damaged structures (cached per room per tick). Walls and ramparts are repaired up to `wallRepairMax(room)`, which scales with storage energy (stored × 0.5) clamped to per-RCL caps (10k at RCL 3, up to 50M at RCL 8). Other structures are repaired below 75% of max HP. The 50%-energy reserve guarantees combat responsiveness when hostiles arrive.
+3. Otherwise, if the tower is at ≥50% energy, it repairs damaged structures (cached per room per tick). Walls and ramparts are repaired up to `wallRepairMax(room)` = `min(max(WALL_FLOOR[rcl], stored × 0.5), WALL_CAPS[rcl])`. `WALL_FLOOR` is a per-RCL minimum HP floor (3=10k, 4=50k, 5=150k, 6=300k, 7=1M, 8=5M) so walls don't stay paper-thin during temporarily lean periods; `WALL_CAPS` is the per-RCL upper bound (3=10k … 8=50M). Ramparts co-located with a wall tile are skipped by the repair scan — they decay naturally at 3 HP/tick, with the underlying wall as the intended long-term barrier. Other structures are repaired below 75% of max HP. The 50%-energy reserve guarantees combat responsiveness when hostiles arrive.
 
 ## Defense
 
@@ -305,6 +305,38 @@ else:
 ```
 
 A lone invader that a single tower vaporises no longer spawns a wasted defender. The heal check is the safety valve — a squad that out-heals tower fire (the case focus-fire can't win alone) still spawns defenders. The spawner prepends a `defender` request with that `minCount` to the head of the spawn queue. The 50-tick memory window prevents an attacker who briefly steps out of sight from cancelling a defender mid-spawn. When the room has been clear for longer than the window, defender production stops naturally — no standing army in peacetime.
+
+### Perimeter defense (`src/utils/perimeterPlanner.ts`)
+
+The perimeter planner computes a defensive ring around the spawn cluster using BFS flood-fill:
+
+1. **Core zone**: all passable tiles within Chebyshev radius 10 of the spawn anchor.
+2. **Exterior set**: BFS from every passable room border tile, blocking terrain walls and core tiles — produces all tiles an attacker can reach without crossing the core.
+3. **Perimeter**: exterior tiles (within the buildable range 2–47) that border at least one non-exterior tile.
+4. **Gates**: 2-tile-wide openings toward sources outside the core, the controller if distant, and one tile per remote room exit — gate tiles get ramparts (passable by own creeps); all other perimeter tiles get walls (impassable, no decay cost).
+
+The plan is stored as `RoomMemory.perimeterPlan` (~800–1200 bytes) and recomputed automatically when `PERIMETER_PLAN_VERSION` bumps or the set of remote rooms changes. Console: `replanPerimeter(roomName)` forces an immediate recompute.
+
+**RCL-gated build pipeline** (after standard `placeRamparts`):
+- RCL 5: `placePerimeterRamparts` — ramparts on all perimeter tiles (walls not yet available)
+- RCL 6: `placePerimeterWalls` — walls on non-gate tiles; `placePerimeterRamparts` switches to gate-tiles-only
+- Both gated behind `PERIMETER_STORAGE_MIN` (20k storage energy) to avoid energy starvation during build-up
+
+Non-gate perimeter tiles are added to `getPlannedReserved()` so road pathfinding routes through gates automatically.
+
+### Combat event logger (`src/utils/combatLog.ts`)
+
+A ring buffer (max 100 entries) in `Memory.combatLog` records key defense events:
+
+| Event | When logged |
+| ----- | ----------- |
+| `threat_appeared` | First hostile sighted in a room |
+| `threat_ended` | Room confirmed clear after a combat |
+| `safe_mode_activated` | Safe mode successfully triggered |
+| `safe_mode_unavailable` | Trigger attempted but no charges / on cooldown |
+| `tower_energy_low` | Any tower drops below 25% energy during combat |
+
+`logCombat(event)` appends to the buffer and echoes to console. Console: `combatLog()` prints the full log for post-fight review when the room was unobserved.
 
 ### NPC Invader response (hunter)
 

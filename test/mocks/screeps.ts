@@ -127,6 +127,12 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).ORDER_BUY = 'buy';
 (globalThis as any).ORDER_SELL = 'sell';
 
+// Exit directions (used by room.find and Game.map.findExit)
+(globalThis as any).FIND_EXIT_TOP = 1;
+(globalThis as any).FIND_EXIT_RIGHT = 3;
+(globalThis as any).FIND_EXIT_BOTTOM = 5;
+(globalThis as any).FIND_EXIT_LEFT = 7;
+
 // Terrain
 (globalThis as any).TERRAIN_MASK_WALL = 1;
 

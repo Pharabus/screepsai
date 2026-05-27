@@ -15,6 +15,7 @@
 import { threatScore } from '../utils/threat';
 import { recordHostile, requestNeighborSegment } from '../utils/neighbors';
 import { getStructuresByType } from '../utils/tickCache';
+import { logCombat } from '../utils/combatLog';
 
 // Hostile is treated as inside the base perimeter when within this range of
 // a spawn, storage, or the controller.
@@ -58,16 +59,43 @@ function hostileNearCriticalStructure(room: Room): boolean {
   return false;
 }
 
-function tryActivateSafeMode(room: Room): void {
+function tryActivateSafeMode(room: Room, mem: RoomMemory): void {
   const c = room.controller;
   if (!c?.my) return;
   if (c.safeMode) return; // already active
-  if (!c.safeModeAvailable || c.safeModeAvailable <= 0) return;
-  if (c.safeModeCooldown && c.safeModeCooldown > 0) return;
   if (!hostileNearCriticalStructure(room)) return;
+
+  // Can't activate — log once per combat so we know we were overrun without a fallback.
+  if (
+    !c.safeModeAvailable ||
+    c.safeModeAvailable <= 0 ||
+    (c.safeModeCooldown && c.safeModeCooldown > 0)
+  ) {
+    if (!mem.combatSafeModeLogged) {
+      mem.combatSafeModeLogged = true;
+      const reason =
+        !c.safeModeAvailable || c.safeModeAvailable <= 0
+          ? 'no charges remaining'
+          : `cooldown ${c.safeModeCooldown} ticks`;
+      logCombat({
+        tick: Game.time,
+        room: room.name,
+        event: 'safe_mode_unavailable',
+        safeModesLeft: c.safeModeAvailable ?? 0,
+        details: reason,
+      });
+    }
+    return;
+  }
 
   const result = c.activateSafeMode();
   if (result === OK) {
+    logCombat({
+      tick: Game.time,
+      room: room.name,
+      event: 'safe_mode_activated',
+      safeModesLeft: (c.safeModeAvailable ?? 1) - 1,
+    });
     console.log(`[defense] ${room.name}: safe mode activated`);
   } else {
     console.log(`[defense] ${room.name}: safe mode activation failed (${result})`);
@@ -92,9 +120,41 @@ export function runDefense(): void {
     if (!room.controller?.my) continue;
 
     const threat = hostiles.reduce((sum, h) => sum + threatScore(h), 0);
-    if (threat > 0 || hostiles.length > 0) {
+    const hasActiveThreat = threat > 0 || hostiles.length > 0;
+
+    if (hasActiveThreat) {
       mem.threatLastSeen = Game.time;
       mem.lastThreatScore = threat;
+
+      if (!mem.combatActive) {
+        // First tick of a new attack — open a combat record.
+        mem.combatActive = true;
+        mem.combatSafeModeLogged = false;
+        mem.combatTowerDrainLogged = false;
+        const owners = [
+          ...new Set(hostiles.flatMap((h) => (h.owner?.username ? [h.owner.username] : []))),
+        ];
+        logCombat({
+          tick: Game.time,
+          room: room.name,
+          event: 'threat_appeared',
+          threatScore: threat,
+          hostileCount: hostiles.length,
+          owners,
+        });
+      }
+    } else if (mem.combatActive) {
+      // All hostiles gone this tick — close the combat record.
+      mem.combatActive = false;
+      mem.combatSafeModeLogged = false;
+      mem.combatTowerDrainLogged = false;
+      const duration = mem.threatLastSeen ? Game.time - mem.threatLastSeen : 0;
+      logCombat({
+        tick: Game.time,
+        room: room.name,
+        event: 'threat_ended',
+        details: `combat lasted ~${duration} ticks`,
+      });
     }
 
     for (const h of hostiles) {
@@ -102,7 +162,7 @@ export function runDefense(): void {
     }
 
     requestNeighborSegment();
-    tryActivateSafeMode(room);
+    tryActivateSafeMode(room, mem);
   }
 }
 

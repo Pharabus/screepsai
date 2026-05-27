@@ -64,6 +64,16 @@ interface RoomMemory {
   // Defense (src/managers/defense.ts)
   threatLastSeen?: number;
   lastThreatScore?: number;
+  /**
+   * True while an attack is in progress (hostiles present this tick).
+   * Used by combatLog.ts to detect threat_appeared / threat_ended transitions
+   * and to gate one-shot per-combat log events.
+   */
+  combatActive?: boolean;
+  /** Cleared at combat start; set once a safe_mode_unavailable event is logged this combat. */
+  combatSafeModeLogged?: boolean;
+  /** Cleared at combat start; set once a tower_energy_low event is logged this combat. */
+  combatTowerDrainLogged?: boolean;
   // Remote room threat — set by any creep that spots a hostile in this room.
   // Used by remote roles to flee and stay home until the threat clears.
   hostileLastSeen?: number;
@@ -184,6 +194,65 @@ interface RoomMemory {
       amount: number;
     }[];
   };
+  /**
+   * Perimeter defense plan — computed once by `computePerimeter()` in
+   * `src/utils/perimeterPlanner.ts`, cached here, and invalidated by
+   * `PERIMETER_PLAN_VERSION` bumps or remote-room changes.
+   */
+  perimeterPlan?: PerimeterPlanData;
+}
+
+// ---------------------------------------------------------------------------
+// Perimeter planner (src/utils/perimeterPlanner.ts)
+// ---------------------------------------------------------------------------
+
+interface PerimeterGateTarget {
+  x: number;
+  y: number;
+  /** Human-readable label: "source(7,14)", "controller", "remote:W43N59", "default-N" */
+  reason: string;
+}
+
+interface PerimeterPlanData {
+  version: number;
+  coreRadius: number;
+  /** "x,y" encoded exterior tiles that border the interior — every tile that gets a wall or rampart */
+  perimeterTiles: string[];
+  /** Subset of perimeterTiles — get ramparts only (no wall), kept passable for own creeps */
+  gateTiles: string[];
+  /** Gate targets this plan was computed from — used to detect remote-room changes */
+  gateTargets: PerimeterGateTarget[];
+}
+
+// ---------------------------------------------------------------------------
+// Combat logging (src/utils/combatLog.ts)
+// ---------------------------------------------------------------------------
+
+type CombatEventType =
+  | 'threat_appeared' // first tick of a new attack on an owned room
+  | 'threat_ended' // all hostiles gone / cleared from an owned room
+  | 'safe_mode_activated' // controller.activateSafeMode() succeeded
+  | 'safe_mode_unavailable' // would activate but no charges or cooldown blocking
+  | 'tower_energy_low'; // a tower dropped below 25 % capacity during active combat
+
+interface CombatEvent {
+  tick: number;
+  room: string;
+  event: CombatEventType;
+  /** Aggregate threat score of all hostiles this tick */
+  threatScore?: number;
+  /** Raw hostile creep count */
+  hostileCount?: number;
+  /** Unique owner usernames seen */
+  owners?: string[];
+  /** Number of operational towers this tick */
+  towerCount?: number;
+  /** Lowest tower energy as a percentage (0–100) — set for tower_energy_low */
+  minTowerEnergy?: number;
+  /** Safe mode charges remaining after the activation attempt */
+  safeModesLeft?: number;
+  /** Free-text context that doesn't fit the structured fields */
+  details?: string;
 }
 
 interface ProfilerSample {
@@ -221,6 +290,12 @@ interface Memory {
   rooms: { [name: string]: RoomMemory };
   /** Multi-room expansion targets keyed by the room being claimed. */
   colonies?: { [targetRoom: string]: ColonyState };
+  /**
+   * Ring-buffer of significant combat events (capped at 100 entries).
+   * Persists across global resets and room loss so post-mortem analysis is
+   * always available. Read via the `combatLog()` console command.
+   */
+  combatLog?: CombatEvent[];
   // CPU samples by label, keyed by the name passed to profile().
   stats?: { [name: string]: ProfilerSample };
   // Toggles — default off, flip from the in-game console.

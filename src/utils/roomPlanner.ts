@@ -1,4 +1,5 @@
 import { computeLayout, LAYOUT_PLAN_VERSION } from './layoutPlanner';
+import { computePerimeter, PERIMETER_PLAN_VERSION } from './perimeterPlanner';
 
 /**
  * Room planning layer.
@@ -213,6 +214,25 @@ export function ensureRoomPlan(room: Room): void {
   if (!mem.layoutPlan) {
     const plan = computeLayout(room);
     if (plan) mem.layoutPlan = plan;
+  }
+
+  // Compute perimeter plan once — version bump or remote-room change invalidates it.
+  if (mem.perimeterPlan && mem.perimeterPlan.version !== PERIMETER_PLAN_VERSION) {
+    mem.perimeterPlan = undefined;
+  }
+  // Invalidate if remote rooms changed (gate targets would be wrong).
+  if (mem.perimeterPlan) {
+    const plannedRemotes = mem.perimeterPlan.gateTargets
+      .filter((t) => t.reason.startsWith('remote:'))
+      .map((t) => t.reason.slice('remote:'.length))
+      .sort()
+      .join(',');
+    const currentRemotes = (mem.remoteRooms ?? []).slice().sort().join(',');
+    if (plannedRemotes !== currentRemotes) mem.perimeterPlan = undefined;
+  }
+  if (!mem.perimeterPlan) {
+    const plan = computePerimeter(room);
+    if (plan) mem.perimeterPlan = plan;
   }
 
   // Validate miner assignments (clear dead/reassigned miners, restore orphaned ones)

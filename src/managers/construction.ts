@@ -97,7 +97,8 @@ function findOpenPosition(
  * functions use this to route paths around reserved tiles and skip stray steps.
  */
 export function getPlannedReserved(room: Room): Set<string> {
-  const plan = Memory.rooms[room.name]?.layoutPlan;
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
   const set = new Set<string>();
   // Plan fields can be cleared by manual operator console mutation as an emergency
   // stop pattern — never throw on missing fields, always degrade gracefully to no-op.
@@ -120,6 +121,17 @@ export function getPlannedReserved(room: Room): Set<string> {
     if (p) set.add(`${p.x},${p.y}`);
   for (const p of (plan.spawnPositions ?? []) as ({ x: number; y: number } | undefined)[])
     if (p) set.add(`${p.x},${p.y}`);
+
+  // Non-gate perimeter tiles will have walls placed on them — treat them as
+  // reserved so road pathfinding naturally threads through the gate tiles instead.
+  const perimPlan = mem?.perimeterPlan;
+  if (perimPlan) {
+    const gateSet = new Set(perimPlan.gateTiles);
+    for (const key of perimPlan.perimeterTiles) {
+      if (!gateSet.has(key)) set.add(key);
+    }
+  }
+
   return set;
 }
 
@@ -849,6 +861,105 @@ export function placeRamparts(room: Room): void {
   }
 }
 
+// Minimum storage energy before perimeter construction sites are placed.
+// Prevents the build cycle from pushing storage into starvation territory.
+// Construction costs themselves are trivial (walls/ramparts cost 1 energy each
+// to build); the real drain is tower repair, but pausing here avoids adding
+// new repair backlog when already income-constrained.
+const PERIMETER_STORAGE_MIN = 20_000;
+
+/**
+ * Place ramparts on perimeter gate tiles — RCL 5+.
+ *
+ * Strategy by RCL:
+ *   RCL 5 (walls not yet placed): rampart on ALL perimeter tiles — transitional
+ *     first ring of defence before walls exist. Non-gate ramparts will decay
+ *     away once walls are placed at RCL 6+; towers won't repair them (see
+ *     towers.ts wall-colocated guard).
+ *   RCL 6+: this function only touches gate tiles. Non-gate tiles are the
+ *     exclusive domain of placePerimeterWalls — no competition, no doubles.
+ *
+ * One site per call to stay within the global site cap.
+ */
+export function placePerimeterRamparts(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 5) return;
+
+  const mem = Memory.rooms[room.name];
+  const perimPlan = mem?.perimeterPlan;
+  if (!perimPlan) return;
+
+  // Energy gate: pause new sites when storage is low.
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (room.storage && stored < PERIMETER_STORAGE_MIN) return;
+
+  const gateSet = new Set(perimPlan.gateTiles);
+
+  for (const key of perimPlan.perimeterTiles) {
+    // At RCL 6+, walls handle non-gate tiles — this function only manages gates.
+    if (rcl >= 6 && !gateSet.has(key)) continue;
+
+    const comma = key.indexOf(',');
+    const x = Number(key.slice(0, comma));
+    const y = Number(key.slice(comma + 1));
+    const pos = new RoomPosition(x, y, room.name);
+
+    const hasRampart = pos
+      .lookFor(LOOK_STRUCTURES)
+      .some((s) => s.structureType === STRUCTURE_RAMPART);
+    const hasSite = pos
+      .lookFor(LOOK_CONSTRUCTION_SITES)
+      .some((s) => s.structureType === STRUCTURE_RAMPART);
+    if (hasRampart || hasSite) continue;
+
+    room.createConstructionSite(pos, STRUCTURE_RAMPART);
+    return; // one site per tick
+  }
+}
+
+/**
+ * Place walls on non-gate perimeter tiles — RCL 6+.
+ *
+ * Walls are permanent, impassable to all creeps, and absorb far more damage
+ * than ramparts. They have no decay, so once repaired to the floor HP they
+ * need minimal ongoing maintenance. Gate tiles are skipped — those are
+ * rampart-only so own creeps can pass through.
+ *
+ * One site per call.
+ */
+export function placePerimeterWalls(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 6) return;
+
+  const mem = Memory.rooms[room.name];
+  const perimPlan = mem?.perimeterPlan;
+  if (!perimPlan) return;
+
+  // Energy gate: pause new sites when storage is low.
+  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (room.storage && stored < PERIMETER_STORAGE_MIN) return;
+
+  const gateSet = new Set(perimPlan.gateTiles);
+
+  for (const key of perimPlan.perimeterTiles) {
+    if (gateSet.has(key)) continue; // gates: rampart only, no wall
+
+    const comma = key.indexOf(',');
+    const x = Number(key.slice(0, comma));
+    const y = Number(key.slice(comma + 1));
+    const pos = new RoomPosition(x, y, room.name);
+
+    const hasWall = pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_WALL);
+    const hasSite = pos
+      .lookFor(LOOK_CONSTRUCTION_SITES)
+      .some((s) => s.structureType === STRUCTURE_WALL);
+    if (hasWall || hasSite) continue;
+
+    room.createConstructionSite(pos, STRUCTURE_WALL);
+    return; // one site per tick
+  }
+}
+
 export function placeRemoteRoads(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 4) return;
@@ -1088,5 +1199,7 @@ export function runConstruction(): void {
     clearLabBlockers(room);
     placeLabs(room);
     placeRamparts(room);
+    placePerimeterWalls(room);
+    placePerimeterRamparts(room);
   }
 }
