@@ -177,7 +177,80 @@ export function scoreClaimTarget(targetRoomName: string, homeRoomName: string): 
   // Score components
   let score = sources * 10; // 2 sources is much better than 1
   score -= distance * 2; // closer is better
+
+  // Mineral-diversity bonus: +5 when the candidate has a mineral that differs
+  // from every currently-owned room's mineral (diversifies lab inputs).
+  // Skip silently when the candidate has no scouted mineral or owned-room
+  // minerals can't be resolved (owned rooms are always visible, so a null
+  // getObjectById result just means the data isn't available yet).
+  const candidateMineral = tmem.scoutedMineral?.type;
+  if (candidateMineral !== undefined) {
+    const ownedMinerals = new Set<MineralConstant>();
+    for (const room of Object.values(Game.rooms)) {
+      if (!room.controller?.my) continue;
+      const roomMem = Memory.rooms[room.name];
+      if (!roomMem?.mineralId) continue;
+      const mineral = Game.getObjectById(roomMem.mineralId) as Mineral | null;
+      if (mineral?.mineralType) ownedMinerals.add(mineral.mineralType);
+    }
+    // Only award the bonus when we successfully resolved at least one owned
+    // mineral AND the candidate differs from all of them.
+    if (ownedMinerals.size > 0 && !ownedMinerals.has(candidateMineral)) {
+      score += 5;
+    }
+  }
+
   return { score };
+}
+
+/**
+ * Scan all scouted rooms and return viable claim candidates ranked by score.
+ *
+ * For each scouted room the nearest owned room (by linear distance) is chosen
+ * as the prospective parent. Rooms that are themselves owned, unscouted, or
+ * score below zero (via scoreClaimTarget) are excluded.
+ *
+ * @returns Array sorted by score DESC, then by linear distance ASC.
+ */
+export function findClaimCandidates(): Array<{ target: string; home: string; score: number }> {
+  // Collect owned rooms once so we can pick the nearest home per candidate.
+  const ownedRooms: string[] = [];
+  for (const room of Object.values(Game.rooms)) {
+    if (room.controller?.my) ownedRooms.push(room.name);
+  }
+  if (ownedRooms.length === 0) return [];
+
+  const results: Array<{ target: string; home: string; score: number; dist: number }> = [];
+
+  for (const [roomName, mem] of Object.entries(Memory.rooms)) {
+    if (!mem?.scoutedAt) continue; // not scouted
+
+    // Skip rooms we already own — claiming ourselves makes no sense.
+    const roomObj = Game.rooms[roomName];
+    if (roomObj?.controller?.my) continue;
+
+    // Pick the nearest owned room as prospective home.
+    let nearestHome = ownedRooms[0]!;
+    let nearestDist = Game.map.getRoomLinearDistance(nearestHome, roomName);
+    for (let i = 1; i < ownedRooms.length; i++) {
+      const candidate = ownedRooms[i]!;
+      const d = Game.map.getRoomLinearDistance(candidate, roomName);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestHome = candidate;
+      }
+    }
+
+    const eval_ = scoreClaimTarget(roomName, nearestHome);
+    if (eval_.score < 0) continue;
+
+    results.push({ target: roomName, home: nearestHome, score: eval_.score, dist: nearestDist });
+  }
+
+  // Sort: highest score first; break ties by shortest distance.
+  results.sort((a, b) => b.score - a.score || a.dist - b.dist);
+
+  return results.map(({ target, home, score }) => ({ target, home, score }));
 }
 
 /**

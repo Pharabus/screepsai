@@ -1,4 +1,8 @@
-import { runTerminal, resetColonySendCache } from '../../src/managers/terminal';
+import {
+  runTerminal,
+  resetColonySendCache,
+  resetReceiversThisTick,
+} from '../../src/managers/terminal';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 
@@ -958,5 +962,190 @@ describe('runTerminal — colony energy send', () => {
     // Second send went through — cumulative count is now 2
     expect(homeTerminal.send).toHaveBeenCalledTimes(2);
     consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-tick receiver-dedupe guard
+// ---------------------------------------------------------------------------
+
+describe('runTerminal — per-tick receiver dedupe', () => {
+  const SEND_TICK = 100;
+
+  function makeTerminalStore(resources: Record<string, number>): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        if (r) return resources[r] ?? 0;
+        return Object.values(resources).reduce((a, b) => a + b, 0);
+      }),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => 300_000),
+    });
+    return store;
+  }
+
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+    resetColonySendCache();
+    resetReceiversThisTick();
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+  });
+
+  // SKIPPED — documents the intended behaviour of the forward-looking dedupe
+  // guard under a future empire-logistics model (a colony reachable from more
+  // than one home room). It cannot be exercised through runTerminal today: each
+  // colony has exactly one `homeRoom`, so coloniesForHome() surfaces a receiver
+  // for only one sender and the suppression branch is unreachable. The setup
+  // below parents the colony to a single home, so the second "sender" never even
+  // builds a candidate list — the test would pass with the guard removed. Left
+  // as a skipped spec to un-skip when multi-home funding lands. See the
+  // _receiversThisTick declaration in terminal.ts.
+  it.skip('suppresses a second send to the same receiver when two home rooms both try in the same tick', () => {
+    (Game as any).time = SEND_TICK;
+
+    // Home A: W1N1 — high surplus, RCL 7
+    const terminalA: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const homeA: any = {
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) },
+      },
+      terminal: terminalA,
+    };
+
+    // Home B: W3N3 — also high surplus, RCL 7
+    const terminalB: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const homeB: any = {
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) },
+      },
+      terminal: terminalB,
+    };
+
+    // Shared colony: W2N1 — needs energy (low storage, terminal present)
+    const colonyTerminal: any = {
+      store: makeTerminalStore({ energy: 2_000 }),
+      cooldown: 0,
+    };
+    const colonyRoom: any = {
+      name: 'W2N1',
+      controller: { my: true, level: 4 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5_000 : 0) },
+      },
+      terminal: colonyTerminal,
+    };
+
+    (Game as any).rooms = {
+      W1N1: homeA,
+      W3N3: homeB,
+      W2N1: colonyRoom,
+    };
+
+    // Both home rooms are parented to the same colony for this test.
+    // (In a real game colonies have a single homeRoom, but we're stress-testing
+    // the dedupe guard here.)
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
+    };
+
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: {},
+      W2N1: {
+        sources: [{ id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' }],
+      },
+    };
+    (Game as any).creeps = { m1: { name: 'm1', memory: { role: 'miner' } } };
+    (Game as any).map = {
+      ...Game.map,
+      getRoomLinearDistance: (_a: string, _b: string) => 1,
+    };
+
+    // Run terminal — both rooms will enter sendEnergyToColonies; W2N1 is the
+    // only eligible receiver. The first sender (whichever room the engine
+    // visits first) should claim the receiver; the second must be suppressed.
+    runTerminal();
+
+    const totalSends =
+      (terminalA.send?.mock?.calls?.length ?? 0) + (terminalB.send?.mock?.calls?.length ?? 0);
+    expect(totalSends).toBe(1);
+  });
+
+  it('allows a send to the same receiver on the next tick after resetReceiversThisTick', () => {
+    (Game as any).time = SEND_TICK;
+
+    const terminal: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const homeRoom: any = {
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) },
+      },
+      terminal,
+    };
+    const colonyTerminal: any = {
+      store: makeTerminalStore({ energy: 2_000 }),
+      cooldown: 0,
+    };
+    const colonyRoom: any = {
+      name: 'W2N1',
+      controller: { my: true, level: 4 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 5_000 : 0) },
+      },
+      terminal: colonyTerminal,
+    };
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: colonyRoom };
+    (Memory as any).colonies = {
+      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
+    };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W2N1: {
+        sources: [{ id: 's1', x: 10, y: 10, containerId: 'c1', minerName: 'm1' }],
+      },
+    };
+    (Game as any).creeps = { m1: { name: 'm1', memory: { role: 'miner' } } };
+    (Game as any).map = {
+      ...Game.map,
+      getRoomLinearDistance: (_a: string, _b: string) => 1,
+    };
+
+    // Tick 1: first send succeeds
+    runTerminal();
+    expect(terminal.send).toHaveBeenCalledTimes(1);
+
+    // Simulate next tick: runTerminal clears _receiversThisTick at its top.
+    // Advance time past the hysteresis window so _lastColonySend doesn't block.
+    (Game as any).time = SEND_TICK + 400; // 400 > COLONY_SEND_HYSTERESIS_TICKS (300)
+    runTerminal();
+
+    // The second tick's runTerminal cleared the set at entry, so the send is allowed.
+    expect(terminal.send).toHaveBeenCalledTimes(2);
   });
 });

@@ -9,6 +9,7 @@ import {
   getColonyScore,
   getColonyScores,
   resetColonyScoreCache,
+  findClaimCandidates,
 } from '../../src/utils/colonyPlanner';
 
 function setOwnedRoom(name: string): void {
@@ -515,6 +516,227 @@ describe('getColonyScore', () => {
     const second = getColonyScore(room);
 
     expect(second).toBeGreaterThan(first);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mineral-diversity bonus in scoreClaimTarget
+// ---------------------------------------------------------------------------
+
+describe('scoreClaimTarget — mineral diversity bonus', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+    // Default username so reservation checks pass
+    Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+    // Default distance = 1 (within MAX_CLAIM_DISTANCE of 3)
+    Game.map.getRoomLinearDistance = ((_a: string, _b: string) => 1) as any;
+  });
+
+  /** Helper: set up a scouted viable candidate with an optional mineral. */
+  function scoutedViable(roomName: string, mineralType?: MineralConstant): void {
+    Memory.rooms[roomName] = {
+      scoutedAt: Game.time,
+      scoutedSources: 2,
+      scoutedHasController: true,
+      scoutedMineral: mineralType ? { type: mineralType, x: 20, y: 20 } : undefined,
+    } as any;
+  }
+
+  /** Helper: set an owned room with a resolved mineral. */
+  function ownedWithMineral(roomName: string, mineralType: MineralConstant): void {
+    Game.rooms[roomName] = { name: roomName, controller: { my: true, level: 6 } } as any;
+    Memory.rooms[roomName] = { mineralId: `mineral_${roomName}` as any } as any;
+    Game.getObjectById = ((id: string) => {
+      if (id === `mineral_${roomName}`) return { mineralType } as any;
+      return undefined;
+    }) as any;
+  }
+
+  it('awards +5 bonus when candidate mineral differs from all owned rooms', () => {
+    ownedWithMineral('W1N1', 'H');
+    scoutedViable('W2N1', 'O'); // O ≠ H → diversity bonus
+    const withBonus = scoreClaimTarget('W2N1', 'W1N1');
+
+    // Baseline: candidate with no mineral at all
+    scoutedViable('W3N1', undefined);
+    const noMineral = scoreClaimTarget('W3N1', 'W1N1');
+
+    expect(withBonus.score).toBe(noMineral.score + 5);
+  });
+
+  it('does NOT award bonus when candidate mineral matches an owned room', () => {
+    ownedWithMineral('W1N1', 'H');
+    scoutedViable('W2N1', 'H'); // matches home mineral — no bonus
+    const result = scoreClaimTarget('W2N1', 'W1N1');
+
+    scoutedViable('W3N1', undefined);
+    const noMineral = scoreClaimTarget('W3N1', 'W1N1');
+
+    expect(result.score).toBe(noMineral.score);
+  });
+
+  it('does NOT award bonus when candidate has no scoutedMineral', () => {
+    ownedWithMineral('W1N1', 'H');
+    scoutedViable('W2N1', undefined);
+    const result = scoreClaimTarget('W2N1', 'W1N1');
+
+    // score = 2*10 - 1*2 = 18 (no bonus)
+    expect(result.score).toBe(18);
+  });
+
+  it('does NOT award bonus when owned-room minerals cannot be resolved (no mineralId)', () => {
+    // Owned room exists but has no mineralId set
+    Game.rooms['W1N1'] = { name: 'W1N1', controller: { my: true, level: 6 } } as any;
+    Memory.rooms['W1N1'] = {} as any; // no mineralId
+    scoutedViable('W2N1', 'Z');
+    const result = scoreClaimTarget('W2N1', 'W1N1');
+
+    // No owned minerals resolved → ownedMinerals.size === 0 → no bonus
+    expect(result.score).toBe(18);
+  });
+
+  it('still returns -1 for all existing reject paths (owned)', () => {
+    ownedWithMineral('W1N1', 'H');
+    Memory.rooms['W2N1'] = {
+      scoutedAt: Game.time,
+      scoutedSources: 2,
+      scoutedHasController: true,
+      scoutedOwner: 'Enemy',
+      scoutedMineral: { type: 'O', x: 10, y: 10 },
+    } as any;
+    expect(scoreClaimTarget('W2N1', 'W1N1').score).toBe(-1);
+  });
+
+  it('still returns -1 for the distance reject path', () => {
+    ownedWithMineral('W1N1', 'H');
+    Game.map.getRoomLinearDistance = ((_a: string, _b: string) => 5) as any;
+    scoutedViable('W2N1', 'O');
+    expect(scoreClaimTarget('W2N1', 'W1N1').score).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findClaimCandidates
+// ---------------------------------------------------------------------------
+
+describe('findClaimCandidates', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+    Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+    // Default: all rooms distance 1
+    Game.map.getRoomLinearDistance = ((_a: string, _b: string) => 1) as any;
+  });
+
+  function setOwned(name: string): void {
+    Game.rooms[name] = { name, controller: { my: true, level: 6 } } as any;
+    Memory.rooms[name] = {} as any;
+  }
+
+  function setScouted(name: string, sources: number, owned = false): void {
+    if (owned) {
+      Game.rooms[name] = { name, controller: { my: true, level: 5 } } as any;
+    }
+    Memory.rooms[name] = {
+      scoutedAt: 1,
+      scoutedSources: sources,
+      scoutedHasController: true,
+    } as any;
+  }
+
+  it('returns [] when nothing is scouted', () => {
+    setOwned('W1N1');
+    expect(findClaimCandidates()).toEqual([]);
+  });
+
+  it('returns [] when no rooms are owned', () => {
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 1,
+      scoutedSources: 2,
+      scoutedHasController: true,
+    } as any;
+    expect(findClaimCandidates()).toEqual([]);
+  });
+
+  it('excludes rooms that are owned by us', () => {
+    setOwned('W1N1');
+    setScouted('W2N1', 2, /* owned= */ true); // also owned — should be excluded
+    expect(findClaimCandidates()).toEqual([]);
+  });
+
+  it('excludes rooms with scoreClaimTarget < 0 (e.g. no sources)', () => {
+    setOwned('W1N1');
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 1,
+      scoutedSources: 0, // scoreClaimTarget returns -1
+      scoutedHasController: true,
+    } as any;
+    expect(findClaimCandidates()).toEqual([]);
+  });
+
+  it('returns viable candidates sorted by score DESC', () => {
+    setOwned('W1N1');
+    // W2N1: 2 sources, distance 1 → score = 20 - 2 = 18
+    setScouted('W2N1', 2);
+    // W2N2: 1 source, distance 1 → score = 10 - 2 = 8
+    setScouted('W2N2', 1);
+
+    const results = findClaimCandidates();
+    expect(results).toHaveLength(2);
+    expect(results[0]!.target).toBe('W2N1');
+    expect(results[1]!.target).toBe('W2N2');
+  });
+
+  it('breaks score ties by linear distance ASC', () => {
+    setOwned('W1N1');
+    // Both 2-source rooms; W2N2 is farther away
+    setScouted('W2N1', 2);
+    setScouted('W2N2', 2);
+
+    Game.map.getRoomLinearDistance = ((a: string, b: string) => {
+      if ((a === 'W1N1' && b === 'W2N1') || (a === 'W2N1' && b === 'W1N1')) return 1;
+      if ((a === 'W1N1' && b === 'W2N2') || (a === 'W2N2' && b === 'W1N1')) return 2;
+      return 1;
+    }) as any;
+
+    const results = findClaimCandidates();
+    expect(results).toHaveLength(2);
+    // W2N1 closer → wins tie-break; both have score 20 - distance*2
+    // W2N1 score = 20-2=18, W2N2 score = 20-4=16 → different scores, W2N1 wins
+    expect(results[0]!.target).toBe('W2N1');
+  });
+
+  it('picks the nearest owned room as home when multiple owned rooms exist', () => {
+    // Two owned rooms; W1N1 is closer to target W5N5
+    setOwned('W1N1');
+    setOwned('W3N3');
+    setScouted('W2N1', 2);
+
+    Game.map.getRoomLinearDistance = ((a: string, b: string) => {
+      const key = [a, b].sort().join('|');
+      if (key === 'W1N1|W2N1') return 1; // W1N1 closer
+      if (key === 'W2N1|W3N3') return 3; // W3N3 farther
+      return 1;
+    }) as any;
+
+    const results = findClaimCandidates();
+    expect(results).toHaveLength(1);
+    expect(results[0]!.home).toBe('W1N1');
+  });
+
+  it('includes score, target, and home in each result', () => {
+    setOwned('W1N1');
+    setScouted('W2N1', 2);
+
+    const results = findClaimCandidates();
+    expect(results).toHaveLength(1);
+    const r = results[0]!;
+    expect(r).toHaveProperty('target', 'W2N1');
+    expect(r).toHaveProperty('home', 'W1N1');
+    expect(r).toHaveProperty('score');
+    expect(typeof r.score).toBe('number');
+    expect(r.score).toBeGreaterThanOrEqual(0);
   });
 });
 

@@ -93,7 +93,7 @@ The TypeScript union + `Record<CreepRoleName, Role>` registry means missing any 
 - `Memory.visuals = true` → per-room headers, storage level, controller progress, idle creep indicators.
 - `Memory.profileOverlay = true` (requires visuals) → sorted CPU table overlay on first owned room.
 
-Wrap new managers/hot paths in `profile('label', fn)`. Console exports: `stats()`, `resetStats()`, `status()`, `replanLayout(roomName)`, `replanPerimeter(roomName)`, `combatLog()`, `neighbors()`, `suggestSpawn(roomName)`. Add new commands as `export const` in `main.ts` and register on `global`.
+Wrap new managers/hot paths in `profile('label', fn)`. Console exports: `stats()`, `resetStats()`, `status()`, `replanLayout(roomName)`, `replanPerimeter(roomName)`, `combatLog()`, `neighbors()`, `suggestSpawn(roomName)`, `colonies()`, `claim(roomName)`, `evaluateClaim(roomName)`, `claimCandidates()`. Add new commands as `export const` in `main.ts` and register on `global`.
 
 ### Creep state machine
 
@@ -120,6 +120,8 @@ All roles use `src/utils/stateMachine.ts`. Each `StateHandler.run(creep)` return
 7. `remoteBuilder` — builds/repairs remote roads. Temporary; stops spawning when roads are built and healthy.
 
 `CreepMemory.homeRoom` = owner room. `CreepMemory.targetRoom` = operating room. Local miners have neither.
+
+**Claiming** (`src/utils/colonyPlanner.ts`): `scoreClaimTarget` filters/scores a candidate (sources, distance, hostility, +5 for a mineral none of our rooms already mine); `findClaimCandidates()` ranks all scouted rooms, picking each one's nearest owned room as prospective home. Operator commits via `claim(roomName)`; inspect readiness with `claimCandidates()`. Lifecycle `claiming → bootstrapping → active` in `updateColonyStates`.
 
 ### Idle creep management
 

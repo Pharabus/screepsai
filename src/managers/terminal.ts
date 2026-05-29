@@ -237,6 +237,22 @@ const COLONY_SEND_HYSTERESIS_TICKS = 300;
  */
 const _lastColonySend = new Map<string, number>();
 
+/**
+ * Per-tick receiver dedupe set. Prevents two different home rooms from both
+ * sending energy to the same colony in a single tick (hysteresis is keyed
+ * per-route so it wouldn't catch cross-sender duplicates on its own).
+ * Cleared at the top of runTerminal() on each tick.
+ *
+ * FORWARD-LOOKING / currently inert: under today's model each colony has exactly
+ * one `homeRoom`, so `coloniesForHome(home)` surfaces a given receiver for only
+ * one sender — two senders can never select the same receiver and this guard
+ * never actually fires. It becomes load-bearing only under an empire-logistics
+ * model where any surplus room can feed any colony (see project harabi research).
+ * Kept as cheap belt-and-suspenders so that future change can't silently
+ * reintroduce a double-send.
+ */
+const _receiversThisTick = new Set<string>();
+
 function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   const homeStorage = home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   if (homeStorage < HOME_SURPLUS_FLOOR) return;
@@ -285,6 +301,12 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   );
 
   const best = candidates[0]!;
+
+  // Per-tick dedupe: skip if another home room already sent to this receiver
+  // this tick. Inert today (one homeRoom per colony) — forward-looking guard for
+  // an empire-logistics model; see the _receiversThisTick declaration above.
+  if (_receiversThisTick.has(best.colonyRoom)) return;
+
   const result = terminal.send(
     RESOURCE_ENERGY,
     COLONY_SEND_AMOUNT,
@@ -292,6 +314,7 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     'colony energy support',
   );
   if (result === OK) {
+    _receiversThisTick.add(best.colonyRoom);
     _lastColonySend.set(`${home.name}->${best.colonyRoom}`, Game.time);
     console.log(
       `[terminal] ${home.name}: sent ${COLONY_SEND_AMOUNT} energy to ${best.colonyRoom}` +
@@ -307,7 +330,15 @@ export function resetColonySendCache(): void {
   _lastColonySend.clear();
 }
 
+/** Clears the per-tick receiver set — call in tests' beforeEach to prevent cross-test contamination. */
+export function resetReceiversThisTick(): void {
+  _receiversThisTick.clear();
+}
+
 export function runTerminal(): void {
+  // Clear the per-tick receiver dedupe set so a new tick starts fresh.
+  _receiversThisTick.clear();
+
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
     const terminal = room.terminal;

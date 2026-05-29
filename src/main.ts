@@ -26,6 +26,7 @@ import {
   canClaimAnotherRoom,
   scoreClaimTarget,
   getColonyScores,
+  findClaimCandidates,
 } from './utils/colonyPlanner';
 import { roles } from './roles';
 
@@ -165,6 +166,39 @@ export const evaluateClaim = (targetRoom: string, homeRoom?: string): string => 
   return `${targetRoom}: viable, score=${e.score} (home=${homeRoom})`;
 };
 
+/**
+ * Print a ranked table of viable claim candidates from scouted intel.
+ * First line shows whether another claim is currently allowed; then each
+ * candidate is listed with target, home, score, source count, mineral, and
+ * linear distance — sorted best-first.
+ */
+export const claimCandidates = (): string => {
+  const lines: string[] = [];
+
+  const cap = canClaimAnotherRoom();
+  lines.push(cap.ok ? 'Can claim: yes' : `Can claim: no — ${cap.reason}`);
+
+  const candidates = findClaimCandidates();
+  if (candidates.length === 0) {
+    lines.push('No viable claim candidates scouted yet.');
+    return lines.join('\n');
+  }
+
+  lines.push('target   home     score  sources  mineral  dist');
+  lines.push('-------  -------  -----  -------  -------  ----');
+  for (const { target, home, score } of candidates) {
+    const mem = Memory.rooms[target];
+    const sources = mem?.scoutedSources ?? '?';
+    const mineral = mem?.scoutedMineral?.type ?? '-';
+    const dist = Game.map.getRoomLinearDistance(home, target);
+    lines.push(
+      `${target.padEnd(8)} ${home.padEnd(8)} ${String(score).padEnd(6)} ${String(sources).padEnd(8)} ${String(mineral).padEnd(8)} ${dist}`,
+    );
+  }
+
+  return lines.join('\n');
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
@@ -177,6 +211,7 @@ global.suggestSpawn = suggestSpawn;
 global.claim = claim;
 global.colonies = colonies;
 global.evaluateClaim = evaluateClaim;
+global.claimCandidates = claimCandidates;
 global.roles = roles;
 
 export const loop = ErrorMapper.wrapLoop(() => {
