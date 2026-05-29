@@ -3,6 +3,7 @@ import {
   chainMissingInputs,
   findNextChainStep,
   getReactionProduct,
+  GOAL_CAPS,
   REACTION_GOALS,
 } from '../utils/reactions';
 import { isOperational } from '../utils/structures';
@@ -10,6 +11,53 @@ import type { ReactionStep } from '../utils/reactions';
 
 const REACTION_CHECK_INTERVAL = 500;
 const MIN_INPUT_AMOUNT = 100;
+
+/**
+ * Heap cache tracking whether a goal is "satisfied" for a given room.
+ *
+ * A goal becomes satisfied when availableStock >= cap; it stays satisfied until
+ * stock drops below cap * 0.5, providing hysteresis that prevents thrashing
+ * near the boundary. Goals with no cap are never satisfied.
+ *
+ * Keyed as `${roomName}|${goalCompound}`.
+ * Lives on the JS heap — a global reset clears it (safe; recomputes cheaply).
+ */
+const _reactionGoalSatisfied = new Map<string, boolean>();
+
+/** Call in tests' beforeEach to prevent stale satisfied state leaking between cases. */
+export function resetReactionGoalCache(): void {
+  _reactionGoalSatisfied.clear();
+}
+
+/**
+ * Returns true when the goal compound is capped and the room's current stock
+ * meets or exceeds the hysteresis threshold — meaning we should skip this goal
+ * and rotate to the next one.
+ */
+function isGoalSatisfied(
+  goal: ResourceConstant,
+  available: Map<ResourceConstant, number>,
+  roomName: string,
+): boolean {
+  const cap = GOAL_CAPS[goal];
+  if (cap === undefined) return false; // uncapped — never satisfied
+
+  const key = `${roomName}|${goal}`;
+  const prev = _reactionGoalSatisfied.get(key) ?? false;
+  const stock = available.get(goal) ?? 0;
+
+  let satisfied: boolean;
+  if (stock >= cap) {
+    satisfied = true; // crossed upper threshold — now satisfied
+  } else if (stock < cap * 0.5) {
+    satisfied = false; // dropped below lower threshold — pursue again
+  } else {
+    satisfied = prev; // in hysteresis band — keep previous state
+  }
+
+  _reactionGoalSatisfied.set(key, satisfied);
+  return satisfied;
+}
 
 function buildAvailableMap(room: Room): Map<ResourceConstant, number> {
   const available = new Map<ResourceConstant, number>();
@@ -93,6 +141,7 @@ export function selectReaction(room: Room): ReactionStep | undefined {
   // every tick and the goal loop would never be reached, welding the labs onto
   // an intermediate indefinitely.)
   for (const goal of REACTION_GOALS) {
+    if (isGoalSatisfied(goal, available, room.name)) continue;
     const chain = buildReactionChain(goal);
     if (chain.length === 0) continue;
     const step = findNextChainStep(chain, available);
@@ -142,6 +191,7 @@ export function selectReaction(room: Room): ReactionStep | undefined {
 export function getChainBuyNeeds(room: Room): ResourceConstant[] {
   const available = buildAvailableMap(room);
   for (const goal of REACTION_GOALS) {
+    if (isGoalSatisfied(goal, available, room.name)) continue;
     const chain = buildReactionChain(goal);
     if (chain.length === 0) continue;
     const needs = chainMissingInputs(chain, available);

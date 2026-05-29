@@ -36,6 +36,24 @@ export const REACTION_GOALS: ResourceConstant[] = [
   'OH' as ResourceConstant, // Universal tier 1 intermediate
 ];
 
+/**
+ * Per-goal satisfaction caps. Once a goal's compound stock reaches the cap the
+ * lab system rotates to the next reachable goal; production resumes when stock
+ * falls below cap × 0.5 (hysteresis prevents thrashing near the boundary).
+ *
+ * Goals absent from this map are uncapped and always pursued when reachable.
+ *
+ * GH2O cap (4000) is deliberately above the upgrader boost floor (1500) so
+ * rotation never starves the upgrader. Defensive precursor caps (2000) each
+ * hold enough for several full-squad boosts.
+ */
+export const GOAL_CAPS: Partial<Record<ResourceConstant, number>> = {
+  GH2O: 4000, // upgrader boost — primary goal; cap >> upgraderBoostWanted floor (1500)
+  GHO2: 2000, // tough tier-2 precursor for defenders
+  LHO2: 2000, // heal tier-2 precursor for healers
+  KHO2: 2000, // ranged-attack tier-2 precursor for rangedDefenders
+};
+
 // Minimum amount of each input required before the step is considered viable
 const MIN_STEP_AMOUNT = 200;
 

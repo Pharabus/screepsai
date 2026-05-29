@@ -246,8 +246,10 @@ describe('upgrader role', () => {
         store: makeStore(100), // has energy — would normally upgrade
         body: [{ type: WORK, hits: 100, boost: undefined }],
       });
+      // boostCompound must match the creep's requested compound so the reserved-lab
+      // branch is taken (Item 0 fix: mismatched compound falls through to path b).
       (Memory as any).rooms = {
-        W1N1: { minerEconomy: true, boostLabId: 'boostLab1' },
+        W1N1: { minerEconomy: true, boostLabId: 'boostLab1', boostCompound: 'GH2O' },
       };
 
       upgrader.run(creep);

@@ -53,10 +53,12 @@ export function ensureBoosted(creep: Creep): boolean {
     let lab: StructureLab | null = null;
 
     const roomMem = Memory.rooms[creep.room.name];
-    if (roomMem?.boostLabId) {
+    if (roomMem?.boostLabId && roomMem.boostCompound === compound) {
       const reserved = Game.getObjectById(roomMem.boostLabId);
       if (reserved) {
-        // Use the reserved lab regardless of stock — a hauler is filling it
+        // Use the reserved lab regardless of stock — a hauler is filling it.
+        // Only when the reserved lab's compound matches: it's a GH2O-only lab
+        // (upgrader boost). A defender wanting KHO2 must not be sent here.
         lab = reserved;
       }
     }

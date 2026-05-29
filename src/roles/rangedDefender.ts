@@ -3,6 +3,7 @@ import { pickPriorityTarget } from '../utils/threat';
 import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { ensureBoosted } from '../utils/boost';
 
 // Ideal engagement range for ranged attackers
 const PREFERRED_RANGE = 3;
@@ -72,6 +73,7 @@ const states: StateMachineDefinition = {
 
 export const rangedDefender: Role = {
   run(creep: Creep): void {
+    if (!ensureBoosted(creep)) return;
     runStateMachine(creep, states, 'RALLY');
   },
 };

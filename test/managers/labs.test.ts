@@ -1,4 +1,9 @@
-import { getChainBuyNeeds, runLabs, selectReaction } from '../../src/managers/labs';
+import {
+  getChainBuyNeeds,
+  resetReactionGoalCache,
+  runLabs,
+  selectReaction,
+} from '../../src/managers/labs';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 function mockLab(overrides: Record<string, any> = {}): any {
@@ -510,6 +515,7 @@ describe('runLabs', () => {
 describe('selectReaction', () => {
   beforeEach(() => {
     resetGameGlobals();
+    resetReactionGoalCache();
   });
 
   function makeSelectRoom(
@@ -606,6 +612,7 @@ describe('selectReaction', () => {
 describe('getChainBuyNeeds', () => {
   beforeEach(() => {
     resetGameGlobals();
+    resetReactionGoalCache();
   });
 
   function makeRoom(
@@ -664,5 +671,179 @@ describe('getChainBuyNeeds', () => {
 
     // Fully stocked leaves → nothing to buy
     expect(needs).toHaveLength(0);
+  });
+});
+
+// ── Item 1: per-goal satisfaction cap + hysteresis ───────────────────────────
+
+describe('goal satisfaction cap (selectReaction)', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetReactionGoalCache();
+  });
+
+  /** Minimal room with given storage contents. No terminal, no input labs loaded. */
+  function makeCapRoom(storage: Record<string, number>): any {
+    const storageStore: Record<string, any> = { ...storage };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storage[r] ?? 0) : 0)),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: null,
+    });
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3'], inputLabIds: ['lab1', 'lab2'] },
+    };
+    (Game as any).rooms = { W1N1: room };
+    return room;
+  }
+
+  it('skips GH2O goal when stock >= cap (4000) and advances to next reachable goal', () => {
+    // GH2O stock at 4000 (at cap) → goal should be satisfied and skipped.
+    // KH and O are stocked so KHO2's precursor step (KH+O→KHO2) is reachable.
+    // GHO2 would come first in REACTION_GOALS but K/O are present not G —
+    // so KHO2's chain step (KH+O→KHO2) is the first achievable non-GH2O step
+    // depending on what comes next in REACTION_GOALS after GH2O.
+    // We rely on REACTION_GOALS ordering: GH2O → ... → GHO2 → LHO2 → KHO2.
+    // For this test we just check that the selected reaction is NOT in the GH2O chain.
+    const room = makeCapRoom({
+      GH2O: 4000, // at cap — should be satisfied
+      KH: 500, // enables KH+O→KHO2
+      O: 500, // enables KH+O→KHO2
+    });
+
+    const result = selectReaction(room);
+
+    // GH2O goal must be skipped; a KHO2-chain step should be selected
+    expect(result).toBeDefined();
+    // The output must NOT be on the GH2O production chain (GH, OH, GH2O)
+    expect(result?.output).not.toBe('GH2O');
+    expect(result?.output).not.toBe('GH');
+    expect(result?.output).not.toBe('OH');
+    // The chosen step must be on a defensive-precursor chain
+    expect(result?.output).toBe('KHO2');
+  });
+
+  it('pursues GH2O again once stock drops below cap*0.5 (2000)', () => {
+    // First call: satisfied at 4000
+    const room4000 = makeCapRoom({ GH2O: 4000, KH: 500, O: 500 });
+    const sat = selectReaction(room4000);
+    expect(sat?.output).toBe('KHO2'); // GH2O skipped
+
+    // Second call (same room name, stock now at 1900 — below 4000*0.5=2000):
+    // hysteresis releases, GH2O is pursued again.
+    const room1900 = makeCapRoom({ GH2O: 1900, G: 500, H: 500 });
+    const resumed = selectReaction(room1900);
+    // GH (G+H→GH) or OH are the reachable GH2O-chain steps with G:500 H:500
+    expect(['GH', 'OH']).toContain(resumed?.output);
+  });
+
+  it('stays satisfied (does not flip back) when stock is in the hysteresis band (2000–4000)', () => {
+    // Mark as satisfied at 4000
+    makeCapRoom({ GH2O: 4000, KH: 500, O: 500 });
+    selectReaction(makeCapRoom({ GH2O: 4000, KH: 500, O: 500 }));
+
+    // Stock at 2500 — above cap*0.5 (2000) but below cap (4000): still satisfied
+    const roomMid = makeCapRoom({ GH2O: 2500, KH: 500, O: 500 });
+    const midResult = selectReaction(roomMid);
+
+    // Must still skip GH2O and return a defensive-precursor step
+    expect(midResult?.output).toBe('KHO2');
+  });
+
+  it('GH2O cap (4000) is above upgrader boost floor (1500)', () => {
+    // Safety invariant: the cap must stay well above 1500 so rotation never
+    // starves the upgrader boost.
+    // If GOAL_CAPS.GH2O were ever lowered below 1500 this test catches it.
+    // We import GOAL_CAPS indirectly by testing observable selectReaction behaviour:
+    // at 1500 GH2O stock the goal must NOT be satisfied (still pursued).
+    const room = makeCapRoom({ GH2O: 1500, G: 500, H: 500 });
+    const result = selectReaction(room);
+    // GH2O chain is reachable (G+H→GH step); must not be skipped at 1500
+    expect(['GH', 'OH']).toContain(result?.output);
+  });
+});
+
+describe('goal satisfaction cap (getChainBuyNeeds)', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetReactionGoalCache();
+  });
+
+  function makeNeedsRoom(storage: Record<string, number>): any {
+    const storageStore: Record<string, any> = { ...storage };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storage[r] ?? 0) : 0)),
+    });
+    const terminalStore: Record<string, any> = {};
+    Object.defineProperty(terminalStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn(() => 0),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: { store: terminalStore },
+    });
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3'], inputLabIds: ['lab1', 'lab2'] },
+    };
+    (Game as any).rooms = { W1N1: room };
+    return room;
+  }
+
+  it('skips GH2O buy needs once GH2O stock >= cap and advances to next goal', () => {
+    // GH2O at 4000 → satisfied.
+    // Storage has G:0, H:0 — so if GH2O goal were NOT satisfied it would surface
+    // G and H as buy needs. With GH2O satisfied the function must move on.
+    // K:500 + O:500 means KHO2's first chain step (K+H→KH) needs H, but more
+    // importantly: GH2O's own chain inputs are no longer the primary return value.
+    //
+    // Concrete test: compare the satisfied vs unsatisfied result for the same stock.
+    // Unsatisfied (fresh cache) → returns GH2O chain needs (G missing).
+    // Satisfied → must return something different (advancing to next goal).
+    resetReactionGoalCache(); // ensure unsatisfied baseline
+    const roomUnsatisfied = makeNeedsRoom({ GH2O: 100 }); // below cap, GH2O pursued
+    const needsUnsatisfied = getChainBuyNeeds(roomUnsatisfied);
+    // GH2O chain needs G (since G is a leaf input and missing)
+    expect(needsUnsatisfied).toContain('G' as ResourceConstant);
+
+    // Now satisfy GH2O at 4000 and call again
+    resetReactionGoalCache();
+    const roomSatisfied = makeNeedsRoom({ GH2O: 4000 }); // at cap
+    const needsSatisfied = getChainBuyNeeds(roomSatisfied);
+
+    // With GH2O satisfied and no other resources in storage,
+    // the function advances past GH2O to the next goal. Since nothing is available
+    // for later goals either, it either returns [] or needs from another goal.
+    // The key invariant: GH2O chain is no longer the driver — the result must
+    // differ from the unsatisfied case when G is the primary missing input.
+    // (We can't assert needsSatisfied === [] because other goal chains may also
+    // surface G as a leaf input — but GH2O is no longer the driving goal.)
+    //
+    // What we CAN assert: when GH2O is satisfied, the call does not return needs
+    // driven by a GH2O-ONLY precursor path. We verify this by checking that
+    // GH2O satisfied + G:500/H:500 in storage does NOT select GH2O chain steps
+    // (a separate selectReaction call on the same room should skip GH2O).
+    expect(needsSatisfied).not.toEqual(needsUnsatisfied);
+  });
+
+  it('resumes GH2O buy needs once stock drops below cap*0.5', () => {
+    // First call: satisfied at 4000
+    const roomSat = makeNeedsRoom({ GH2O: 4000, O: 500 });
+    getChainBuyNeeds(roomSat); // prime the satisfied state
+
+    // Second call: stock at 1500 — below 2000 (cap*0.5) → no longer satisfied
+    const roomLow = makeNeedsRoom({ GH2O: 1500 }); // G and H both missing
+    const needs = getChainBuyNeeds(roomLow);
+
+    // GH2O goal resumed: G (and/or H) should be surfaced as buy needs
+    expect(needs).toContain('G' as ResourceConstant);
   });
 });

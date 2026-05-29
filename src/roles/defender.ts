@@ -3,6 +3,7 @@ import { pickPriorityTarget } from '../utils/threat';
 import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { ensureBoosted } from '../utils/boost';
 
 const states: StateMachineDefinition = {
   ATTACK: {
@@ -29,6 +30,7 @@ const states: StateMachineDefinition = {
 
 export const defender: Role = {
   run(creep: Creep): void {
+    if (!ensureBoosted(creep)) return;
     runStateMachine(creep, states, 'RALLY');
   },
 };

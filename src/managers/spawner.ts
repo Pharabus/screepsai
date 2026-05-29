@@ -25,8 +25,11 @@ import {
   getRemoteMissionKey,
   STALL_HOSTILE_TICKS,
 } from '../utils/missions';
+import { getNeighbor } from '../utils/neighbors';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
+const RESOURCE_KHO2 = 'KHO2' as ResourceConstant;
+const RESOURCE_LHO2 = 'LHO2' as ResourceConstant;
 
 /**
  * Minimum colony score below which a young colony (RCL < 6) falls back to
@@ -591,6 +594,26 @@ export function reserveBoostLab(room: Room): void {
   }
 }
 
+/**
+ * Returns true when boosting defenders is worthwhile: RCL 7+ AND at least one
+ * hostile creep owned by a player classified as 'aggressive' is currently in
+ * the room. Invaders and Source Keepers are excluded — they don't warrant
+ * spending boost compound.
+ *
+ * ensureBoosted fails open when the compound isn't stocked, so attaching boosts
+ * is opportunistic and never stalls a defender that spawns before stock arrives.
+ */
+export function defenderBoostsWanted(room: Room): boolean {
+  if ((room.controller?.level ?? 0) < 7) return false;
+  const hostiles = room.find(FIND_HOSTILE_CREEPS);
+  for (const creep of hostiles) {
+    const owner = creep.owner?.username;
+    if (!owner || owner === 'Invader' || owner === 'Source Keeper') continue;
+    if (getNeighbor(owner)?.hostility === 'aggressive') return true;
+  }
+  return false;
+}
+
 export function buildSpawnQueue(room: Room): SpawnRequest[] {
   const queue: SpawnRequest[] = [];
   const mem = Memory.rooms[room.name];
@@ -598,7 +621,11 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 
   // Priority 0: Defenders (dynamic, only when threat active)
   const comp = defenderComposition(room);
+  const wantDefenderBoosts =
+    comp.melee > 0 || comp.ranged > 0 || comp.healer > 0 ? defenderBoostsWanted(room) : false;
   if (comp.melee > 0) {
+    // No boost for melee: [ATTACK, MOVE] body has no TOUGH parts to benefit from
+    // defensive compounds. ensureBoosted is wired in the role and will no-op.
     queue.push({ role: 'defender', pattern: [ATTACK, MOVE], minCount: comp.melee });
   }
   if (comp.ranged > 0) {
@@ -607,6 +634,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       pattern: [RANGED_ATTACK, MOVE],
       maxRepeats: 5,
       minCount: comp.ranged,
+      ...(wantDefenderBoosts
+        ? {
+            memory: {
+              role: 'rangedDefender' as CreepRoleName,
+              homeRoom: room.name,
+              boosts: [{ part: RANGED_ATTACK, compound: RESOURCE_KHO2 }],
+            },
+          }
+        : {}),
     });
   }
   if (comp.healer > 0) {
@@ -615,6 +651,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       pattern: [HEAL, MOVE],
       maxRepeats: 4,
       minCount: comp.healer,
+      ...(wantDefenderBoosts
+        ? {
+            memory: {
+              role: 'healer' as CreepRoleName,
+              homeRoom: room.name,
+              boosts: [{ part: HEAL, compound: RESOURCE_LHO2 }],
+            },
+          }
+        : {}),
     });
   }
 

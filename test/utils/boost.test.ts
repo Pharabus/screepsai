@@ -217,7 +217,9 @@ describe('ensureBoosted', () => {
       room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
     });
 
-    Memory.rooms['W1N1'] = { boostLabId: labId } as any;
+    // boostCompound must match the creep's requested compound so the reserved-lab
+    // branch is taken (Item 0 fix: mismatched compound falls through to path b).
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'UH' } as any;
 
     // Lab is in range so boostCreep will be called, returns ERR_NOT_ENOUGH_RESOURCES
     const result = ensureBoosted(creep);
@@ -279,5 +281,136 @@ describe('ensureBoosted', () => {
     expect(result).toBe(true);
     expect(lab.boostCreep).toHaveBeenCalledWith(creep);
     expect(creep.memory.boosts).toBeUndefined();
+  });
+
+  // ── Item 0: reserved-lab compound-match fix ───────────────────────────────
+
+  it('ignores reserved lab when boostCompound differs from the requested compound', () => {
+    // Reserved lab is GH2O-only (upgrader). A defender wanting KHO2 must NOT
+    // be routed there — previously it would stall forever on ERR_NOT_ENOUGH_RESOURCES.
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');
+
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: labPos,
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+
+    // A second lab in the room holds the right compound (KHO2)
+    const kho2Lab = mockLab({
+      id: 'kho2_lab',
+      compound: 'KHO2',
+      mineralType: 'KHO2',
+      pos: new (globalThis as any).RoomPosition(26, 26, 'W1N1'),
+      store: {
+        getUsedCapacity: vi.fn((r: string) => {
+          if (r === 'KHO2') return 300;
+          if (r === RESOURCE_ENERGY) return 200;
+          return 0;
+        }),
+      },
+      boostCreep: vi.fn(() => OK),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: RANGED_ATTACK, hits: 100, boost: undefined }],
+      memory: {
+        role: 'rangedDefender',
+        boosts: [{ part: RANGED_ATTACK, compound: 'KHO2' }],
+      },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => [kho2Lab]) }),
+    });
+
+    // Reserved lab is GH2O — compound mismatch. Must be skipped; path (b) should
+    // find kho2Lab and successfully boost the creep.
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    const result = ensureBoosted(creep);
+
+    // Reserved lab must not have been approached (boostCreep not called on it)
+    expect(reservedLab.boostCreep).not.toHaveBeenCalled();
+    // kho2Lab is adjacent (range 1) and stocked → boost applied, returns true
+    expect(kho2Lab.boostCreep).toHaveBeenCalledWith(creep);
+    expect(result).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
+  });
+
+  it('ignores reserved lab with mismatched compound and fails open when no other lab is stocked', () => {
+    // Reserved lab is GH2O; creep wants KHO2; no other lab holds KHO2 → fail-open.
+    const labId = 'reserved_lab' as Id<StructureLab>;
+
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: new (globalThis as any).RoomPosition(26, 25, 'W1N1'),
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: RANGED_ATTACK, hits: 100, boost: undefined }],
+      memory: {
+        role: 'rangedDefender',
+        boosts: [{ part: RANGED_ATTACK, compound: 'KHO2' }],
+      },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }), // no other labs
+    });
+
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    const result = ensureBoosted(creep);
+
+    expect(reservedLab.boostCreep).not.toHaveBeenCalled();
+    // No lab for KHO2 found anywhere → fail-open
+    expect(result).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
+  });
+
+  it('still uses reserved lab when boostCompound matches the requested compound (upgrader GH2O case)', () => {
+    // Confirm the matching-compound path is NOT regressed: upgrader asking for
+    // GH2O should still be sent to the reserved lab even when understocked.
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');
+
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: labPos,
+      store: { getUsedCapacity: vi.fn(() => 0) }, // understocked — hauler on the way
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: {
+        role: 'upgrader',
+        boosts: [{ part: WORK, compound: 'GH2O' }],
+      },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+    });
+
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    const result = ensureBoosted(creep);
+
+    // Reserved lab used (boostCreep called), waiting for refill
+    expect(reservedLab.boostCreep).toHaveBeenCalledWith(creep);
+    expect(result).toBe(false);
+    expect(creep.memory.boosts).toBeDefined();
   });
 });

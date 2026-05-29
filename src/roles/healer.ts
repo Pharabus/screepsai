@@ -2,6 +2,7 @@ import { Role } from './Role';
 import { moveTo } from '../utils/movement';
 import { markIdle } from '../utils/idle';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
+import { ensureBoosted } from '../utils/boost';
 
 const COMBAT_ROLES: CreepRoleName[] = ['defender', 'rangedDefender'];
 
@@ -92,6 +93,7 @@ const states: StateMachineDefinition = {
 
 export const healer: Role = {
   run(creep: Creep): void {
+    if (!ensureBoosted(creep)) return;
     runStateMachine(creep, states, 'RALLY');
   },
 };

@@ -365,8 +365,10 @@ Claim a third room, improve colony coordination, and add the CPU-management infr
 
 #### Boosted defense (requires Phase 2 boost infrastructure)
 
-- [ ] **Boosted defenders** — At RCL 7+ with lab compounds available, boost defenders with TOUGH (damage reduction) and ATTACK/RANGED_ATTACK compounds before dispatching. Requires boost application framework (Phase 2 labs).
-- [ ] **Boosted defender dispatch — aggressive-player gate** — When the attacker is classified `aggressive` (per `neighbors.ts`), request XUH2O/XKHO2/XGHO2 boosts for defenders via `lab.boostCreep()`. Skip for NPC invaders (unboosted is fine). Gate on lab stockpile > threshold to avoid draining compounds on weak threats. `src/managers/defense.ts`, `src/managers/labs.ts`.
+- [x] **Boosted defenders** (v1.0.204) — `ensureBoosted` wired into defender/rangedDefender/healer roles (fail-open). rangedDefender→KHO2, healer→LHO2 (T2, **not** X-tier — catalyst X unbuyable on shard3). Melee defender stays unboosted (its `[ATTACK, MOVE]` body has no TOUGH parts; adding TOUGH bodies + UH2O attack boost deferred as the "fullest" option). Enabling lever was the lab goal-rotation cap below.
+  - [x] **Lab goal-rotation (satisfaction cap)** — `GOAL_CAPS` (`reactions.ts`) + `isGoalSatisfied` hysteresis (`labs.ts`): `selectReaction`/`getChainBuyNeeds` skip a goal once stock ≥ cap (resume below cap×0.5), so production rotates GH2O→GHO2/KHO2/LHO2 instead of welding to GH2O. GH2O cap 4000 stays above the 1500 upgrader-boost floor. This revived the whole latent boost pipeline — required for opportunistic defender boosting to ever fire.
+  - [x] **ensureBoosted reserved-lab fix** — reserved `boostLabId` now used only when `boostCompound` matches the requested entry; else falls through to a stocked-lab search. Prevents a defender wanting KHO2 stalling forever at the GH2O-only reserved lab.
+- [x] **Boosted defender dispatch — aggressive-player gate** (v1.0.204) — `defenderBoostsWanted(room)`: RCL 7+ AND a hostile owned by a **player** classified `aggressive` (`getNeighbor`), excluding `'Invader'`/`'Source Keeper'`. Used T2 (KHO2/LHO2) not X-tier (XKHO2/XGHO2 need catalyst X). Gate is opportunistic — `ensureBoosted` fails open if the compound isn't stocked, so weak/unstocked cases spawn unboosted.
 
 #### Debug tooling
 

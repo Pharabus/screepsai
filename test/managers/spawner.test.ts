@@ -8,6 +8,7 @@ import {
   repairersNeeded,
   remoteBuilderNeeded,
   defenderComposition,
+  defenderBoostsWanted,
   remoteHaulersWanted,
   upgraderBoostWanted,
   reserveBoostLab,
@@ -15,6 +16,8 @@ import {
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
+import { flushSegments } from '../../src/utils/segments';
+import { recordHostile } from '../../src/utils/neighbors';
 
 beforeEach(() => {
   resetGameGlobals();
@@ -1958,5 +1961,223 @@ describe('buildSpawnQueue — upgrader boost memory', () => {
 
     expect(upgraderEntry).toBeDefined();
     expect(upgraderEntry?.memory).toBeUndefined();
+  });
+});
+
+// ── Item 3: defenderBoostsWanted gate ────────────────────────────────────────
+
+describe('defenderBoostsWanted', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (Game as any).time = 200; // non-zero so segment age checks work
+  });
+
+  /** Record a hostile with the given username and threat score into the neighbor segment. */
+  function recordPlayer(username: string, threatParts: number = 1): void {
+    // Build a creep body with ATTACK parts to give a threat score > 0
+    const body = Array.from({ length: threatParts }, () => ({ type: ATTACK, hits: 100 }));
+    const creep = {
+      owner: { username },
+      body,
+      room: { name: 'W1N1' },
+    } as any;
+    // recordHostile needs a Room argument too
+    const room = { name: 'W1N1' } as any;
+    recordHostile(creep, room);
+    flushSegments();
+  }
+
+  it('returns false when room RCL < 7', () => {
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6, my: true },
+      find: vi.fn(() => []),
+    });
+    expect(defenderBoostsWanted(room)).toBe(false);
+  });
+
+  it('returns false when no hostile creeps are present', () => {
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => []),
+    });
+    expect(defenderBoostsWanted(room)).toBe(false);
+  });
+
+  it('returns false for an Invader hostile (not a player)', () => {
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => [{ owner: { username: 'Invader' }, body: [{ type: ATTACK, hits: 100 }] }]),
+    });
+    expect(defenderBoostsWanted(room)).toBe(false);
+  });
+
+  it('returns false for a Source Keeper hostile', () => {
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => [
+        { owner: { username: 'Source Keeper' }, body: [{ type: ATTACK, hits: 100 }] },
+      ]),
+    });
+    expect(defenderBoostsWanted(room)).toBe(false);
+  });
+
+  it('returns false when player is present but NOT classified aggressive', () => {
+    // Record 1 attack — below the threshold to become aggressive (needs ≥3 or maxThreat ≥500)
+    recordPlayer('NewEnemy', 1); // 1 ATTACK part → threatScore=80, attacks=1 → 'unknown'
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => [{ owner: { username: 'NewEnemy' }, body: [{ type: ATTACK, hits: 100 }] }]),
+    });
+    // 'unknown' hostility ≠ 'aggressive' → false
+    expect(defenderBoostsWanted(room)).toBe(false);
+  });
+
+  it('returns true for RCL 7+ with an aggressive-classified player hostile present', () => {
+    // Record 3 attacks to trigger 'aggressive' classification
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 200 + i;
+      recordPlayer('Bully', 1);
+    }
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+    });
+    expect(defenderBoostsWanted(room)).toBe(true);
+  });
+
+  it('returns true at RCL 8 as well', () => {
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 300 + i;
+      recordPlayer('Bully', 1);
+    }
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 8, my: true },
+      find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+    });
+    expect(defenderBoostsWanted(room)).toBe(true);
+  });
+});
+
+describe('defender spawn queue boost attachment', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    resetColonyScoreCache();
+    (Game as any).time = 200;
+  });
+
+  /**
+   * Set up memory so defenders AND a healer are needed (high threat).
+   * 8 ATTACK parts × 80 = 640 threat > 600 → comp = {melee:1, ranged:2, healer:1}.
+   * lastThreatScore must also be > 600 so defendersNeeded() returns > 0.
+   */
+  function setupHighThreat(roomName: string): void {
+    (Memory as any).rooms = {
+      [roomName]: {
+        threatLastSeen: (Game as any).time,
+        lastThreatScore: 700, // > 600 → healer included in composition
+      },
+    };
+  }
+
+  /** 8 ATTACK parts on the hostile so defenderComposition sees threat > 600. */
+  const highThreatBody = Array.from({ length: 8 }, () => ({ type: ATTACK, hits: 100 }));
+
+  it('attaches boosts to rangedDefender and healer (NOT melee) when gate is open', () => {
+    // Make 'Bully' aggressive (3+ attacks recorded)
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 200 + i;
+      const creep = { owner: { username: 'Bully' }, body: highThreatBody } as any;
+      recordHostile(creep, { name: 'W1N1' } as any);
+      flushSegments();
+    }
+    (Game as any).time = 203;
+
+    setupHighThreat('W1N1');
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      energyCapacityAvailable: 1300,
+      // find() must return the hostile so defenderComposition can read the body
+      find: vi.fn(() => [{ owner: { username: 'Bully' }, body: highThreatBody }]),
+    });
+
+    const queue = buildSpawnQueue(room);
+
+    const meleeEntry = queue.find((r) => r.role === 'defender');
+    const rangedEntry = queue.find((r) => r.role === 'rangedDefender');
+    const healerEntry = queue.find((r) => r.role === 'healer');
+
+    // Melee must have no boosts
+    expect(meleeEntry?.memory?.boosts).toBeUndefined();
+
+    // rangedDefender should have KHO2 boost
+    expect(rangedEntry?.memory?.boosts).toBeDefined();
+    expect(rangedEntry?.memory?.boosts?.[0]?.compound).toBe('KHO2');
+    expect(rangedEntry?.memory?.boosts?.[0]?.part).toBe(RANGED_ATTACK);
+
+    // healer should have LHO2 boost
+    expect(healerEntry?.memory?.boosts).toBeDefined();
+    expect(healerEntry?.memory?.boosts?.[0]?.compound).toBe('LHO2');
+    expect(healerEntry?.memory?.boosts?.[0]?.part).toBe(HEAL);
+  });
+
+  it('omits boosts when the aggressive-player gate is closed (Invader only)', () => {
+    setupHighThreat('W1N1');
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      energyCapacityAvailable: 1300,
+      find: vi.fn(() => [{ owner: { username: 'Invader' }, body: highThreatBody }]),
+    });
+
+    const queue = buildSpawnQueue(room);
+
+    const rangedEntry = queue.find((r) => r.role === 'rangedDefender');
+    const healerEntry = queue.find((r) => r.role === 'healer');
+
+    // Invader → gate closed → no boosts attached
+    expect(rangedEntry?.memory?.boosts).toBeUndefined();
+    expect(healerEntry?.memory?.boosts).toBeUndefined();
+  });
+
+  it('omits boosts at RCL < 7 even if a player is aggressive', () => {
+    // Record aggressive player
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 200 + i;
+      const creep = { owner: { username: 'Bully' }, body: highThreatBody } as any;
+      recordHostile(creep, { name: 'W1N1' } as any);
+      flushSegments();
+    }
+    (Game as any).time = 203;
+
+    setupHighThreat('W1N1');
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6, my: true }, // RCL 6 — gate closed
+      energyCapacityAvailable: 1300,
+      find: vi.fn(() => [{ owner: { username: 'Bully' }, body: highThreatBody }]),
+    });
+
+    const queue = buildSpawnQueue(room);
+    const rangedEntry = queue.find((r) => r.role === 'rangedDefender');
+    const healerEntry = queue.find((r) => r.role === 'healer');
+
+    expect(rangedEntry?.memory?.boosts).toBeUndefined();
+    expect(healerEntry?.memory?.boosts).toBeUndefined();
   });
 });
