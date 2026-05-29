@@ -106,7 +106,7 @@ export function ensureRoomPlan(room: Room): void {
       if (!link) mem.storageLinkId = undefined;
     }
     if (!mem.storageLinkId) {
-      const links = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+      const links = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 3, {
         filter: (s): s is StructureLink => s.structureType === STRUCTURE_LINK,
       });
       // Exclude links already assigned to sources

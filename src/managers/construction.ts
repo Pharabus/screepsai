@@ -539,15 +539,34 @@ export function placeLinks(room: Room): void {
   const reserved = getPlannedReserved(room);
 
   // Priority 1: storage link (receiver — must exist before source links are useful)
+  // Use range 2–3 (not range 1) so the link is never placed on the only passable
+  // tile adjacent to storage. If all 7 other neighbours are taken by extensions/towers,
+  // a range-1 link at the last gap would permanently seal storage once built.
+  //
+  // Crucially, do NOT exclude extensionPositions here. The extension diamond fills
+  // every range-2 tile near storage, so using the full `reserved` set causes
+  // findOpenPosition to return undefined and source links fill both RCL-5 link
+  // slots instead. The extension planner pre-generates 70 positions for 60 needed
+  // at RCL 8 — one tile occupied by the storage link costs at most 1 extension slot.
   if (room.storage && !mem?.storageLinkId) {
-    const existing = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+    const existing = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 3, {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
-    const existingSites = room.storage.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 2, {
+    const existingSites = room.storage.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 3, {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
     if (existing.length === 0 && existingSites.length === 0) {
-      const pos = findOpenPosition(room, room.storage.pos, 1, 2, reserved);
+      // Narrow excluded set: only structures that genuinely conflict with a link
+      // (storage itself, terminal, factory, towers, spawns). Extensions are omitted —
+      // the planner has spare slots and the link must be placeable near storage.
+      const storageReserved = new Set<string>();
+      const plan = mem?.layoutPlan;
+      if (plan?.storagePos) storageReserved.add(`${plan.storagePos.x},${plan.storagePos.y}`);
+      if (plan?.terminalPos) storageReserved.add(`${plan.terminalPos.x},${plan.terminalPos.y}`);
+      if (plan?.factoryPos) storageReserved.add(`${plan.factoryPos.x},${plan.factoryPos.y}`);
+      for (const p of plan?.towerPositions ?? []) if (p) storageReserved.add(`${p.x},${p.y}`);
+      for (const p of plan?.spawnPositions ?? []) if (p) storageReserved.add(`${p.x},${p.y}`);
+      const pos = findOpenPosition(room, room.storage.pos, 2, 3, storageReserved);
       if (pos) {
         room.createConstructionSite(pos, STRUCTURE_LINK);
         return;
@@ -749,12 +768,9 @@ export function placeLabs(room: Room): void {
         room.createConstructionSite(pos, STRUCTURE_LAB);
         return;
       }
-      // Already-built labs are expected occupants — don't log them as blocked.
-      const isBuiltLab =
-        structs.length > 0 &&
-        sites.length === 0 &&
-        structs.some((s) => s.structureType === STRUCTURE_LAB);
-      if (isBuiltLab) continue;
+      // Already-built labs are expected occupants — don't log them as blocked
+      // (rampart construction sites may co-exist on the same tile).
+      if (structs.some((s) => s.structureType === STRUCTURE_LAB)) continue;
       const key = `${x},${y}`;
       const lastLog = blockedLog[key];
       if (lastLog === undefined || Game.time - lastLog >= 100) {
