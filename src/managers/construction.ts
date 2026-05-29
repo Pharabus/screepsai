@@ -1,5 +1,9 @@
 import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
-import { getBaseCostMatrixForRoom } from '../utils/trafficManager';
+import {
+  applyTunnelWalls,
+  getBaseCostMatrixForRoom,
+  TUNNEL_WALL_COST,
+} from '../utils/trafficManager';
 
 // Max extensions per RCL level (from Screeps CONTROLLER_STRUCTURES).
 // At RCL 7 each extension holds 100 energy (up from 50), at RCL 8 it's 200,
@@ -1026,16 +1030,21 @@ export function placeRemoteRoads(room: Room): void {
             const r = Game.rooms[roomName];
             if (!r) return false;
             const base = getBaseCostMatrixForRoom(r);
+            // Always clone so we can apply overlays without mutating the cache.
+            const matrix = base.clone();
             // Set reserved home-room tiles to impassable so roads route around them.
             if (roomName === homeRoomName && reserved.size > 0) {
-              const matrix = base.clone();
               for (const key of reserved) {
                 const comma = key.indexOf(',');
                 matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
               }
-              return matrix;
             }
-            return base;
+            // Apply a high wall cost so PathFinder will route through a wall
+            // (tunnel) only when the plain-terrain detour is >~15 tiles longer.
+            // This overlay is LOCAL to road planning — creep movement matrices
+            // are unaffected. See TUNNEL_WALL_COST for the threshold rationale.
+            applyTunnelWalls(matrix, r, TUNNEL_WALL_COST);
+            return matrix;
           },
         },
       );

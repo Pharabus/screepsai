@@ -7,6 +7,9 @@ import {
   getRoomCostMatrixAvoidCreeps,
   getRoomCostMatrixNoExits,
   pathRoomCallback,
+  applyTunnelWalls,
+  resetTunnelWallCache,
+  TUNNEL_WALL_COST,
   PRIORITY_STATIC,
   PRIORITY_WORKER,
   PRIORITY_DEFAULT,
@@ -20,6 +23,7 @@ describe('trafficManager', () => {
     resetTraffic();
     resetTickCache();
     resetBaseMatrixCache();
+    resetTunnelWallCache();
   });
 
   describe('getRoomCostMatrix', () => {
@@ -599,6 +603,141 @@ describe('trafficManager', () => {
       // The tick-cached overlay should not see the exit tile cost.
       const normal = getRoomCostMatrix(room);
       expect(normal.get(0, 10)).toBe(0);
+    });
+  });
+
+  describe('applyTunnelWalls', () => {
+    // Helper: build a terrain mock with explicit wall tiles expressed as [x,y] pairs.
+    function makeTunnelTerrain(wallCoords: Array<[number, number]>) {
+      return {
+        get(x: number, y: number): number {
+          return wallCoords.some(([wx, wy]) => wx === x && wy === y) ? TERRAIN_MASK_WALL : 0;
+        },
+      };
+    }
+
+    it('sets interior wall tiles to TUNNEL_WALL_COST', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTunnelTerrain([[10, 20]]),
+      });
+      const matrix = new PathFinder.CostMatrix();
+
+      applyTunnelWalls(matrix, room, TUNNEL_WALL_COST);
+
+      expect(matrix.get(10, 20)).toBe(TUNNEL_WALL_COST);
+    });
+
+    it('leaves edge wall tiles (x or y in {0,49}) untouched', () => {
+      // Walls on the border row/column must stay at 0 in the matrix so room
+      // transitions keep using real exit tiles.
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () =>
+          makeTunnelTerrain([
+            [0, 10], // left edge wall
+            [49, 10], // right edge wall
+            [10, 0], // top edge wall
+            [10, 49], // bottom edge wall
+          ]),
+      });
+      const matrix = new PathFinder.CostMatrix();
+
+      applyTunnelWalls(matrix, room, TUNNEL_WALL_COST);
+
+      expect(matrix.get(0, 10)).toBe(0);
+      expect(matrix.get(49, 10)).toBe(0);
+      expect(matrix.get(10, 0)).toBe(0);
+      expect(matrix.get(10, 49)).toBe(0);
+    });
+
+    it('does not overwrite a tile already set to 255 (structure)', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTunnelTerrain([[15, 15]]),
+      });
+      const matrix = new PathFinder.CostMatrix();
+      matrix.set(15, 15, 255); // pre-populated structure cost
+
+      applyTunnelWalls(matrix, room, TUNNEL_WALL_COST);
+
+      expect(matrix.get(15, 15)).toBe(255);
+    });
+
+    it('does not overwrite a tile already set to 1 (road)', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTunnelTerrain([[15, 15]]),
+      });
+      const matrix = new PathFinder.CostMatrix();
+      matrix.set(15, 15, 1); // pre-populated road cost
+
+      applyTunnelWalls(matrix, room, TUNNEL_WALL_COST);
+
+      expect(matrix.get(15, 15)).toBe(1);
+    });
+
+    it('leaves plain/swamp tiles (no TERRAIN_MASK_WALL) untouched', () => {
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: () => makeTunnelTerrain([]), // no wall tiles at all
+      });
+      const matrix = new PathFinder.CostMatrix();
+
+      applyTunnelWalls(matrix, room, TUNNEL_WALL_COST);
+
+      // Spot-check several interior plain tiles — all should remain 0.
+      expect(matrix.get(25, 25)).toBe(0);
+      expect(matrix.get(1, 1)).toBe(0);
+      expect(matrix.get(48, 48)).toBe(0);
+    });
+
+    it('caches the wall-tile list: getTerrain is only called once across two applyTunnelWalls calls', () => {
+      const getTerrainSpy = vi.fn(() => makeTunnelTerrain([[10, 20]]));
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: getTerrainSpy,
+      });
+
+      const matrix1 = new PathFinder.CostMatrix();
+      applyTunnelWalls(matrix1, room, TUNNEL_WALL_COST);
+
+      const matrix2 = new PathFinder.CostMatrix();
+      applyTunnelWalls(matrix2, room, TUNNEL_WALL_COST);
+
+      // getTerrain (and the inner terrain.get scan) should only happen once —
+      // the second call re-uses the cached wall list.
+      expect(getTerrainSpy).toHaveBeenCalledTimes(1);
+      // Both matrices should have the same wall cost applied.
+      expect(matrix1.get(10, 20)).toBe(TUNNEL_WALL_COST);
+      expect(matrix2.get(10, 20)).toBe(TUNNEL_WALL_COST);
+    });
+
+    it('picks up new terrain after resetTunnelWallCache clears the cache', () => {
+      // First call with a wall at (10,20).
+      const getTerrainSpy = vi
+        .fn()
+        .mockReturnValueOnce(makeTunnelTerrain([[10, 20]]))
+        // Second call (post-reset) has a different wall at (30,30).
+        .mockReturnValueOnce(makeTunnelTerrain([[30, 30]]));
+
+      const room = mockRoom({
+        find: vi.fn(() => []),
+        getTerrain: getTerrainSpy,
+      });
+
+      const matrix1 = new PathFinder.CostMatrix();
+      applyTunnelWalls(matrix1, room, TUNNEL_WALL_COST);
+      expect(matrix1.get(10, 20)).toBe(TUNNEL_WALL_COST);
+      expect(matrix1.get(30, 30)).toBe(0); // not a wall in first terrain
+
+      resetTunnelWallCache();
+
+      const matrix2 = new PathFinder.CostMatrix();
+      applyTunnelWalls(matrix2, room, TUNNEL_WALL_COST);
+      expect(matrix2.get(30, 30)).toBe(TUNNEL_WALL_COST); // new terrain picked up
+      expect(matrix2.get(10, 20)).toBe(0); // no longer a wall
+      expect(getTerrainSpy).toHaveBeenCalledTimes(2); // one scan per cache population
     });
   });
 });

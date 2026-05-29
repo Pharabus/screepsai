@@ -409,3 +409,48 @@ export function getRoomCostMatrixAvoidCreeps(room: Room, creepCost = 50): CostMa
   applyExtensionSiteOverlay(room, costs);
   return costs;
 }
+
+// ---------------------------------------------------------------------------
+// Tunnel-wall overlay — road-planning only (NEVER used for creep movement)
+// ---------------------------------------------------------------------------
+
+// 15× the plainCost:2 used by road searches. A tunnel (road on wall terrain,
+// 150× build cost) only wins when the plain-terrain detour is >~15 tiles
+// longer — this threshold mirrors overmind's rule of thumb for road tunnels.
+export const TUNNEL_WALL_COST = 30;
+
+// Heap-cached interior wall-tile coordinates per room name. Terrain is
+// immutable for a room's lifetime, so we compute once and reuse. Mirrors the
+// baseMatrixCache pattern above.
+const tunnelWallCache = new Map<string, Array<{ x: number; y: number }>>();
+
+export function resetTunnelWallCache(): void {
+  tunnelWallCache.clear();
+}
+
+// Stamp `cost` onto every interior wall tile in `room` that has not already
+// been assigned a higher value in `matrix` (structures stay at 255, roads
+// stay at 1). Edge tiles (x or y ∈ {0,49}) are intentionally skipped — they
+// remain impassable via terrain and must stay at 0 so room transitions use
+// real exit tiles.
+// Safe to call on a cloned matrix; NEVER call on a shared/cached matrix.
+export function applyTunnelWalls(matrix: CostMatrix, room: Room, cost: number): void {
+  let wallTiles = tunnelWallCache.get(room.name);
+  if (!wallTiles) {
+    wallTiles = [];
+    const terrain = room.getTerrain();
+    for (let x = 1; x <= 48; x++) {
+      for (let y = 1; y <= 48; y++) {
+        if (terrain.get(x, y) & TERRAIN_MASK_WALL) {
+          wallTiles.push({ x, y });
+        }
+      }
+    }
+    tunnelWallCache.set(room.name, wallTiles);
+  }
+  for (const { x, y } of wallTiles) {
+    if (matrix.get(x, y) === 0) {
+      matrix.set(x, y, cost);
+    }
+  }
+}

@@ -119,6 +119,8 @@ All roles use `src/utils/stateMachine.ts`. Each `StateHandler.run(creep)` return
 6. `reserver` (`[CLAIM×2, MOVE×2]`) — 1 per remote room with a controller; net +1 reservation/tick doubles source capacity.
 7. `remoteBuilder` — builds/repairs remote roads. Temporary; stops spawning when roads are built and healthy.
 
+`placeRemoteRoads` is **tunnel-aware**: its PathFinder pass stamps natural wall tiles at `TUNNEL_WALL_COST` (15× plain) via `applyTunnelWalls`, so a road routes through a wall only when it shortcuts a detour >~15 tiles longer. This overlay is local to road planning — it never touches the creep-movement CostMatrix (creeps can't walk unbuilt walls). Built roads (cost 1) always beat tunnels, so completed paths are never re-dug.
+
 `CreepMemory.homeRoom` = owner room. `CreepMemory.targetRoom` = operating room. Local miners have neither.
 
 **Claiming** (`src/utils/colonyPlanner.ts`): `scoreClaimTarget` filters/scores a candidate (sources, distance, hostility, +5 for a mineral none of our rooms already mine); `findClaimCandidates()` ranks all scouted rooms, picking each one's nearest owned room as prospective home. Operator commits via `claim(roomName)`; inspect readiness with `claimCandidates()`. Lifecycle `claiming → bootstrapping → active` in `updateColonyStates`.
