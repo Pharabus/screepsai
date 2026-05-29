@@ -151,6 +151,11 @@ export function pathRoomCallback(roomName: string): boolean | CostMatrix {
 
 // Same shape as pathRoomCallback but bumps friendly-creep cost — used by
 // stuck-detection repaths so the new path actually routes around blockers.
+// Avoidance cost for the current stuck-repath call. Set by executeMoveAvoidCreeps
+// before calling searchPath; reset to 50 after. Safe in single-threaded JS.
+
+let activeCreepAvoidCost = 50;
+
 export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMatrix {
   const room = Game.rooms[roomName];
   if (!room) {
@@ -158,7 +163,7 @@ export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMat
     if (owner && owner !== getMyUsername()) return false;
     return new PathFinder.CostMatrix();
   }
-  return getRoomCostMatrixAvoidCreeps(room);
+  return getRoomCostMatrixAvoidCreeps(room, activeCreepAvoidCost);
 }
 
 // Sets all passable border tiles (exit tiles) to 255 in the given matrix.
@@ -196,7 +201,7 @@ function pathRoomCallbackAvoidCreepsNoExits(roomName: string): boolean | CostMat
     if (owner && owner !== getMyUsername()) return false;
     return new PathFinder.CostMatrix();
   }
-  const costs = getRoomCostMatrixAvoidCreeps(room);
+  const costs = getRoomCostMatrixAvoidCreeps(room, activeCreepAvoidCost);
   blockExitTiles(costs, room);
   return costs;
 }
@@ -271,10 +276,14 @@ export function executeMoveAvoidCreeps(
   target: RoomPosition,
   range: number,
   stroke?: string,
+  creepCost = 50,
 ): void {
   if (creep.pos.inRangeTo(target, range)) return;
   // Bypass the per-creep tick cache so we don't reuse the path that got us stuck.
+  // Set the module-level avoidance cost so the room callbacks pick it up.
+  activeCreepAvoidCost = creepCost;
   const path = searchPath(creep, target, range, true);
+  activeCreepAvoidCost = 50; // reset to default
   // Store the repath result so executeMove commits to it going forward instead
   // of immediately reverting to the original path on the next tick.
   const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
@@ -365,6 +374,19 @@ function applyCreepOverlay(room: Room, costs: CostMatrix, creepCost: number): vo
   }
 }
 
+// Extension construction sites have terrain cost by default, so PathFinder
+// routes straight through them — then builders camping there to build create
+// single-tile bottlenecks. Elevate them to cost 10 (swamp) so PathFinder
+// prefers road corridors and plain-terrain detours when they exist, while
+// still routing through sites when there is no other option.
+function applyExtensionSiteOverlay(room: Room, costs: CostMatrix): void {
+  for (const site of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+    if (site.structureType !== STRUCTURE_EXTENSION) continue;
+    const current = costs.get(site.pos.x, site.pos.y);
+    if (current < 10) costs.set(site.pos.x, site.pos.y, 10);
+  }
+}
+
 export function getRoomCostMatrix(room: Room): CostMatrix {
   return cached('traffic:costs:' + room.name, () => {
     const costs = getBaseCostMatrix(room).clone();
@@ -373,15 +395,17 @@ export function getRoomCostMatrix(room: Room): CostMatrix {
     // pushing PathFinder onto longer detours. Stationary creeps (255) and
     // hostile creeps (255) are still hard obstacles.
     applyCreepOverlay(room, costs, 0);
+    applyExtensionSiteOverlay(room, costs);
     return costs;
   });
 }
 
-export function getRoomCostMatrixAvoidCreeps(room: Room): CostMatrix {
+export function getRoomCostMatrixAvoidCreeps(room: Room, creepCost = 50): CostMatrix {
   // Not tick-cached — this is only ever called on a stuck repath, which is rare
   // enough that an extra pathfinder call per stuck creep is cheaper than a
   // second cached matrix slot per room.
   const costs = getBaseCostMatrix(room).clone();
-  applyCreepOverlay(room, costs, 50);
+  applyCreepOverlay(room, costs, creepCost);
+  applyExtensionSiteOverlay(room, costs);
   return costs;
 }

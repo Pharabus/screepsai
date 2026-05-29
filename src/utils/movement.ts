@@ -12,7 +12,7 @@ export interface MoveOpts {
 // movement inside our traffic system and avoiding the engine's inferior pathfinder.
 const STUCK_REPATH_THRESHOLD = 2;
 const STUCK_FORCE_THRESHOLD = 3;
-const stuckTicks = new Map<string, { x: number; y: number; count: number }>();
+const stuckTicks = new Map<string, { x: number; y: number; count: number; cycles: number }>();
 
 export function moveTo(
   creep: Creep,
@@ -26,11 +26,16 @@ export function moveTo(
   if (prev && prev.x === creep.pos.x && prev.y === creep.pos.y) {
     prev.count++;
     if (prev.count >= STUCK_FORCE_THRESHOLD) {
-      // Force a fresh repath with elevated creep cost and reset the counter so
-      // we keep retrying every STUCK_FORCE_THRESHOLD ticks until unstuck.
+      // Force a fresh repath and reset the per-cycle counter.
       prev.count = 0;
+      prev.cycles++;
       invalidateSerialPath(creep.name);
-      executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke);
+      // Escalate avoidance cost on repeated failures: a creep stuck through
+      // 3+ full cycles (≥9 ticks) has a detour that costs more than 50 — bump
+      // to 200 so PathFinder is forced to find genuine alternatives. Caps at
+      // 200 to avoid treating every friendly as a wall permanently.
+      const avoidCost = prev.cycles >= 3 ? 200 : 50;
+      executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke, avoidCost);
       return;
     }
     if (prev.count >= STUCK_REPATH_THRESHOLD) {
@@ -38,7 +43,8 @@ export function moveTo(
       return;
     }
   } else {
-    stuckTicks.set(creep.name, { x: creep.pos.x, y: creep.pos.y, count: 0 });
+    // Position changed or first call — reset both count and cycle counter.
+    stuckTicks.set(creep.name, { x: creep.pos.x, y: creep.pos.y, count: 0, cycles: 0 });
   }
 
   executeMove(creep, targetPos, range, opts?.visualizePathStyle?.stroke);
