@@ -3,19 +3,27 @@ import { moveTo } from './movement';
 import { PRIORITY_HAULER } from './trafficManager';
 
 export const HOSTILE_COOLDOWN = 300;
+export const NPC_HOSTILE_COOLDOWN = 50;
 export const HOSTILE_FLEE_RANGE = 5;
 
+const NPC_USERNAMES = new Set(['Invader', 'Source Keeper']);
+
 export function isRemoteRoomUnderThreat(roomName: string): boolean {
-  const lastSeen = Memory.rooms[roomName]?.hostileLastSeen;
+  const room = Memory.rooms[roomName];
+  const lastSeen = room?.hostileLastSeen;
   if (lastSeen === undefined) return false;
-  return Game.time - lastSeen < HOSTILE_COOLDOWN;
+  // Missing flag (legacy memory) → treat as player for safety (long cooldown).
+  const isPlayer = room?.hostileLastWasPlayer !== false;
+  const cooldown = isPlayer ? HOSTILE_COOLDOWN : NPC_HOSTILE_COOLDOWN;
+  return Game.time - lastSeen < cooldown;
 }
 
-function recordHostile(roomName: string): void {
+function recordHostile(roomName: string, isPlayer: boolean): void {
   if (!Memory.rooms[roomName]) {
     Memory.rooms[roomName] = {} as RoomMemory;
   }
   Memory.rooms[roomName].hostileLastSeen = Game.time;
+  Memory.rooms[roomName].hostileLastWasPlayer = isPlayer;
 }
 
 function fleeToHome(creep: Creep): void {
@@ -53,7 +61,8 @@ export function handleRemoteThreat(creep: Creep): boolean {
       filter: (h) => threatScore(h) > 0 && !(isKeeperRoom && h.owner?.username === 'Source Keeper'),
     });
     if (hostiles.length === 0) return false;
-    recordHostile(targetRoom);
+    const isPlayer = hostiles.some((h) => !NPC_USERNAMES.has(h.owner?.username ?? ''));
+    recordHostile(targetRoom, isPlayer);
     fleeToHome(creep);
     return true;
   }

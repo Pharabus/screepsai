@@ -85,6 +85,8 @@ interface RoomMemory {
   // Remote room threat — set by any creep that spots a hostile in this room.
   // Used by remote roles to flee and stay home until the threat clears.
   hostileLastSeen?: number;
+  /** True if the last remote-room hostile sighting was a player (long cooldown); NPC-only sightings use a short cooldown. */
+  hostileLastWasPlayer?: boolean;
   // NPC Invader presence — set/cleared by defense manager and hunter role.
   // Used by spawner to queue hunters for remote/transit rooms.
   invaderSeenAt?: number;

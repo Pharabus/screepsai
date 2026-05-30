@@ -2,6 +2,7 @@ import {
   handleRemoteThreat,
   isRemoteRoomUnderThreat,
   HOSTILE_COOLDOWN,
+  NPC_HOSTILE_COOLDOWN,
 } from '../../src/utils/remoteThreat';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTraffic } from '../../src/utils/trafficManager';
@@ -12,7 +13,7 @@ beforeEach(() => {
   (Game as any).time = 10000;
 });
 
-function hostileWithThreat(): any {
+function hostileWithThreat(owner?: string): any {
   return {
     body: [
       { type: ATTACK, hits: 100 },
@@ -20,6 +21,7 @@ function hostileWithThreat(): any {
     ],
     hits: 1000,
     hitsMax: 1000,
+    owner: owner !== undefined ? { username: owner } : undefined,
   };
 }
 
@@ -38,12 +40,57 @@ describe('isRemoteRoomUnderThreat', () => {
     expect(isRemoteRoomUnderThreat('W2N1')).toBe(false);
   });
 
-  it('returns true within HOSTILE_COOLDOWN window', () => {
-    (Memory as any).rooms = { W2N1: { hostileLastSeen: 10000 - 100 } };
+  it('returns true within HOSTILE_COOLDOWN window (player)', () => {
+    (Memory as any).rooms = { W2N1: { hostileLastSeen: 10000 - 100, hostileLastWasPlayer: true } };
     expect(isRemoteRoomUnderThreat('W2N1')).toBe(true);
   });
 
-  it('returns false after HOSTILE_COOLDOWN elapses', () => {
+  it('returns false after HOSTILE_COOLDOWN elapses (player)', () => {
+    (Memory as any).rooms = {
+      W2N1: { hostileLastSeen: 10000 - HOSTILE_COOLDOWN - 1, hostileLastWasPlayer: true },
+    };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(false);
+  });
+
+  // NPC (Invader / Source Keeper) — short cooldown
+  it('returns false for NPC sighting older than NPC_HOSTILE_COOLDOWN', () => {
+    // Just past the NPC window → no longer under threat
+    (Memory as any).rooms = {
+      W2N1: { hostileLastSeen: 10000 - NPC_HOSTILE_COOLDOWN - 1, hostileLastWasPlayer: false },
+    };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(false);
+  });
+
+  it('returns true for NPC sighting within NPC_HOSTILE_COOLDOWN', () => {
+    // Just inside the NPC window → still under threat
+    (Memory as any).rooms = {
+      W2N1: { hostileLastSeen: 10000 - (NPC_HOSTILE_COOLDOWN - 1), hostileLastWasPlayer: false },
+    };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(true);
+  });
+
+  // Player hostile at 60 ticks ago — still within full 300-tick window
+  it('returns true for player sighting 60 ticks ago (well within HOSTILE_COOLDOWN)', () => {
+    (Memory as any).rooms = {
+      W2N1: { hostileLastSeen: 10000 - 60, hostileLastWasPlayer: true },
+    };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(true);
+  });
+
+  it('returns true for player sighting 299 ticks ago (just inside HOSTILE_COOLDOWN)', () => {
+    (Memory as any).rooms = {
+      W2N1: { hostileLastSeen: 10000 - (HOSTILE_COOLDOWN - 1), hostileLastWasPlayer: true },
+    };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(true);
+  });
+
+  // Legacy memory: missing hostileLastWasPlayer → treat as player (safe/long cooldown)
+  it('treats missing hostileLastWasPlayer as player (long cooldown) — 60 ticks ago still under threat', () => {
+    (Memory as any).rooms = { W2N1: { hostileLastSeen: 10000 - 60 } };
+    expect(isRemoteRoomUnderThreat('W2N1')).toBe(true);
+  });
+
+  it('treats missing hostileLastWasPlayer as player — only clears after full HOSTILE_COOLDOWN', () => {
     (Memory as any).rooms = { W2N1: { hostileLastSeen: 10000 - HOSTILE_COOLDOWN - 1 } };
     expect(isRemoteRoomUnderThreat('W2N1')).toBe(false);
   });
@@ -224,5 +271,122 @@ describe('handleRemoteThreat', () => {
     });
 
     expect(handleRemoteThreat(creep)).toBe(true);
+  });
+
+  // recordHostile classification tests — exercised via handleRemoteThreat
+
+  it('records NPC flag false when sole hostile is an Invader', () => {
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: {} };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [hostileWithThreat('Invader')]),
+    });
+
+    const result = handleRemoteThreat(creep);
+
+    expect(result).toBe(true);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
+    expect(Memory.rooms.W2N1.hostileLastWasPlayer).toBe(false);
+  });
+
+  it('records NPC flag false when sole hostile is a Source Keeper', () => {
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: {} };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [hostileWithThreat('Source Keeper')]),
+    });
+
+    const result = handleRemoteThreat(creep);
+
+    expect(result).toBe(true);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
+    expect(Memory.rooms.W2N1.hostileLastWasPlayer).toBe(false);
+  });
+
+  it('records player flag true when hostile is a normal player (Pharabus)', () => {
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: {} };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [hostileWithThreat('Pharabus')]),
+    });
+
+    const result = handleRemoteThreat(creep);
+
+    expect(result).toBe(true);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
+    expect(Memory.rooms.W2N1.hostileLastWasPlayer).toBe(true);
+  });
+
+  it('records player flag true when list contains one Invader and one player (mixed)', () => {
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: {} };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      pos: posWithHostiles(10, 10, 'W2N1', [
+        hostileWithThreat('Invader'),
+        hostileWithThreat('Pharabus'),
+      ]),
+    });
+
+    const result = handleRemoteThreat(creep);
+
+    expect(result).toBe(true);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
+    expect(Memory.rooms.W2N1.hostileLastWasPlayer).toBe(true);
+  });
+
+  it('records player flag true when hostile has no owner — unknown = conservative/safe', () => {
+    // A creep with no identifiable owner is treated conservatively as a player
+    // (long cooldown), so we never under-react on ambiguous data.
+    const targetRoom = mockRoom({ name: 'W2N1' });
+    const homeRoom = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => [{ pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') }]),
+    });
+    (Game as any).rooms = { W1N1: homeRoom, W2N1: targetRoom };
+    (Memory as any).rooms = { W2N1: {} };
+
+    const creep = mockCreep({
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      room: targetRoom,
+      // hostileWithThreat() with no owner → owner: undefined → unknown username → player
+      pos: posWithHostiles(10, 10, 'W2N1', [hostileWithThreat()]),
+    });
+
+    const result = handleRemoteThreat(creep);
+
+    expect(result).toBe(true);
+    expect(Memory.rooms.W2N1.hostileLastWasPlayer).toBe(true);
   });
 });
