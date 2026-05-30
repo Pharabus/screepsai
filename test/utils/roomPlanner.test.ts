@@ -2,6 +2,7 @@ import { resetGameGlobals, mockRoom } from '../mocks/screeps';
 import {
   ensureRoomPlan,
   ensureRemoteRoomPlan,
+  findOwnedSource,
   findUnminedSource,
   assignMiner,
   needsMineralMiner,
@@ -333,6 +334,38 @@ describe('roomPlanner', () => {
     it('returns undefined when no sources data exists', () => {
       Memory.rooms['W1N1'] = {};
       expect(findUnminedSource('W1N1')).toBeUndefined();
+    });
+  });
+
+  describe('findOwnedSource', () => {
+    it('returns the source id whose minerName matches the given creep name', () => {
+      Memory.rooms['W2N1'] = {
+        sources: [
+          { id: 'rs1' as Id<Source>, x: 5, y: 15, minerName: 'miner_r1' },
+          { id: 'rs2' as Id<Source>, x: 10, y: 20, minerName: 'miner_r2' },
+        ],
+      } as any;
+
+      expect(findOwnedSource('W2N1', 'miner_r1')).toBe('rs1');
+      expect(findOwnedSource('W2N1', 'miner_r2')).toBe('rs2');
+    });
+
+    it('returns undefined when no entry has a matching minerName', () => {
+      Memory.rooms['W2N1'] = {
+        sources: [{ id: 'rs1' as Id<Source>, x: 5, y: 15, minerName: 'miner_other' }],
+      } as any;
+
+      expect(findOwnedSource('W2N1', 'miner_r1')).toBeUndefined();
+    });
+
+    it('returns undefined when room memory has no sources', () => {
+      Memory.rooms['W2N1'] = {} as any;
+
+      expect(findOwnedSource('W2N1', 'miner_r1')).toBeUndefined();
+    });
+
+    it('returns undefined when room memory does not exist', () => {
+      expect(findOwnedSource('W2N1', 'miner_r1')).toBeUndefined();
     });
   });
 

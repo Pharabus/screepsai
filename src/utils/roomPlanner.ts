@@ -313,6 +313,18 @@ export function ensureRemoteRoomPlan(roomName: string): void {
 }
 
 /**
+ * Return the source id whose minerName matches the given creep name, if any.
+ * Used to let a miner reclaim its own assigned source after a targetId wipe
+ * (e.g. caused by a visibility loss that made getObjectById return null).
+ */
+export function findOwnedSource(roomName: string, creepName: string): Id<Source> | undefined {
+  const mem = Memory.rooms[roomName];
+  if (!mem?.sources) return undefined;
+  const entry = mem.sources.find((s) => s.minerName === creepName);
+  return entry?.id;
+}
+
+/**
  * Find a source that has a container but no assigned miner, for spawning or
  * assigning a new miner. For remote rooms (no containers), any unassigned
  * source qualifies.

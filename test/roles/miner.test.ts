@@ -3,6 +3,7 @@ import { miner } from '../../src/roles/miner';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
+  isInRoomInterior: vi.fn(() => true),
 }));
 
 vi.mock('../../src/utils/trafficManager', () => ({
@@ -11,7 +12,7 @@ vi.mock('../../src/utils/trafficManager', () => ({
   PRIORITY_WORKER: 2,
 }));
 
-import { moveTo } from '../../src/utils/movement';
+import { moveTo, isInRoomInterior } from '../../src/utils/movement';
 import { registerStationary } from '../../src/utils/trafficManager';
 
 describe('miner', () => {
@@ -168,6 +169,94 @@ describe('miner', () => {
       );
     });
 
+    it('Fix B: reclaims own assigned source when targetId is missing but minerName matches', () => {
+      // The plan's minerName still points at this creep even though targetId was wiped.
+      // POSITION should rediscover the source via findOwnedSource and NOT fall through
+      // to a different unassigned source.
+      Memory.rooms['W2N1'] = {
+        sources: [
+          {
+            id: 'rs1' as Id<Source>,
+            x: 5,
+            y: 15,
+            minerName: 'miner_r1', // still assigned to this creep
+          },
+          {
+            id: 'rs2' as Id<Source>,
+            x: 10,
+            y: 20,
+            // no minerName → findUnminedSource would pick this one first
+          },
+        ],
+      } as any;
+      Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const creep = mockCreep({
+        name: 'miner_r1',
+        memory: {
+          role: 'miner',
+          state: 'POSITION',
+          targetRoom: 'W2N1',
+          // targetId intentionally absent — simulates the wipe from Fix A
+        },
+        room: mockRoom({ name: 'W2N1' }),
+        pos: new RoomPosition(5, 15, 'W2N1'),
+      });
+
+      miner.run(creep);
+
+      // Must reclaim rs1 (its own source), not rs2 (the free one)
+      expect(creep.memory.targetId).toBe('rs1');
+    });
+
+    it('Fix C: moves toward interior when inside target room on a border tile with no source', () => {
+      // No sources resolved yet — room memory empty
+      Memory.rooms['W2N1'] = {} as any;
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      // Simulate border tile: isInRoomInterior returns false
+      vi.mocked(isInRoomInterior).mockReturnValueOnce(false);
+
+      const creep = mockCreep({
+        name: 'miner_r1',
+        memory: { role: 'miner', state: 'POSITION', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }), // already inside target room
+        pos: new RoomPosition(0, 25, 'W2N1'), // border tile
+      });
+
+      miner.run(creep);
+
+      // Must issue a moveTo toward room interior (25,25) so the engine can't evict
+      expect(moveTo).toHaveBeenCalledWith(
+        creep,
+        expect.objectContaining({ x: 25, y: 25, roomName: 'W2N1' }),
+        expect.objectContaining({ range: 20 }),
+      );
+    });
+
+    it('Fix C: does NOT move to interior when already interior (no ping-pong)', () => {
+      // isInRoomInterior returns true (default mock) — no extra moveTo should fire
+      Memory.rooms['W2N1'] = {} as any;
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      // Default mock returns true → already interior
+      vi.mocked(isInRoomInterior).mockReturnValueOnce(true);
+
+      const creep = mockCreep({
+        name: 'miner_r1',
+        memory: { role: 'miner', state: 'POSITION', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }),
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+
+      miner.run(creep);
+
+      // moveTo must NOT have been called — no unnecessary movement
+      expect(moveTo).not.toHaveBeenCalled();
+    });
+
     it('transitions to HARVEST when near source without container (remote)', () => {
       Memory.rooms['W2N1'] = {
         sources: [{ id: 'rs1' as Id<Source>, x: 5, y: 15 }],
@@ -262,8 +351,10 @@ describe('miner', () => {
       expect(creep.transfer).toHaveBeenCalledWith(link, RESOURCE_ENERGY);
     });
 
-    it('transitions to POSITION when source disappears', () => {
+    it('clears targetId and transitions to POSITION when source disappears and room is visible', () => {
+      // Fix A: room IS visible, object truly gone → clear targetId (original behaviour preserved)
       Game.getObjectById = vi.fn(() => undefined) as any;
+      Game.rooms['W1N1'] = mockRoom({ name: 'W1N1' });
       Memory.rooms['W1N1'] = { sources: [] } as any;
 
       const creep = mockCreep({
@@ -275,6 +366,27 @@ describe('miner', () => {
 
       expect(creep.memory.state).toBe('POSITION');
       expect(creep.memory.targetId).toBeUndefined();
+    });
+
+    it('Fix A: retains targetId and transitions to POSITION when target room is not visible', () => {
+      // getObjectById returns null but the remote room is dark — not a real loss.
+      Game.getObjectById = vi.fn(() => undefined) as any;
+      // W2N1 NOT in Game.rooms — room is dark.
+      Memory.rooms['W2N1'] = {
+        sources: [{ id: 'rs1' as Id<Source>, x: 5, y: 15 }],
+      } as any;
+
+      const creep = mockCreep({
+        memory: { role: 'miner', state: 'HARVEST', targetId: 'rs1', targetRoom: 'W2N1' },
+        room: mockRoom({ name: 'W2N1' }),
+      });
+
+      miner.run(creep);
+
+      // targetId must NOT be wiped — room was invisible
+      expect(creep.memory.targetId).toBe('rs1');
+      // Still transitions to POSITION so the creep travels back
+      expect(creep.memory.state).toBe('POSITION');
     });
 
     it('builds container construction site in remote rooms', () => {
