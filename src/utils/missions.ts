@@ -231,16 +231,38 @@ export function getMissionStatus(remoteRoom: string): RemoteMiningMission['statu
 }
 
 /**
- * Retire missions for remotes that are no longer in the given list.
- * Called immediately after selectRemoteRooms() updates Memory.rooms[room].remoteRooms.
+ * Reconcile mission lifecycle against one home room's current remote-room selection.
+ * Called once per home room immediately after selectRemoteRooms() updates
+ * Memory.rooms[room].remoteRooms.
+ *
+ * Scoped to homeRoom: only missions whose `homeRoom` matches the argument are
+ * considered. This is REQUIRED because the function is invoked per-home with that
+ * home's remoteRooms list — without the scope check, processing one home would
+ * retire another colony's missions (their remotes aren't in this home's list),
+ * causing multi-colony cross-stomp where the last home processed wins.
+ *
+ * Membership in currentRemoteRooms is the source of truth for the
+ * retiring<->active distinction (two-way), among this home's missions:
+ *  - Room IS selected and the mission is 'retiring' → recover it to 'active'.
+ *    This un-latches a mission whose room was transiently dropped (e.g. an NPC
+ *    invader sighting causing a temporary rejection) and later re-selected.
+ *  - Room is NOT selected and the mission is not already 'retiring' → retire it.
+ *
+ * 'stalled' is intentionally left untouched: the spawner owns the active<->stalled
+ * toggle via its hostile/isStalled detection, so we never stomp a stall here.
  */
-export function syncAllMissions(currentRemoteRooms: string[]): void {
+export function syncAllMissions(homeRoom: string, currentRemoteRooms: string[]): void {
   const missions = Memory.missions?.remoteMining;
   if (!missions) return;
   const remoteSet = new Set(currentRemoteRooms);
   for (const remoteRoom of Object.keys(missions)) {
     const m = missions[remoteRoom];
-    if (m && !remoteSet.has(remoteRoom) && m.status !== 'retiring') {
+    if (!m || m.homeRoom !== homeRoom) continue; // only reconcile this home's missions
+    if (remoteSet.has(remoteRoom)) {
+      // Re-selected after a transient drop-out (e.g. scouted-hostile rejection):
+      // recover the mission. Leave 'stalled' to the spawner's active<->stalled toggle.
+      if (m.status === 'retiring') setMissionStatus(remoteRoom, 'active');
+    } else if (m.status !== 'retiring') {
       retireMission(remoteRoom);
     }
   }

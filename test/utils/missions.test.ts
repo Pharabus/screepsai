@@ -420,7 +420,7 @@ describe('syncAllMissions', () => {
     ensureRemoteMiningMission('W43N58', 'W44N58');
 
     // Only W43N59 remains active
-    syncAllMissions(['W43N59']);
+    syncAllMissions('W43N58', ['W43N59']);
 
     expect(getMissionStatus('W43N59')).toBe('active');
     expect(getMissionStatus('W44N58')).toBe('retiring');
@@ -430,7 +430,7 @@ describe('syncAllMissions', () => {
     ensureRemoteMiningMission('W43N58', 'W43N59');
     retireMission('W43N59');
 
-    syncAllMissions([]); // no remotes active
+    syncAllMissions('W43N58', []); // no remotes active
 
     // Should stay retiring (not double-change)
     expect(getMissionStatus('W43N59')).toBe('retiring');
@@ -440,10 +440,73 @@ describe('syncAllMissions', () => {
     ensureRemoteMiningMission('W43N58', 'W43N59');
     ensureRemoteMiningMission('W43N58', 'W44N58');
 
-    syncAllMissions(['W43N59', 'W44N58']);
+    syncAllMissions('W43N58', ['W43N59', 'W44N58']);
 
     expect(getMissionStatus('W43N59')).toBe('active');
     expect(getMissionStatus('W44N58')).toBe('active');
+  });
+
+  it('reactivates a retiring mission whose room is re-selected (un-latch)', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    retireMission('W43N59');
+    expect(getMissionStatus('W43N59')).toBe('retiring');
+
+    // Room is back in the selection → recover the mission
+    syncAllMissions('W43N58', ['W43N59']);
+
+    expect(getMissionStatus('W43N59')).toBe('active');
+  });
+
+  it('leaves a stalled mission stalled when its room is in the list (does not stomp spawner state)', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    setMissionStatus('W43N59', 'stalled');
+
+    syncAllMissions('W43N58', ['W43N59']);
+
+    expect(getMissionStatus('W43N59')).toBe('stalled');
+  });
+
+  it('leaves an active mission active when its room is in the list (no spurious churn)', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+
+    syncAllMissions('W43N58', ['W43N59']);
+
+    expect(getMissionStatus('W43N59')).toBe('active');
+  });
+
+  it('retires a stalled mission whose room is NOT in the list', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    setMissionStatus('W43N59', 'stalled');
+
+    syncAllMissions('W43N58', []); // no remotes active
+
+    expect(getMissionStatus('W43N59')).toBe('retiring');
+  });
+
+  it("does not touch a different home room's missions (cross-home isolation)", () => {
+    // Two colonies, each with one active remote.
+    ensureRemoteMiningMission('W43N58', 'W43N59'); // home A
+    ensureRemoteMiningMission('W44N57', 'W44N58'); // home B
+
+    // Reconcile only home A. Home B's remote is not in A's list, but it must
+    // NOT be retired because it belongs to a different home.
+    syncAllMissions('W43N58', ['W43N59']);
+
+    expect(getMissionStatus('W43N59')).toBe('active');
+    expect(getMissionStatus('W44N58')).toBe('active'); // untouched — not this home's mission
+  });
+
+  it("recovers only this home's retiring mission, leaving another home's retiring mission alone", () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59'); // home A
+    ensureRemoteMiningMission('W44N57', 'W44N58'); // home B
+    retireMission('W43N59');
+    retireMission('W44N58');
+
+    // Home A reconciles with its remote re-selected.
+    syncAllMissions('W43N58', ['W43N59']);
+
+    expect(getMissionStatus('W43N59')).toBe('active'); // recovered (this home)
+    expect(getMissionStatus('W44N58')).toBe('retiring'); // untouched (other home)
   });
 });
 

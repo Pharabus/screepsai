@@ -1013,7 +1013,7 @@ export function runSpawner(): void {
       if (Game.time % 100 === 0) {
         selectRemoteRooms(room);
         // Retire missions for any remotes that selectRemoteRooms just removed
-        syncAllMissions(Memory.rooms[room.name]?.remoteRooms ?? []);
+        syncAllMissions(room.name, Memory.rooms[room.name]?.remoteRooms ?? []);
       }
       // Scan remote rooms we have visibility into
       const remoteRooms = Memory.rooms[room.name]?.remoteRooms ?? [];
