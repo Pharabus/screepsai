@@ -618,6 +618,11 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 
   // Priority 0: Defenders (dynamic, only when threat active)
   const comp = defenderComposition(room);
+  // Annotate the active defense mission with the quota we're working toward
+  // (disjoint field; defense.ts owns the rest of the record — avoids a circular
+  // import between defense.ts and spawner.ts).
+  const defenseMission = Memory.missions?.defense?.[room.name];
+  if (defenseMission && defenseMission.status === 'active') defenseMission.composition = comp;
   const wantDefenderBoosts =
     comp.melee > 0 || comp.ranged > 0 || comp.healer > 0 ? defenderBoostsWanted(room) : false;
   if (comp.melee > 0) {

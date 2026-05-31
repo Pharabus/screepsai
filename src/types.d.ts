@@ -293,7 +293,7 @@ interface LegacyColonyState {
 // ---------------------------------------------------------------------------
 
 /** Extensible union of all mission types. Extend by adding '| newType'. */
-type MissionType = 'remoteMining' | 'colony';
+type MissionType = 'remoteMining' | 'colony' | 'defense';
 
 /**
  * Common fields every mission record must carry.
@@ -365,14 +365,46 @@ interface ColonyMission extends MissionBase {
 }
 
 /**
+ * A DefenseMission is the registry record for one owned room's active combat
+ * engagement. Created when a threat appears, set 'retiring' when it clears so the
+ * generic GC reclaims it ~300 ticks later (no defense-specific GC needed). It
+ * mirrors the `combatActive` lifecycle in defense.ts — that flag is retained for
+ * safe-mode/tower-drain logging; a future cleanup could consolidate the two.
+ */
+interface DefenseMission extends MissionBase {
+  type: 'defense';
+  /** Stable key == defended room name. */
+  id: string;
+  roomName: string;
+  /** 'active' while a threat is present; 'retiring' once it clears (GC reclaims). */
+  status: 'active' | 'retiring';
+  /** Last observed total threat score (snapshot). */
+  threatScore: number;
+  /** Last observed hostile creep count. */
+  hostileCount: number;
+  /** Attacker usernames seen this engagement. */
+  owners: string[];
+  /** Spawn quota the spawner is working toward (stamped by the spawner; {0,0,0} when towers solo it). */
+  composition: { melee: number; ranged: number; healer: number };
+  /** Derived: defender + rangedDefender creep names currently in the room. */
+  defenderIds: string[];
+  /** Derived: healer creep names currently in the room. */
+  healerIds: string[];
+  /** Tick the threat cleared (set when status → retiring). */
+  endedAt?: number;
+}
+
+/**
  * Strictly-typed mission registry.  Adding a future mission type requires one
- * extra field here and a matching sub-map in memoryInit.ts.
+ * extra field here and a matching sub-map guard in getMissionRegistry().
  */
 interface MissionRegistry {
   /** One record per remote room being actively mined. Key = remote room name. */
   remoteMining: Record<string, RemoteMiningMission>;
   /** One record per claim/expansion target. Key = target room name. */
   colony: Record<string, ColonyMission>;
+  /** One record per owned room with an active/recent combat engagement. Key = room name. */
+  defense: Record<string, DefenseMission>;
 }
 
 interface Memory {

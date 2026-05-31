@@ -36,11 +36,12 @@ export const STALL_HOSTILE_TICKS = 500;
  * so the registry is always properly shaped.
  */
 export function getMissionRegistry(): MissionRegistry {
-  if (!Memory.missions) Memory.missions = { remoteMining: {}, colony: {} };
-  // Backfill sub-maps for registries created before a type was added (live memory
-  // from Step 1 has only remoteMining).
+  if (!Memory.missions) Memory.missions = { remoteMining: {}, colony: {}, defense: {} };
+  // Backfill sub-maps for registries created before a type was added (e.g. live
+  // memory from an earlier step that lacks colony/defense).
   if (!Memory.missions.remoteMining) Memory.missions.remoteMining = {};
   if (!Memory.missions.colony) Memory.missions.colony = {};
+  if (!Memory.missions.defense) Memory.missions.defense = {};
   return Memory.missions;
 }
 
@@ -63,7 +64,7 @@ export function getMissionsOfType<T extends MissionBase>(
  * Mirrors the pattern of other reset* exports in the codebase.
  */
 export function resetMissions(): void {
-  Memory.missions = { remoteMining: {}, colony: {} };
+  Memory.missions = { remoteMining: {}, colony: {}, defense: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,8 @@ export function resetMissions(): void {
  *
  * Colony missions are never deleted here: their status is only ever
  * claiming/bootstrapping/active (never 'retiring'), so the status guard skips them.
+ * Defense missions ARE reclaimed by this predicate: a cleared engagement is set
+ * 'retiring' and has no haulerIds/reserverId, so it deletes once it ages past 300.
  *
  * Call once per 100 ticks from runSpawner().
  */

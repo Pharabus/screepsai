@@ -16,6 +16,66 @@ import { threatScore } from '../utils/threat';
 import { recordHostile, requestNeighborSegment } from '../utils/neighbors';
 import { getStructuresByType } from '../utils/tickCache';
 import { logCombat } from '../utils/combatLog';
+import { getMissionsOfType } from '../utils/missions';
+
+const DEFENDER_ROLES: ReadonlySet<CreepRoleName> = new Set(['defender', 'rangedDefender']);
+
+/** Unique attacker usernames among a hostile set (NPC names included). */
+function hostileOwners(hostiles: Creep[]): string[] {
+  return [...new Set(hostiles.flatMap((h) => (h.owner?.username ? [h.owner.username] : [])))];
+}
+
+/**
+ * Open (or reactivate) the DefenseMission for a room at the start of an engagement.
+ * Mirrors the combatActive open transition. A 'retiring' record from a recent,
+ * not-yet-GC'd engagement is reused with a fresh createdAt.
+ */
+function openDefenseMission(roomName: string, threat: number, hostiles: Creep[]): void {
+  const missions = getMissionsOfType<DefenseMission>('defense');
+  missions[roomName] = {
+    type: 'defense',
+    id: roomName,
+    roomName,
+    status: 'active',
+    createdAt: Game.time,
+    lastSynced: Game.time,
+    threatScore: threat,
+    hostileCount: hostiles.length,
+    owners: hostileOwners(hostiles),
+    composition: { melee: 0, ranged: 0, healer: 0 },
+    defenderIds: [],
+    healerIds: [],
+  };
+}
+
+/** Refresh the live DefenseMission's threat snapshot and defender roster each tick. */
+function syncDefenseMission(roomName: string, threat: number, hostiles: Creep[]): void {
+  const mission = getMissionsOfType<DefenseMission>('defense')[roomName];
+  if (!mission || mission.status !== 'active') return;
+  mission.threatScore = threat;
+  mission.hostileCount = hostiles.length;
+  mission.owners = [...new Set([...mission.owners, ...hostileOwners(hostiles)])];
+  mission.lastSynced = Game.time;
+
+  const defenderIds: string[] = [];
+  const healerIds: string[] = [];
+  for (const c of Object.values(Game.creeps)) {
+    if (c.room.name !== roomName) continue;
+    if (DEFENDER_ROLES.has(c.memory.role)) defenderIds.push(c.name);
+    else if (c.memory.role === 'healer') healerIds.push(c.name);
+  }
+  mission.defenderIds = defenderIds;
+  mission.healerIds = healerIds;
+}
+
+/** Close the DefenseMission when the threat clears; the generic GC reclaims it later. */
+function closeDefenseMission(roomName: string): void {
+  const mission = getMissionsOfType<DefenseMission>('defense')[roomName];
+  if (!mission || mission.status !== 'active') return;
+  mission.status = 'retiring';
+  mission.endedAt = Game.time;
+  mission.lastSynced = Game.time;
+}
 
 // Hostile is treated as inside the base perimeter when within this range of
 // a spawn, storage, or the controller.
@@ -132,18 +192,20 @@ export function runDefense(): void {
         mem.combatStartedAt = Game.time;
         mem.combatSafeModeLogged = false;
         mem.combatTowerDrainLogged = false;
-        const owners = [
-          ...new Set(hostiles.flatMap((h) => (h.owner?.username ? [h.owner.username] : []))),
-        ];
         logCombat({
           tick: Game.time,
           room: room.name,
           event: 'threat_appeared',
           threatScore: threat,
           hostileCount: hostiles.length,
-          owners,
+          owners: hostileOwners(hostiles),
         });
+        // Registry record for the engagement (alongside the combatActive flag,
+        // which still drives safe-mode/tower-drain logging).
+        openDefenseMission(room.name, threat, hostiles);
       }
+      // Refresh the engagement snapshot + defender roster every active tick.
+      syncDefenseMission(room.name, threat, hostiles);
     } else if (mem.combatActive) {
       // All hostiles gone this tick — close the combat record.
       mem.combatActive = false;
@@ -156,6 +218,7 @@ export function runDefense(): void {
         event: 'threat_ended',
         details: `combat lasted ~${duration} ticks`,
       });
+      closeDefenseMission(room.name);
     }
 
     for (const h of hostiles) {

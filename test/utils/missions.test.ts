@@ -104,6 +104,7 @@ describe('ensureRemoteMiningMission', () => {
         },
       },
       colony: {},
+      defense: {},
     };
 
     const m = ensureRemoteMiningMission('W43N58', 'W43N59');
@@ -249,6 +250,7 @@ describe('syncMission', () => {
         },
       },
       colony: {},
+      defense: {},
     };
 
     syncMission('W43N59');
@@ -523,6 +525,7 @@ describe('getMissionRegistry', () => {
     expect(registry).toBeDefined();
     expect(registry.remoteMining).toBeDefined();
     expect(registry.colony).toBeDefined();
+    expect(registry.defense).toBeDefined();
     expect(Memory.missions).toBe(registry);
   });
 
@@ -532,17 +535,19 @@ describe('getMissionRegistry', () => {
     expect(first).toBe(second);
   });
 
-  it('includes both the remoteMining and colony sub-maps', () => {
+  it('includes the remoteMining, colony, and defense sub-maps', () => {
     const registry = getMissionRegistry();
     expect(typeof registry.remoteMining).toBe('object');
     expect(typeof registry.colony).toBe('object');
+    expect(typeof registry.defense).toBe('object');
   });
 
-  it('backfills the colony sub-map on a registry created before it existed', () => {
-    // Simulate Step-1 live memory: only remoteMining present.
+  it('backfills the colony and defense sub-maps on a registry created before they existed', () => {
+    // Simulate older live memory: only remoteMining present.
     (Memory as any).missions = { remoteMining: {} };
     const registry = getMissionRegistry();
     expect(registry.colony).toBeDefined();
+    expect(registry.defense).toBeDefined();
     expect(registry.remoteMining).toBeDefined();
   });
 });
@@ -583,7 +588,9 @@ describe('resetMissions', () => {
     const registry = getMissionRegistry();
     expect(registry.remoteMining).toBeDefined();
     expect(registry.colony).toBeDefined();
+    expect(registry.defense).toBeDefined();
     expect(Object.keys(registry.remoteMining)).toHaveLength(0);
     expect(Object.keys(registry.colony)).toHaveLength(0);
+    expect(Object.keys(registry.defense)).toHaveLength(0);
   });
 });
