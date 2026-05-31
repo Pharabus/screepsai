@@ -10,6 +10,11 @@ import { getMyUsername } from './identity';
 // a second remote's spawn/bootstrap cost doesn't stall storage growth.
 export const REMOTE_ROOM_SCALE_THRESHOLD = 100_000;
 
+/** Selection rejection window after a scouted NPC-only (invader/keeper) sighting — short, because hunters clear invaders fast. */
+export const NPC_SCOUT_REJECT_TICKS = 300;
+/** Selection rejection window after a scouted player sighting — long, players warrant caution. */
+export const PLAYER_SCOUT_REJECT_TICKS = 1500;
+
 export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = false): number {
   const rmem = Memory.rooms[targetRoomName];
   if (!rmem?.scoutedAt) return -1;
@@ -19,10 +24,16 @@ export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = fa
   const myUsername = getMyUsername();
   if (rmem.scoutedReservation && rmem.scoutedReservation !== myUsername) return -1;
 
-  // Reject rooms with recent hostile presence (stale sightings are likely transient invaders)
+  // Reject rooms with recent hostile presence. NPC-only sightings get a short
+  // window (hunters clear invaders fast); player sightings get a long one.
   const hostiles = rmem.scoutedHostiles ?? 0;
-  const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
-  if (hostiles > 0 && scoutAge < 1500) return -1;
+  if (hostiles > 0) {
+    const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
+    // Missing flag (legacy memory) → treat as player (long window), matching remoteThreat's fail-safe.
+    const isPlayer = rmem.scoutedHostileIsPlayer !== false;
+    const window = isPlayer ? PLAYER_SCOUT_REJECT_TICKS : NPC_SCOUT_REJECT_TICKS;
+    if (scoutAge < window) return -1;
+  }
 
   // Reject rooms where aggressive players (not mere scouts) have been seen recently
   const aggressiveInRoom = hostilesSeen(targetRoomName, 20_000).some(

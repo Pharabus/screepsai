@@ -117,7 +117,7 @@ All roles use `src/utils/stateMachine.ts`. Each `StateHandler.run(creep)` return
 ### Remote mining
 
 1. `scout` (1 MOVE) records source count, ownership, hostile presence, and source positions. Spawned only when below the storage-gated remote cap — no permanent scout.
-2. `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) — rejects owned/player-reserved/hostile rooms; picks best by source count up to a storage-gated cap with hysteresis to prevent churn near the threshold.
+2. `selectRemoteRooms()` (`src/utils/remotePlanner.ts`) — rejects owned/player-reserved/hostile rooms; picks best by source count up to a storage-gated cap with hysteresis to prevent churn near the threshold. The scouted-hostile rejection is **NPC-aware**: a sighting flagged NPC-only (`scoutedHostileIsPlayer === false`) blocks selection for just `NPC_SCOUT_REJECT_TICKS` (300 — hunters clear invaders fast), while a player sighting (or missing flag → fail-safe player) blocks for `PLAYER_SCOUT_REJECT_TICKS` (1500). Known-*aggressive* players are independently hard-blocked 20k ticks by the `aggressiveInRoom`/`hostilesSeen` check. Mirrors the live-validated NPC-vs-player split in `remoteThreat.ts`.
 3. `ensureRemoteRoomPlan()` — scans visible remote sources; bootstraps from `scoutedSourceData` when dark.
 4. Remote miners reuse the `miner` role with `targetRoom` set. They have 1 CARRY to build/repair their container. Pre-spawned `REMOTE_MINER_PRESPAWN_TICKS` before predecessor TTL to avoid coverage gaps.
 5. `remoteHauler` picks up energy from the remote room, delivers home. Delivers `RESOURCE_ENERGY` **only** — picking up non-energy minerals would trap them in the hauler permanently.

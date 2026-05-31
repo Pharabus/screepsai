@@ -9,6 +9,9 @@ function pickScoutTarget(creep: Creep): string | undefined {
   return findScoutTarget(creep.memory.homeRoom ?? creep.room.name);
 }
 
+/** NPC hostile owner usernames — sightings of only these get the short rejection window. */
+const NPC_USERNAMES = new Set(['Invader', 'Source Keeper']);
+
 const SCOUT_MAX_DEPTH = 3;
 const SCOUT_STALE_TICKS = 5000;
 // Rooms flagged scoutUnreachable use this longer cooldown (~4.6 h at 3 t/s)
@@ -195,6 +198,10 @@ const states: StateMachineDefinition = {
 
         const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
         rmem.scoutedHostiles = hostiles.length;
+        rmem.scoutedHostileIsPlayer = hostiles.some((h) => {
+          const u = h.owner?.username;
+          return !!u && !NPC_USERNAMES.has(u);
+        });
 
         const keeperLairs = getStructuresByType(creep.room)[STRUCTURE_KEEPER_LAIR] ?? [];
         rmem.scoutedHasKeepers = keeperLairs.length > 0;

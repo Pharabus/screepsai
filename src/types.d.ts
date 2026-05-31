@@ -177,6 +177,8 @@ interface RoomMemory {
   scoutedOwner?: string;
   scoutedReservation?: string;
   scoutedHostiles?: number;
+  /** True if the last scouted hostile sighting included a player (long rejection window); NPC-only (Invader/Source Keeper) sightings use a short window. */
+  scoutedHostileIsPlayer?: boolean;
   scoutedHasController?: boolean;
   /** True when the room contains Source Keeper Lairs — permanently hostile, never remote-mine */
   scoutedHasKeepers?: boolean;

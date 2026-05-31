@@ -3,6 +3,8 @@ import {
   evaluateRemoteRoom,
   selectRemoteRooms,
   remoteRoomCap,
+  NPC_SCOUT_REJECT_TICKS,
+  PLAYER_SCOUT_REJECT_TICKS,
 } from '../../src/utils/remotePlanner';
 import { recordHostile } from '../../src/utils/neighbors';
 import { flushSegments } from '../../src/utils/segments';
@@ -103,6 +105,80 @@ describe('remotePlanner', () => {
         scoutedSources: 1,
       } as any;
       expect(evaluateRemoteRoom('W2N1')).toBe(1);
+    });
+
+    it('rejects an NPC-only hostile sighting within the short window', () => {
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS - 1;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: false,
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+    });
+
+    it('accepts an NPC-only hostile sighting once the short window elapses', () => {
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: false,
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(2);
+    });
+
+    it('rejects an NPC-only sighting that is still inside the player window but past the NPC window only once NPC window passes', () => {
+      // Confirms the NPC window (not the player window) governs an NPC sighting:
+      // at NPC_SCOUT_REJECT_TICKS the room is accepted even though it would still
+      // be rejected under the longer player window.
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: false,
+        scoutedSources: 2,
+      } as any;
+      expect(NPC_SCOUT_REJECT_TICKS).toBeLessThan(PLAYER_SCOUT_REJECT_TICKS);
+      expect(evaluateRemoteRoom('W2N1')).toBe(2);
+    });
+
+    it('rejects a player hostile sighting until the long window elapses', () => {
+      Game.time = 1000 + PLAYER_SCOUT_REJECT_TICKS - 1;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: true,
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+    });
+
+    it('accepts a player hostile sighting once the long window elapses', () => {
+      Game.time = 1000 + PLAYER_SCOUT_REJECT_TICKS;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: true,
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(2);
+    });
+
+    it('treats a missing scoutedHostileIsPlayer flag as a player (long window, fail-safe)', () => {
+      // Legacy memory without the flag: still rejected at NPC-window age...
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedHostiles: 1,
+        scoutedSources: 2,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+
+      // ...and only accepted once the full player window has elapsed.
+      Game.time = 1000 + PLAYER_SCOUT_REJECT_TICKS;
+      expect(evaluateRemoteRoom('W2N1')).toBe(2);
     });
 
     it('rejects rooms where an aggressive neighbor has been seen recently', () => {

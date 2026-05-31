@@ -248,7 +248,56 @@ describe('scout', () => {
         { id: 'src2', x: 30, y: 40 },
       ]);
       expect(rmem.scoutedHostiles).toBe(0);
+      expect(rmem.scoutedHostileIsPlayer).toBe(false);
       expect(creep.memory.targetRoom).toBeUndefined();
+    });
+
+    function runScoutWithHostiles(hostiles: any[]): RoomMemory {
+      Game.time = 500;
+      const targetRoom = mockRoom({
+        name: 'W2N1',
+        controller: { owner: undefined, reservation: undefined, pos: { x: 25, y: 25 } },
+        find: vi.fn((type: number) => {
+          if (type === FIND_HOSTILE_CREEPS) return hostiles;
+          return [];
+        }),
+      });
+      Memory.rooms['W2N1'] = {};
+      const creep = mockCreep({
+        memory: { role: 'scout', state: 'SCOUT', targetRoom: 'W2N1' },
+        room: targetRoom,
+        pos: new RoomPosition(25, 25, 'W2N1'),
+      });
+      scout.run(creep);
+      return Memory.rooms['W2N1'];
+    }
+
+    it('sets scoutedHostileIsPlayer true for a player-owned hostile', () => {
+      const rmem = runScoutWithHostiles([{ owner: { username: 'EnemyPlayer' } }]);
+      expect(rmem.scoutedHostiles).toBe(1);
+      expect(rmem.scoutedHostileIsPlayer).toBe(true);
+    });
+
+    it('sets scoutedHostileIsPlayer false for an Invader-only sighting', () => {
+      const rmem = runScoutWithHostiles([{ owner: { username: 'Invader' } }]);
+      expect(rmem.scoutedHostiles).toBe(1);
+      expect(rmem.scoutedHostileIsPlayer).toBe(false);
+    });
+
+    it('sets scoutedHostileIsPlayer false for a Source Keeper-only sighting', () => {
+      const rmem = runScoutWithHostiles([{ owner: { username: 'Source Keeper' } }]);
+      expect(rmem.scoutedHostiles).toBe(1);
+      expect(rmem.scoutedHostileIsPlayer).toBe(false);
+    });
+
+    it('sets scoutedHostileIsPlayer true for a mixed NPC + player group', () => {
+      const rmem = runScoutWithHostiles([
+        { owner: { username: 'Invader' } },
+        { owner: { username: 'EnemyPlayer' } },
+        { owner: { username: 'Source Keeper' } },
+      ]);
+      expect(rmem.scoutedHostiles).toBe(3);
+      expect(rmem.scoutedHostileIsPlayer).toBe(true);
     });
 
     it('records controller position when controller exists', () => {
