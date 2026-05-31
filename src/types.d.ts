@@ -299,6 +299,26 @@ interface ColonyState {
 // Mission records (src/utils/missions.ts)
 // ---------------------------------------------------------------------------
 
+/** Extensible union of all mission types. Extend by adding '| newType'. */
+type MissionType = 'remoteMining';
+
+/**
+ * Common fields every mission record must carry.
+ * Individual mission interfaces extend this with type-specific fields.
+ */
+interface MissionBase {
+  /** Discriminant tag — identifies the mission category. */
+  type: MissionType;
+  /** Stable unique key within the mission type's sub-map. */
+  id: string;
+  /** Lifecycle status; concrete mission types narrow this to their own union. */
+  status: string;
+  /** Game.time when the mission was created. */
+  createdAt: number;
+  /** Game.time of the last sync call. */
+  lastSynced: number;
+}
+
 /**
  * A RemoteMiningMission represents the "remote mining <room>" goal as a single
  * typed object in Memory. It owns the hauler IDs and reserver ID for a remote,
@@ -309,28 +329,34 @@ interface ColonyState {
  * of truth. haulerIds and reserverId are derived caches refreshed each tick by
  * syncMission() — the creep's own memory.missionId is the authoritative record.
  */
-interface RemoteMiningMission {
+interface RemoteMiningMission extends MissionBase {
+  type: 'remoteMining';
+  /** Stable key == remoteRoom name. */
+  id: string;
   homeRoom: string;
   remoteRoom: string;
+  /** Narrows MissionBase.status to the valid values for this mission type. */
   status: 'active' | 'stalled' | 'retiring';
-  /** Game.time when the mission was created */
-  createdAt: number;
-  /** Game.time of the last syncMission() call */
-  lastSynced: number;
   /** Names of remoteHauler creeps serving this remote (derived from missionId scan) */
   haulerIds: string[];
   /** Name of the active reserver creep, or null when none is alive */
   reserverId: string | null;
 }
 
+/**
+ * Strictly-typed mission registry.  Adding a future mission type requires one
+ * extra field here and a matching sub-map in memoryInit.ts.
+ */
+interface MissionRegistry {
+  /** One record per remote room being actively mined. Key = remote room name. */
+  remoteMining: Record<string, RemoteMiningMission>;
+}
+
 interface Memory {
   creeps: { [name: string]: CreepMemory };
   rooms: { [name: string]: RoomMemory };
   /** Mission records keyed by mission type then mission ID. */
-  missions?: {
-    /** One record per remote room being actively mined. Key = remote room name. */
-    remoteMining: Record<string, RemoteMiningMission>;
-  };
+  missions?: MissionRegistry;
   /** Multi-room expansion targets keyed by the room being claimed. */
   colonies?: { [targetRoom: string]: ColonyState };
   /**

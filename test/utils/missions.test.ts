@@ -17,6 +17,9 @@ import {
   syncAllMissions,
   getRemoteMissionKey,
   STALL_HOSTILE_TICKS,
+  getMissionRegistry,
+  getMissionsOfType,
+  resetMissions,
 } from '../../src/utils/missions';
 import { resetGameGlobals } from '../mocks/screeps';
 
@@ -59,6 +62,12 @@ describe('ensureRemoteMiningMission', () => {
     expect(m.createdAt).toBe(Game.time);
   });
 
+  it('stamps type and id on newly created records', () => {
+    const m = ensureRemoteMiningMission('W43N58', 'W43N59');
+    expect(m.type).toBe('remoteMining');
+    expect(m.id).toBe('W43N59');
+  });
+
   it('returns the same record on subsequent calls (idempotent)', () => {
     const m1 = ensureRemoteMiningMission('W43N58', 'W43N59');
     const m2 = ensureRemoteMiningMission('W43N58', 'W43N59');
@@ -76,6 +85,34 @@ describe('ensureRemoteMiningMission', () => {
     expect(m1).not.toBe(m2);
     expect(m1.remoteRoom).toBe('W43N59');
     expect(m2.remoteRoom).toBe('W44N58');
+  });
+
+  it('backfills type and id on a pre-existing record that lacks them', () => {
+    // Simulate a record written by an older deploy (no type/id fields)
+    Memory.missions = {
+      remoteMining: {
+        W43N59: {
+          type: undefined as unknown as 'remoteMining',
+          id: undefined as unknown as string,
+          homeRoom: 'W43N58',
+          remoteRoom: 'W43N59',
+          status: 'active',
+          createdAt: Game.time - 50,
+          lastSynced: Game.time - 1,
+          haulerIds: ['h1', 'h2'],
+          reserverId: 'res1',
+        },
+      },
+    };
+
+    const m = ensureRemoteMiningMission('W43N58', 'W43N59');
+
+    expect(m.type).toBe('remoteMining');
+    expect(m.id).toBe('W43N59');
+    // Existing creep ids must be preserved
+    expect(m.haulerIds).toEqual(['h1', 'h2']);
+    expect(m.reserverId).toBe('res1');
+    expect(m.status).toBe('active');
   });
 });
 
@@ -192,6 +229,35 @@ describe('syncMission', () => {
     syncMission('W43N59');
 
     expect(m.lastSynced).toBe(Game.time);
+  });
+
+  it('backfills type and id on a pre-existing record that lacks them', () => {
+    // Simulate an old in-memory record without type/id
+    Memory.missions = {
+      remoteMining: {
+        W43N59: {
+          type: undefined as unknown as 'remoteMining',
+          id: undefined as unknown as string,
+          homeRoom: 'W43N58',
+          remoteRoom: 'W43N59',
+          status: 'active',
+          createdAt: Game.time - 10,
+          lastSynced: Game.time - 1,
+          haulerIds: ['existing_hauler'],
+          reserverId: 'existing_res',
+        },
+      },
+    };
+
+    syncMission('W43N59');
+
+    const m = getRemoteMiningMission('W43N59')!;
+    expect(m.type).toBe('remoteMining');
+    expect(m.id).toBe('W43N59');
+    // Existing data must be preserved — the sync only adds missing fields
+    expect(m.haulerIds).toHaveLength(0); // re-derived from live creeps (none present)
+    expect(m.reserverId).toBeNull(); // re-derived (no live reserver)
+    expect(m.status).toBe('active');
   });
 });
 
@@ -318,6 +384,30 @@ describe('garbageCollectMissions', () => {
 
     expect(getRemoteMiningMission('W43N59')).toBeDefined();
   });
+
+  it('iterates the registry rather than a hardcoded key — removes an aged retiring mission', () => {
+    // Place a mission directly via the registry to prove the GC walks the
+    // registry dynamically, not a hardcoded 'remoteMining' string.
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    retireMission('W43N59');
+    const m = getRemoteMiningMission('W43N59')!;
+    m.createdAt = Game.time - 500;
+    m.haulerIds = [];
+    m.reserverId = null;
+
+    // A second mission that must survive (active, not retiring)
+    ensureRemoteMiningMission('W43N58', 'W44N58');
+    const mActive = getRemoteMiningMission('W44N58')!;
+    mActive.createdAt = Game.time - 500;
+    mActive.haulerIds = [];
+    mActive.reserverId = null;
+
+    garbageCollectMissions();
+
+    // Aged retiring one is gone; active one survives
+    expect(getRemoteMiningMission('W43N59')).toBeUndefined();
+    expect(getRemoteMiningMission('W44N58')).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -354,5 +444,69 @@ describe('syncAllMissions', () => {
 
     expect(getMissionStatus('W43N59')).toBe('active');
     expect(getMissionStatus('W44N58')).toBe('active');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMissionRegistry
+// ---------------------------------------------------------------------------
+
+describe('getMissionRegistry', () => {
+  it('initialises Memory.missions when absent', () => {
+    (Memory as any).missions = undefined;
+    const registry = getMissionRegistry();
+    expect(registry).toBeDefined();
+    expect(registry.remoteMining).toBeDefined();
+    expect(Memory.missions).toBe(registry);
+  });
+
+  it('returns the existing registry when already present', () => {
+    const first = getMissionRegistry();
+    const second = getMissionRegistry();
+    expect(first).toBe(second);
+  });
+
+  it('includes the remoteMining sub-map', () => {
+    const registry = getMissionRegistry();
+    expect(typeof registry.remoteMining).toBe('object');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMissionsOfType
+// ---------------------------------------------------------------------------
+
+describe('getMissionsOfType', () => {
+  it('returns the remoteMining sub-map', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    const subMap = getMissionsOfType<RemoteMiningMission>('remoteMining');
+    expect(subMap['W43N59']).toBeDefined();
+    expect(subMap['W43N59'].remoteRoom).toBe('W43N59');
+  });
+
+  it('initialises Memory.missions if absent before returning the sub-map', () => {
+    (Memory as any).missions = undefined;
+    const subMap = getMissionsOfType<RemoteMiningMission>('remoteMining');
+    expect(subMap).toBeDefined();
+    expect(typeof subMap).toBe('object');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resetMissions
+// ---------------------------------------------------------------------------
+
+describe('resetMissions', () => {
+  it('clears all mission records', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    resetMissions();
+    expect(getRemoteMiningMission('W43N59')).toBeUndefined();
+  });
+
+  it('leaves an empty but valid registry after reset', () => {
+    resetMissions();
+    const registry = getMissionRegistry();
+    expect(registry.remoteMining).toBeDefined();
+    expect(Object.keys(registry.remoteMining)).toHaveLength(0);
   });
 });

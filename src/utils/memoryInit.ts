@@ -1,3 +1,5 @@
+import { getMissionRegistry } from './missions';
+
 /**
  * One-shot Memory shape initialisation.
  *
@@ -19,5 +21,7 @@ export function initMemory(): void {
   // without needing to guard.
   if (!Memory.creeps) Memory.creeps = {};
   if (!Memory.rooms) Memory.rooms = {};
-  if (!Memory.missions) Memory.missions = { remoteMining: {} };
+  // getMissionRegistry() initialises Memory.missions with all registered
+  // sub-maps if absent — the single source of truth for registry shape.
+  getMissionRegistry();
 }

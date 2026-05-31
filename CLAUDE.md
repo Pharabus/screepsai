@@ -50,6 +50,10 @@ Reordering has subtle effects: e.g. moving `runSpawner` ahead of `runDefense` la
 - **`RawMemory.segments` via `src/utils/segments.ts`** — cold/large (room plans, scout reports). Lazy parse, dirty-flag writes. At most 10 active per tick; use `requestSegment(id)`. Segment 5 = neighbor intel.
 - **`src/utils/tickCache.ts`** — within-tick memoisation via `cached(key, fn)`. Cleared by `resetTickCache()`.
 
+### Mission registry (`src/utils/missions.ts`)
+
+Grouped goal-tracking lives in `Memory.missions`, a strictly-typed `MissionRegistry` (one sub-map per `MissionType`). Every record extends `MissionBase` (`type`, `id`, `status`, `createdAt`, `lastSynced`). Generic helpers — `getMissionRegistry()`, `getMissionsOfType<T>(type)`, `garbageCollectMissions()` (registry-wide) — sit under the type-specific API. **Invariant from the shelved hauler pool:** a mission governs spawn **quotas, lifecycle, and strategic gating** only — it counts creeps (e.g. `RemoteMiningMission.haulerIds.length`) and never micro-dispatches a committed creep's per-tick task. Today the only type is `remoteMining` (consumed by the spawner; miner ownership stays canonical in `RoomMemory.sources[].minerName`). `ColonyState`/`Memory.colonies` remains a separate proto-mission, not yet folded in. Adding a type = one field on `MissionRegistry` + a `memoryInit` sub-map.
+
 `src/utils/memoryInit.ts` guarantees `Memory.creeps` / `Memory.rooms` exist after reset.
 
 ### Adding a role
