@@ -3,7 +3,7 @@ import {
   resetColonySendCache,
   resetReceiversThisTick,
 } from '../../src/managers/terminal';
-import { mockRoom, resetGameGlobals } from '../mocks/screeps';
+import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 
 function mockTerminalStore(resources: Record<string, number>): any {
@@ -815,10 +815,8 @@ describe('runTerminal — colony energy send', () => {
     };
 
     // Both colonies parented by W1N1
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
-      W2N2: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'active' });
+    seedColony('W2N2', { homeRoom: 'W1N1', status: 'active' });
 
     // Source data so scores are non-zero (1 active-miner source each)
     (Memory as any).rooms = {
@@ -1065,9 +1063,7 @@ describe('runTerminal — per-tick receiver dedupe', () => {
     // Both home rooms are parented to the same colony for this test.
     // (In a real game colonies have a single homeRoom, but we're stress-testing
     // the dedupe guard here.)
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'active' });
 
     (Memory as any).rooms = {
       W1N1: {},
@@ -1121,9 +1117,7 @@ describe('runTerminal — per-tick receiver dedupe', () => {
       terminal: colonyTerminal,
     };
     (Game as any).rooms = { W1N1: homeRoom, W2N1: colonyRoom };
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1 },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'active' });
     (Memory as any).rooms = {
       W1N1: {},
       W2N1: {

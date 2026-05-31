@@ -27,6 +27,7 @@ import {
   scoreClaimTarget,
   getColonyScores,
   findClaimCandidates,
+  allColonies,
 } from './utils/colonyPlanner';
 import { roles } from './roles';
 
@@ -88,8 +89,8 @@ export const suggestSpawn = (roomName: string): string => {
 
 /**
  * Begin claiming `targetRoom` parented by `homeRoom`. Validates GCL cap and
- * scouted intel; writes a ColonyState into Memory.colonies on success. If
- * homeRoom is omitted, picks the nearest owned room as the parent.
+ * scouted intel; writes a ColonyMission into Memory.missions.colony on success.
+ * If homeRoom is omitted, picks the nearest owned room as the parent.
  */
 export const claim = (targetRoom: string, homeRoom?: string): string => {
   if (!homeRoom) {
@@ -109,8 +110,8 @@ export const claim = (targetRoom: string, homeRoom?: string): string => {
 };
 
 /**
- * Show the lifecycle state of every entry in Memory.colonies, plus per-room
- * investment priority scores for all owned rooms.
+ * Show the lifecycle state of every colony mission (Memory.missions.colony),
+ * plus per-room investment priority scores for all owned rooms.
  */
 export const colonies = (): string => {
   const lines: string[] = [];
@@ -129,19 +130,19 @@ export const colonies = (): string => {
   }
 
   // Colony lifecycle states
-  const cs = Memory.colonies;
-  if (!cs || Object.keys(cs).length === 0) {
+  const cs = allColonies();
+  if (cs.length === 0) {
     lines.push('no colonies tracked');
   } else {
     lines.push('--- colony lifecycle ---');
-    for (const [room, state] of Object.entries(cs)) {
+    for (const { room, state } of cs) {
       const claimAge = state.claimedAt ? Game.time - state.claimedAt : undefined;
       const activeAge = state.activeAt ? Game.time - state.activeAt : undefined;
       const ageStr = state.activeAt
         ? `, active for ${activeAge}t`
         : state.claimedAt
           ? `, claimed ${claimAge}t ago`
-          : `, started ${Game.time - state.selectedAt}t ago`;
+          : `, started ${Game.time - state.createdAt}t ago`;
       lines.push(`  ${room}: home=${state.homeRoom}, status=${state.status}${ageStr}`);
     }
   }

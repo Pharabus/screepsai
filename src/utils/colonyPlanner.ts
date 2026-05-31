@@ -1,8 +1,12 @@
 /**
  * Colony planner — manages multi-room expansion via the claimer role.
  *
- * A "colony" is a target room we intend to claim. Lifecycle (see ColonyState):
+ * A "colony" is a target room we intend to claim. Lifecycle (see ColonyMission):
  *   claiming → bootstrapping → active
+ *
+ * Colony records live in the generic mission registry (Memory.missions.colony),
+ * keyed by target room name. Legacy Memory.colonies records are migrated in by
+ * migrateColoniesToMissions() the first time updateColonyStates() runs.
  *
  * The home room (parent colony) is responsible for spawning the claimer that
  * takes the target room's controller, then sending colonyBuilders to build the
@@ -21,6 +25,7 @@
 
 import { hostilesSeen, getNeighbor } from './neighbors';
 import { getMyUsername } from './identity';
+import { getMissionsOfType } from './missions';
 
 // ---------------------------------------------------------------------------
 // Colony priority scoring
@@ -280,16 +285,16 @@ export function canClaimAnotherRoom(): { ok: true } | { ok: false; reason: strin
 
 /**
  * Begin claiming a room. Validates GCL room cap and scouted intel, then writes
- * a ColonyState into Memory.colonies. Idempotent — calling on an already-claimed
- * target returns the existing state unchanged.
+ * a ColonyMission into Memory.missions.colony. Idempotent — calling on an
+ * already-claimed target returns the existing mission unchanged.
  */
 export function startClaim(
   targetRoomName: string,
   homeRoomName: string,
-): { ok: true; state: ColonyState } | { ok: false; reason: string } {
-  Memory.colonies ??= {};
+): { ok: true; state: ColonyMission } | { ok: false; reason: string } {
+  const colonies = getMissionsOfType<ColonyMission>('colony');
 
-  const existing = Memory.colonies[targetRoomName];
+  const existing = colonies[targetRoomName];
   if (existing) return { ok: true, state: existing };
 
   const cap = canClaimAnotherRoom();
@@ -305,10 +310,13 @@ export function startClaim(
     return { ok: false, reason: `target ${targetRoomName} not viable: ${evalResult.reason}` };
   }
 
-  const state: ColonyState = {
+  const state: ColonyMission = {
+    type: 'colony',
+    id: targetRoomName,
     homeRoom: homeRoomName,
     status: 'claiming',
-    selectedAt: Game.time,
+    createdAt: Game.time,
+    lastSynced: Game.time,
   };
 
   // Record transit rooms so the spawner can send hunters to unblock the path.
@@ -318,12 +326,42 @@ export function startClaim(
     if (transit.length > 0) state.transitRooms = transit;
   }
 
-  Memory.colonies[targetRoomName] = state;
+  colonies[targetRoomName] = state;
   return { ok: true, state };
 }
 
 /**
- * Walk Memory.colonies and advance lifecycle states based on observed room state.
+ * One-time migration of legacy Memory.colonies records into the mission registry
+ * (Memory.missions.colony). Maps selectedAt→createdAt, stamps type/id/lastSynced,
+ * and carries homeRoom/status/claimedAt/activeAt/transitRooms. Existing colony
+ * missions are not overwritten. Deletes Memory.colonies once copied so it is a
+ * no-op on every subsequent call.
+ */
+function migrateColoniesToMissions(): void {
+  const legacy = Memory.colonies;
+  if (!legacy) return;
+
+  const colonies = getMissionsOfType<ColonyMission>('colony');
+  for (const [targetRoom, old] of Object.entries(legacy)) {
+    if (colonies[targetRoom]) continue; // already migrated / freshly created
+    const migrated: ColonyMission = {
+      type: 'colony',
+      id: targetRoom,
+      homeRoom: old.homeRoom,
+      status: old.status,
+      createdAt: old.selectedAt,
+      lastSynced: Game.time,
+    };
+    if (old.claimedAt !== undefined) migrated.claimedAt = old.claimedAt;
+    if (old.activeAt !== undefined) migrated.activeAt = old.activeAt;
+    if (old.transitRooms !== undefined) migrated.transitRooms = old.transitRooms;
+    colonies[targetRoom] = migrated;
+  }
+  delete Memory.colonies;
+}
+
+/**
+ * Advance colony lifecycle states based on observed room state.
  * Called once per tick from the spawner before queue construction.
  *
  *   claiming      → bootstrapping  when controller.my === true
@@ -331,13 +369,18 @@ export function startClaim(
  *                                  or miner exists (so the colony can refill
  *                                  its own spawn without parent support)
  *
- * Does not delete entries — operators can inspect the historical record via the
- * console. To remove, use `delete Memory.colonies[room]` from the in-game console.
+ * Iterates Memory.missions.colony (migrating any legacy Memory.colonies records
+ * in first). Does not delete entries — operators can inspect the historical
+ * record via the console. To remove, use
+ * `delete Memory.missions.colony[room]` from the in-game console.
  */
 export function updateColonyStates(): void {
-  if (!Memory.colonies) return;
+  migrateColoniesToMissions();
 
-  for (const [targetRoom, state] of Object.entries(Memory.colonies)) {
+  const colonies = getMissionsOfType<ColonyMission>('colony');
+  for (const [targetRoom, state] of Object.entries(colonies)) {
+    state.lastSynced = Game.time;
+
     const room = Game.rooms[targetRoom];
     if (!room) continue; // no visibility — wait
 
@@ -385,11 +428,17 @@ export function updateColonyStates(): void {
 }
 
 /** Colonies parented by a given home room — used by the spawner's queue builder. */
-export function coloniesForHome(homeRoomName: string): { room: string; state: ColonyState }[] {
-  if (!Memory.colonies) return [];
-  const out: { room: string; state: ColonyState }[] = [];
-  for (const [room, state] of Object.entries(Memory.colonies)) {
+export function coloniesForHome(homeRoomName: string): { room: string; state: ColonyMission }[] {
+  const colonies = getMissionsOfType<ColonyMission>('colony');
+  const out: { room: string; state: ColonyMission }[] = [];
+  for (const [room, state] of Object.entries(colonies)) {
     if (state.homeRoom === homeRoomName) out.push({ room, state });
   }
   return out;
+}
+
+/** Every colony mission (room == id) — used by the `colonies()` console command. */
+export function allColonies(): { room: string; state: ColonyMission }[] {
+  const colonies = getMissionsOfType<ColonyMission>('colony');
+  return Object.entries(colonies).map(([room, state]) => ({ room, state }));
 }

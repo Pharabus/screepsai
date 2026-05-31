@@ -1,4 +1,4 @@
-import { resetGameGlobals } from '../mocks/screeps';
+import { resetGameGlobals, seedColony } from '../mocks/screeps';
 import {
   scoreClaimTarget,
   canClaimAnotherRoom,
@@ -6,11 +6,17 @@ import {
   ownedRoomCount,
   coloniesForHome,
   updateColonyStates,
+  allColonies,
   getColonyScore,
   getColonyScores,
   resetColonyScoreCache,
   findClaimCandidates,
 } from '../../src/utils/colonyPlanner';
+
+/** Read a colony mission directly from the registry by target room name. */
+function colony(targetRoom: string): ColonyMission | undefined {
+  return Memory.missions?.colony?.[targetRoom];
+}
 
 function setOwnedRoom(name: string): void {
   Game.rooms[name] = { name, controller: { my: true, level: 6 } } as any;
@@ -202,24 +208,27 @@ describe('colonyPlanner', () => {
       } as any;
     });
 
-    it('writes a ColonyState in claiming status on success', () => {
+    it('writes a ColonyMission in claiming status on success', () => {
       Game.time = 500;
       const result = startClaim('W2N1', 'W1N1');
       expect(result.ok).toBe(true);
-      const state = Memory.colonies!['W2N1'];
+      const state = colony('W2N1')!;
+      expect(state.type).toBe('colony');
+      expect(state.id).toBe('W2N1');
       expect(state.status).toBe('claiming');
       expect(state.homeRoom).toBe('W1N1');
-      expect(state.selectedAt).toBe(500);
+      expect(state.createdAt).toBe(500);
+      expect(state.lastSynced).toBe(500);
     });
 
-    it('is idempotent — does not overwrite existing colony state', () => {
+    it('is idempotent — does not overwrite existing colony mission', () => {
       const first = startClaim('W2N1', 'W1N1');
       expect(first.ok).toBe(true);
       Game.time = 1000;
       const second = startClaim('W2N1', 'W1N1');
       expect(second.ok).toBe(true);
-      // selectedAt remains from the first call
-      expect(Memory.colonies!['W2N1'].selectedAt).toBe(1);
+      // createdAt remains from the first call
+      expect(colony('W2N1')!.createdAt).toBe(1);
     });
 
     it('refuses when GCL is exhausted', () => {
@@ -247,11 +256,9 @@ describe('colonyPlanner', () => {
     });
 
     it('returns colonies parented by the specified home', () => {
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 100 },
-        W2N2: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 200 },
-        W9N9: { homeRoom: 'W5N5', status: 'claiming', selectedAt: 300 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
+      seedColony('W2N2', { homeRoom: 'W1N1', status: 'bootstrapping', createdAt: 200 });
+      seedColony('W9N9', { homeRoom: 'W5N5', status: 'claiming', createdAt: 300 });
       const result = coloniesForHome('W1N1');
       expect(result).toHaveLength(2);
       expect(result.map((c) => c.room).sort()).toEqual(['W2N1', 'W2N2']);
@@ -265,37 +272,36 @@ describe('colonyPlanner', () => {
 
     it('flips claiming → bootstrapping when controller becomes mine', () => {
       Game.time = 500;
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 100 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
       Game.rooms['W2N1'] = {
         name: 'W2N1',
         controller: { my: true, level: 1 },
         find: () => [],
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('bootstrapping');
-      expect(Memory.colonies['W2N1']!.claimedAt).toBe(500);
+      expect(colony('W2N1')!.status).toBe('bootstrapping');
+      expect(colony('W2N1')!.claimedAt).toBe(500);
     });
 
     it('stays in claiming when controller is not yet mine', () => {
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 100 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
       Game.rooms['W2N1'] = {
         name: 'W2N1',
         controller: { my: false },
         find: () => [],
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('claiming');
+      expect(colony('W2N1')!.status).toBe('claiming');
     });
 
     it('flips bootstrapping → active when a spawn exists AND a source container is built', () => {
       Game.time = 700;
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
-      };
+      seedColony('W2N1', {
+        homeRoom: 'W1N1',
+        status: 'bootstrapping',
+        createdAt: 100,
+        claimedAt: 200,
+      });
       // Source container is present — colony can flip to miner economy on its own.
       Memory.rooms['W2N1'] = {
         sources: [
@@ -308,15 +314,18 @@ describe('colonyPlanner', () => {
         find: (type: number) => (type === FIND_MY_SPAWNS ? [{ name: 'S' }] : []),
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('active');
-      expect(Memory.colonies['W2N1']!.activeAt).toBe(700);
+      expect(colony('W2N1')!.status).toBe('active');
+      expect(colony('W2N1')!.activeAt).toBe(700);
     });
 
     it('flips bootstrapping → active when spawn exists, RCL 3, extensions built, and local producer alive', () => {
       Game.time = 700;
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
-      };
+      seedColony('W2N1', {
+        homeRoom: 'W1N1',
+        status: 'bootstrapping',
+        createdAt: 100,
+        claimedAt: 200,
+      });
       // No container yet, but RCL 3 + extensions + local harvester = self-sufficient.
       Memory.rooms['W2N1'] = {
         sources: [{ id: 'src1' as Id<Source>, x: 10, y: 10 }],
@@ -332,15 +341,18 @@ describe('colonyPlanner', () => {
         memory: { role: 'harvester', homeRoom: 'W2N1' },
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('active');
-      expect(Memory.colonies['W2N1']!.activeAt).toBe(700);
+      expect(colony('W2N1')!.status).toBe('active');
+      expect(colony('W2N1')!.activeAt).toBe(700);
     });
 
     it('stays in bootstrapping with only a harvester and no container at RCL 2', () => {
       Game.time = 700;
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
-      };
+      seedColony('W2N1', {
+        homeRoom: 'W1N1',
+        status: 'bootstrapping',
+        createdAt: 100,
+        claimedAt: 200,
+      });
       // RCL 2, no container — a single 1-WORK harvester cannot build containers fast enough.
       Game.rooms['W2N1'] = {
         name: 'W2N1',
@@ -353,14 +365,17 @@ describe('colonyPlanner', () => {
         memory: { role: 'harvester', homeRoom: 'W2N1' },
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('bootstrapping');
+      expect(colony('W2N1')!.status).toBe('bootstrapping');
     });
 
     it('stays in bootstrapping when a spawn exists but no local producer yet', () => {
       Game.time = 700;
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 100, claimedAt: 200 },
-      };
+      seedColony('W2N1', {
+        homeRoom: 'W1N1',
+        status: 'bootstrapping',
+        createdAt: 100,
+        claimedAt: 200,
+      });
       Game.rooms['W2N1'] = {
         name: 'W2N1',
         controller: { my: true },
@@ -374,17 +389,50 @@ describe('colonyPlanner', () => {
         memory: { role: 'colonyBuilder', homeRoom: 'W1N1', targetRoom: 'W2N1' },
       } as any;
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('bootstrapping');
-      expect(Memory.colonies['W2N1']!.activeAt).toBeUndefined();
+      expect(colony('W2N1')!.status).toBe('bootstrapping');
+      expect(colony('W2N1')!.activeAt).toBeUndefined();
     });
 
     it('does nothing when target room has no visibility', () => {
-      Memory.colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 100 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
       // No Game.rooms['W2N1']
       updateColonyStates();
-      expect(Memory.colonies['W2N1']!.status).toBe('claiming');
+      expect(colony('W2N1')!.status).toBe('claiming');
+    });
+
+    it('migrates legacy Memory.colonies into the mission registry, then deletes it', () => {
+      Memory.colonies = {
+        W2N1: {
+          homeRoom: 'W1N1',
+          status: 'active',
+          selectedAt: 100,
+          claimedAt: 200,
+          activeAt: 300,
+        },
+      } as any;
+      // No Game.rooms['W2N1'] — lifecycle transitions are skipped, but migration runs.
+      updateColonyStates();
+
+      const migrated = colony('W2N1')!;
+      expect(migrated).toBeDefined();
+      expect(migrated.type).toBe('colony');
+      expect(migrated.id).toBe('W2N1');
+      expect(migrated.homeRoom).toBe('W1N1');
+      expect(migrated.status).toBe('active');
+      expect(migrated.createdAt).toBe(100); // selectedAt → createdAt
+      expect(migrated.claimedAt).toBe(200);
+      expect(migrated.activeAt).toBe(300);
+      // Legacy store removed after migration
+      expect(Memory.colonies).toBeUndefined();
+    });
+
+    it('exposes every colony mission via allColonies()', () => {
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
+      seedColony('W9N9', { homeRoom: 'W5N5', status: 'active', createdAt: 200 });
+      const all = allColonies()
+        .map((c) => c.room)
+        .sort();
+      expect(all).toEqual(['W2N1', 'W9N9']);
     });
   });
 });

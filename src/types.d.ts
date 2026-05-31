@@ -274,26 +274,17 @@ interface ProfilerSample {
   samples: number;
 }
 
-interface ColonyState {
-  /** Parent colony's room name — the room that owns the spawn budget for bootstrap. */
+/**
+ * @deprecated Pre-registry colony record shape. Read once by
+ * migrateColoniesToMissions(), then Memory.colonies is deleted. Remove this type
+ * and the Memory.colonies field in a later cleanup.
+ */
+interface LegacyColonyState {
   homeRoom: string;
-  /**
-   * Lifecycle of a colony target:
-   * - 'claiming'      → claimer is dispatched; awaiting controller.my === true.
-   * - 'bootstrapping' → room is claimed but no spawn yet. Home room ships colonyBuilders
-   *                     to build the first spawn, then the room transitions to its own
-   *                     regular spawn pipeline.
-   * - 'active'        → room has its own spawn and is self-sufficient (treated as a
-   *                     standard owned room — kept here mostly for status display).
-   */
   status: 'claiming' | 'bootstrapping' | 'active';
-  /** Tick when claim() was issued. */
   selectedAt: number;
-  /** Tick when controller.my flipped to true. */
   claimedAt?: number;
-  /** Tick when the first spawn finished. */
   activeAt?: number;
-  /** Rooms the claimer/colonyBuilder passes through en route (home→target), excluding home and target. */
   transitRooms?: string[];
 }
 
@@ -302,7 +293,7 @@ interface ColonyState {
 // ---------------------------------------------------------------------------
 
 /** Extensible union of all mission types. Extend by adding '| newType'. */
-type MissionType = 'remoteMining';
+type MissionType = 'remoteMining' | 'colony';
 
 /**
  * Common fields every mission record must carry.
@@ -346,12 +337,42 @@ interface RemoteMiningMission extends MissionBase {
 }
 
 /**
+ * A ColonyMission represents a target room we intend to claim and grow into a
+ * self-sufficient colony. Key = targetRoom name (== id).
+ *
+ * Lifecycle:
+ * - 'claiming'      → claimer is dispatched; awaiting controller.my === true.
+ * - 'bootstrapping' → room is claimed but no spawn yet. Home room ships colonyBuilders
+ *                     to build the first spawn, then the room transitions to its own
+ *                     regular spawn pipeline.
+ * - 'active'        → room has its own spawn and is self-sufficient (treated as a
+ *                     standard owned room — kept here mostly for status display).
+ */
+interface ColonyMission extends MissionBase {
+  type: 'colony';
+  /** Stable key == targetRoom name. */
+  id: string;
+  /** Parent colony's room name — the room that owns the spawn budget for bootstrap. */
+  homeRoom: string;
+  /** Narrows MissionBase.status to the valid values for this mission type. */
+  status: 'claiming' | 'bootstrapping' | 'active';
+  /** Tick when controller.my flipped to true. */
+  claimedAt?: number;
+  /** Tick when the first spawn finished. */
+  activeAt?: number;
+  /** Rooms the claimer/colonyBuilder passes through en route (home→target), excluding home and target. */
+  transitRooms?: string[];
+}
+
+/**
  * Strictly-typed mission registry.  Adding a future mission type requires one
  * extra field here and a matching sub-map in memoryInit.ts.
  */
 interface MissionRegistry {
   /** One record per remote room being actively mined. Key = remote room name. */
   remoteMining: Record<string, RemoteMiningMission>;
+  /** One record per claim/expansion target. Key = target room name. */
+  colony: Record<string, ColonyMission>;
 }
 
 interface Memory {
@@ -359,8 +380,11 @@ interface Memory {
   rooms: { [name: string]: RoomMemory };
   /** Mission records keyed by mission type then mission ID. */
   missions?: MissionRegistry;
-  /** Multi-room expansion targets keyed by the room being claimed. */
-  colonies?: { [targetRoom: string]: ColonyState };
+  /**
+   * @deprecated Pre-registry colony records. Migrated into Memory.missions.colony
+   * by migrateColoniesToMissions() then deleted. Remove this field in a later cleanup.
+   */
+  colonies?: { [targetRoom: string]: LegacyColonyState };
   /**
    * Ring-buffer of significant combat events (capped at 100 entries).
    * Persists across global resets and room loss so post-mortem analysis is

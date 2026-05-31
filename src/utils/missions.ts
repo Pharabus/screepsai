@@ -36,9 +36,11 @@ export const STALL_HOSTILE_TICKS = 500;
  * so the registry is always properly shaped.
  */
 export function getMissionRegistry(): MissionRegistry {
-  if (!Memory.missions) {
-    Memory.missions = { remoteMining: {} };
-  }
+  if (!Memory.missions) Memory.missions = { remoteMining: {}, colony: {} };
+  // Backfill sub-maps for registries created before a type was added (live memory
+  // from Step 1 has only remoteMining).
+  if (!Memory.missions.remoteMining) Memory.missions.remoteMining = {};
+  if (!Memory.missions.colony) Memory.missions.colony = {};
   return Memory.missions;
 }
 
@@ -61,7 +63,7 @@ export function getMissionsOfType<T extends MissionBase>(
  * Mirrors the pattern of other reset* exports in the codebase.
  */
 export function resetMissions(): void {
-  Memory.missions = { remoteMining: {} };
+  Memory.missions = { remoteMining: {}, colony: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,9 @@ export function resetMissions(): void {
  *
  * Behavior is identical to the previous hard-coded implementation for the
  * remoteMining type — it iterates the same records with the same predicate.
+ *
+ * Colony missions are never deleted here: their status is only ever
+ * claiming/bootstrapping/active (never 'retiring'), so the status guard skips them.
  *
  * Call once per 100 ticks from runSpawner().
  */

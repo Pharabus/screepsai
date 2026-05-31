@@ -229,6 +229,28 @@ class MockCostMatrix {
 
 // Factory helpers
 
+/**
+ * Build a ColonyMission record and write it into Memory.missions.colony[targetRoom].
+ * Mirrors the shape produced by startClaim()/migrateColoniesToMissions(). Ensures
+ * the registry sub-maps exist so coloniesForHome()/allColonies() can read it.
+ */
+export function seedColony(targetRoom: string, overrides: Partial<Record<string, any>> = {}): any {
+  const m = (globalThis as any).Memory;
+  if (!m.missions) m.missions = { remoteMining: {}, colony: {} };
+  if (!m.missions.colony) m.missions.colony = {};
+  const mission = {
+    type: 'colony',
+    id: targetRoom,
+    homeRoom: overrides.homeRoom ?? 'W1N1',
+    status: overrides.status ?? 'claiming',
+    createdAt: overrides.createdAt ?? 1,
+    lastSynced: overrides.lastSynced ?? 1,
+    ...overrides,
+  };
+  m.missions.colony[targetRoom] = mission;
+  return mission;
+}
+
 export function mockCreep(overrides: Record<string, any> = {}): any {
   return {
     name: overrides.name ?? 'test_creep',

@@ -447,14 +447,11 @@ function getInvaderTargetRooms(homeRoom: Room): string[] {
     if (hasActiveInvader(remote) && !targets.includes(remote)) targets.push(remote);
   }
 
-  if (Memory.colonies) {
-    for (const [, state] of Object.entries(Memory.colonies)) {
-      if (state.homeRoom !== homeRoom.name) continue;
-      // Always watch transit rooms regardless of colony status — inter-colony
-      // traffic continues to traverse them after the colony goes active.
-      for (const transit of state.transitRooms ?? []) {
-        if (hasActiveInvader(transit) && !targets.includes(transit)) targets.push(transit);
-      }
+  for (const { state } of coloniesForHome(homeRoom.name)) {
+    // Always watch transit rooms regardless of colony status — inter-colony
+    // traffic continues to traverse them after the colony goes active.
+    for (const transit of state.transitRooms ?? []) {
+      if (hasActiveInvader(transit) && !targets.includes(transit)) targets.push(transit);
     }
   }
 

@@ -33,7 +33,7 @@ const states: StateMachineDefinition = {
       const controller = creep.room.controller;
       if (!controller) return undefined;
 
-      // Already ours — recycle. The colony pipeline will pick up via Memory.colonies.
+      // Already ours — recycle. The colony pipeline will pick up via Memory.missions.colony.
       if (controller.my) {
         const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
         if (spawn) spawn.recycleCreep(creep);

@@ -13,7 +13,7 @@ import {
   upgraderBoostWanted,
   reserveBoostLab,
 } from '../../src/managers/spawner';
-import { mockRoom, resetGameGlobals } from '../mocks/screeps';
+import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 import { flushSegments } from '../../src/utils/segments';
@@ -1156,9 +1156,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
   describe('colony expansion queueing', () => {
     it('queues a claimer for a claiming colony when none is alive', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming' });
       (Game as any).creeps = {};
 
       const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
@@ -1172,9 +1170,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('does not queue a claimer when one is already alive for the target', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming' });
       (Game as any).creeps = {
         claimer_1: { memory: { role: 'claimer', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
       };
@@ -1186,9 +1182,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('does not queue a claimer when energy capacity is below 850', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming' });
       (Game as any).creeps = {};
 
       const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
@@ -1198,9 +1192,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('queues colonyBuilders for a bootstrapping colony with no spawn', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, claimedAt: 100 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'bootstrapping', claimedAt: 100 });
       (Game as any).creeps = {};
       // No visibility to W2N1 — colonyBuildersWanted defaults to 2
       const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1300 });
@@ -1214,9 +1206,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('drops to 1 colonyBuilder once a spawn exists in the colony', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, claimedAt: 100 },
-      };
+      seedColony('W2N1', { homeRoom: 'W1N1', status: 'bootstrapping', claimedAt: 100 });
       (Game as any).creeps = {};
       (Game as any).rooms = {
         W1N1: { name: 'W1N1', controller: { my: true } },
@@ -1236,15 +1226,12 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('skips queueing for active colonies', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: {
-          homeRoom: 'W1N1',
-          status: 'active',
-          selectedAt: 1,
-          claimedAt: 100,
-          activeAt: 200,
-        },
-      };
+      seedColony('W2N1', {
+        homeRoom: 'W1N1',
+        status: 'active',
+        claimedAt: 100,
+        activeAt: 200,
+      });
       (Game as any).creeps = {};
 
       const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
@@ -1255,9 +1242,7 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
 
     it('does not queue colony roles for a different home room', () => {
       (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
-      (Memory as any).colonies = {
-        W2N1: { homeRoom: 'W9N9', status: 'claiming', selectedAt: 1 },
-      };
+      seedColony('W2N1', { homeRoom: 'W9N9', status: 'claiming' });
       (Game as any).creeps = {};
 
       const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
@@ -1300,9 +1285,7 @@ describe('huntersNeeded', () => {
       W1N1: {},
       W1N2: { invaderSeenAt: 950 },
     };
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'bootstrapping', selectedAt: 1, transitRooms: ['W1N2'] },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'bootstrapping', transitRooms: ['W1N2'] });
     const room = mockRoom({ name: 'W1N1' });
     expect(huntersNeeded(room)).toBe(1);
   });
@@ -1313,9 +1296,7 @@ describe('huntersNeeded', () => {
       W1N1: {},
       W1N2: { invaderSeenAt: 950 },
     };
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'active', selectedAt: 1, transitRooms: ['W1N2'] },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'active', transitRooms: ['W1N2'] });
     const room = mockRoom({ name: 'W1N1' });
     expect(huntersNeeded(room)).toBe(1);
   });
@@ -1328,9 +1309,7 @@ describe('huntersNeeded', () => {
       W3N1: { invaderSeenAt: 900 },
       W1N2: { invaderSeenAt: 950 },
     };
-    (Memory as any).colonies = {
-      W2N1: { homeRoom: 'W1N1', status: 'claiming', selectedAt: 1, transitRooms: ['W1N2'] },
-    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', transitRooms: ['W1N2'] });
     const room = mockRoom({ name: 'W1N1' });
     expect(huntersNeeded(room)).toBe(2);
   });

@@ -1153,7 +1153,7 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
  * Place the first spawn construction site in a newly-claimed colony room.
  *
  * Triggered for rooms we own that have no spawn structure AND no spawn site —
- * the bootstrap state established by Memory.colonies. Uses the suggested spawn
+ * the bootstrap state established by Memory.missions.colony. Uses the suggested spawn
  * position from layoutPlanner (computed during scouting); falls back to a fresh
  * scan if no suggestion exists yet.
  */

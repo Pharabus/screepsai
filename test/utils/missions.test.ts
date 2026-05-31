@@ -25,7 +25,7 @@ import { resetGameGlobals } from '../mocks/screeps';
 
 beforeEach(() => {
   resetGameGlobals();
-  Memory.missions = { remoteMining: {} };
+  Memory.missions = { remoteMining: {}, colony: {} };
 });
 
 // ---------------------------------------------------------------------------
@@ -103,6 +103,7 @@ describe('ensureRemoteMiningMission', () => {
           reserverId: 'res1',
         },
       },
+      colony: {},
     };
 
     const m = ensureRemoteMiningMission('W43N58', 'W43N59');
@@ -247,6 +248,7 @@ describe('syncMission', () => {
           reserverId: 'existing_res',
         },
       },
+      colony: {},
     };
 
     syncMission('W43N59');
@@ -520,6 +522,7 @@ describe('getMissionRegistry', () => {
     const registry = getMissionRegistry();
     expect(registry).toBeDefined();
     expect(registry.remoteMining).toBeDefined();
+    expect(registry.colony).toBeDefined();
     expect(Memory.missions).toBe(registry);
   });
 
@@ -529,9 +532,18 @@ describe('getMissionRegistry', () => {
     expect(first).toBe(second);
   });
 
-  it('includes the remoteMining sub-map', () => {
+  it('includes both the remoteMining and colony sub-maps', () => {
     const registry = getMissionRegistry();
     expect(typeof registry.remoteMining).toBe('object');
+    expect(typeof registry.colony).toBe('object');
+  });
+
+  it('backfills the colony sub-map on a registry created before it existed', () => {
+    // Simulate Step-1 live memory: only remoteMining present.
+    (Memory as any).missions = { remoteMining: {} };
+    const registry = getMissionRegistry();
+    expect(registry.colony).toBeDefined();
+    expect(registry.remoteMining).toBeDefined();
   });
 });
 
@@ -570,6 +582,8 @@ describe('resetMissions', () => {
     resetMissions();
     const registry = getMissionRegistry();
     expect(registry.remoteMining).toBeDefined();
+    expect(registry.colony).toBeDefined();
     expect(Object.keys(registry.remoteMining)).toHaveLength(0);
+    expect(Object.keys(registry.colony)).toHaveLength(0);
   });
 });
