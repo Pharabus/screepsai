@@ -5,8 +5,7 @@
  *   claiming → bootstrapping → active
  *
  * Colony records live in the generic mission registry (Memory.missions.colony),
- * keyed by target room name. Legacy Memory.colonies records are migrated in by
- * migrateColoniesToMissions() the first time updateColonyStates() runs.
+ * keyed by target room name.
  *
  * The home room (parent colony) is responsible for spawning the claimer that
  * takes the target room's controller, then sending colonyBuilders to build the
@@ -331,36 +330,6 @@ export function startClaim(
 }
 
 /**
- * One-time migration of legacy Memory.colonies records into the mission registry
- * (Memory.missions.colony). Maps selectedAt→createdAt, stamps type/id/lastSynced,
- * and carries homeRoom/status/claimedAt/activeAt/transitRooms. Existing colony
- * missions are not overwritten. Deletes Memory.colonies once copied so it is a
- * no-op on every subsequent call.
- */
-function migrateColoniesToMissions(): void {
-  const legacy = Memory.colonies;
-  if (!legacy) return;
-
-  const colonies = getMissionsOfType<ColonyMission>('colony');
-  for (const [targetRoom, old] of Object.entries(legacy)) {
-    if (colonies[targetRoom]) continue; // already migrated / freshly created
-    const migrated: ColonyMission = {
-      type: 'colony',
-      id: targetRoom,
-      homeRoom: old.homeRoom,
-      status: old.status,
-      createdAt: old.selectedAt,
-      lastSynced: Game.time,
-    };
-    if (old.claimedAt !== undefined) migrated.claimedAt = old.claimedAt;
-    if (old.activeAt !== undefined) migrated.activeAt = old.activeAt;
-    if (old.transitRooms !== undefined) migrated.transitRooms = old.transitRooms;
-    colonies[targetRoom] = migrated;
-  }
-  delete Memory.colonies;
-}
-
-/**
  * Advance colony lifecycle states based on observed room state.
  * Called once per tick from the spawner before queue construction.
  *
@@ -369,14 +338,11 @@ function migrateColoniesToMissions(): void {
  *                                  or miner exists (so the colony can refill
  *                                  its own spawn without parent support)
  *
- * Iterates Memory.missions.colony (migrating any legacy Memory.colonies records
- * in first). Does not delete entries — operators can inspect the historical
- * record via the console. To remove, use
+ * Iterates Memory.missions.colony. Does not delete entries — operators can
+ * inspect the historical record via the console. To remove, use
  * `delete Memory.missions.colony[room]` from the in-game console.
  */
 export function updateColonyStates(): void {
-  migrateColoniesToMissions();
-
   const colonies = getMissionsOfType<ColonyMission>('colony');
   for (const [targetRoom, state] of Object.entries(colonies)) {
     state.lastSynced = Game.time;

@@ -400,32 +400,6 @@ describe('colonyPlanner', () => {
       expect(colony('W2N1')!.status).toBe('claiming');
     });
 
-    it('migrates legacy Memory.colonies into the mission registry, then deletes it', () => {
-      Memory.colonies = {
-        W2N1: {
-          homeRoom: 'W1N1',
-          status: 'active',
-          selectedAt: 100,
-          claimedAt: 200,
-          activeAt: 300,
-        },
-      } as any;
-      // No Game.rooms['W2N1'] — lifecycle transitions are skipped, but migration runs.
-      updateColonyStates();
-
-      const migrated = colony('W2N1')!;
-      expect(migrated).toBeDefined();
-      expect(migrated.type).toBe('colony');
-      expect(migrated.id).toBe('W2N1');
-      expect(migrated.homeRoom).toBe('W1N1');
-      expect(migrated.status).toBe('active');
-      expect(migrated.createdAt).toBe(100); // selectedAt → createdAt
-      expect(migrated.claimedAt).toBe(200);
-      expect(migrated.activeAt).toBe(300);
-      // Legacy store removed after migration
-      expect(Memory.colonies).toBeUndefined();
-    });
-
     it('exposes every colony mission via allColonies()', () => {
       seedColony('W2N1', { homeRoom: 'W1N1', status: 'claiming', createdAt: 100 });
       seedColony('W9N9', { homeRoom: 'W5N5', status: 'active', createdAt: 200 });

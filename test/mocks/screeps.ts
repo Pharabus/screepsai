@@ -234,7 +234,7 @@ class MockCostMatrix {
 
 /**
  * Build a ColonyMission record and write it into Memory.missions.colony[targetRoom].
- * Mirrors the shape produced by startClaim()/migrateColoniesToMissions(). Ensures
+ * Mirrors the shape produced by startClaim(). Ensures
  * the registry sub-maps exist so coloniesForHome()/allColonies() can read it.
  */
 export function seedColony(targetRoom: string, overrides: Partial<Record<string, any>> = {}): any {

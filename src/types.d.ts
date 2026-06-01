@@ -283,20 +283,6 @@ interface ProfilerSample {
   samples: number;
 }
 
-/**
- * @deprecated Pre-registry colony record shape. Read once by
- * migrateColoniesToMissions(), then Memory.colonies is deleted. Remove this type
- * and the Memory.colonies field in a later cleanup.
- */
-interface LegacyColonyState {
-  homeRoom: string;
-  status: 'claiming' | 'bootstrapping' | 'active';
-  selectedAt: number;
-  claimedAt?: number;
-  activeAt?: number;
-  transitRooms?: string[];
-}
-
 // ---------------------------------------------------------------------------
 // Mission records (src/utils/missions.ts)
 // ---------------------------------------------------------------------------
@@ -421,11 +407,6 @@ interface Memory {
   rooms: { [name: string]: RoomMemory };
   /** Mission records keyed by mission type then mission ID. */
   missions?: MissionRegistry;
-  /**
-   * @deprecated Pre-registry colony records. Migrated into Memory.missions.colony
-   * by migrateColoniesToMissions() then deleted. Remove this field in a later cleanup.
-   */
-  colonies?: { [targetRoom: string]: LegacyColonyState };
   /**
    * Ring-buffer of significant combat events (capped at 100 entries).
    * Persists across global resets and room loss so post-mortem analysis is
