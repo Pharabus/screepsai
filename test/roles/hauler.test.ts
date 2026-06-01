@@ -158,7 +158,44 @@ describe('hauler terminal logistics', () => {
 
     hauler.run(creep);
 
-    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H');
+    // Surplus is 8000-5000=3000, capped by the hauler's 300 free capacity.
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H', 300);
+  });
+
+  it('withdraws only the surplus above the floor, never dropping storage below it (no pull/redeposit loop)', () => {
+    // Storage mineral sits just above the floor (5000+200). A full-capacity
+    // withdraw would drop storage below the floor, and the delivery would then
+    // route straight back to storage — a futile loop. The hauler must take only
+    // the 200-unit surplus.
+    const storageStore = mockStore({ energy: 100, GH2O: 5200 }, 1000000);
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: storageStore,
+    };
+    const terminal = {
+      pos: new RoomPosition(28, 28, 'W1N1'),
+      store: mockStore({}, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}), // 300 free capacity, well above the 200 surplus
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Only the 200-unit surplus — not a full 300 load that would breach the floor.
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', 200);
   });
 
   it('fills storage buffer before overflowing to terminal when storage mineral is below floor', () => {

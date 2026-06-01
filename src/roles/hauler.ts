@@ -624,9 +624,17 @@ function pickupForTerminal(creep: Creep): boolean {
     if (resource === RESOURCE_ENERGY) continue;
     // Batteries are factory products meant to be sold, not lab stockpile — always flow to terminal
     const floor = resource === RESOURCE_BATTERY ? 0 : MINERAL_STORAGE_FLOOR;
-    if (storage.store.getUsedCapacity(resource) > floor) {
+    const available = storage.store.getUsedCapacity(resource);
+    if (available > floor) {
       creep.memory.targetId = storage.id;
-      if (creep.withdraw(storage, resource) === ERR_NOT_IN_RANGE) {
+      // Withdraw only the SURPLUS above the floor. A full-capacity withdraw drops
+      // storage below the floor, and deliverToTerminalOrStorage then routes the
+      // load straight back to storage (storage < floor → storage branch) — a
+      // futile pull/redeposit loop observed live with GH2O. Mirrors the bounded
+      // withdraw in pickupLabInput.
+      const toWithdraw = Math.min(creep.store.getFreeCapacity(), available - floor);
+      if (toWithdraw <= 0) continue;
+      if (creep.withdraw(storage, resource, toWithdraw) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
           priority: PRIORITY_HAULER,
           visualizePathStyle: { stroke: '#cc66ff' },
