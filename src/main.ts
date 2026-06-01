@@ -61,17 +61,6 @@ export const status = () => {
 
 export const replanPerimeter = (roomName: string): string => replanPerimeterForRoom(roomName);
 
-/**
- * Toggle the perimeter overlay (separate from the general `visuals` flag, so the
- * dense barrier overlay stays off during normal play). Requires `Memory.visuals`
- * to also be on for anything to render.
- */
-export const perimeterVisuals = (on?: boolean): string => {
-  const next = on === undefined ? !Memory.perimeterVisuals : on;
-  Memory.perimeterVisuals = next;
-  return `Memory.perimeterVisuals = ${next}${next && !Memory.visuals ? ' (also set Memory.visuals = true to render)' : ''}`;
-};
-
 export const replanLayout = (roomName: string): string => {
   const room = Game.rooms[roomName];
   if (!room) return `Room ${roomName} not visible`;
@@ -217,7 +206,6 @@ global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
 global.replanPerimeter = replanPerimeter;
-global.perimeterVisuals = perimeterVisuals;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
 global.suggestSpawn = suggestSpawn;

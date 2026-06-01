@@ -434,13 +434,6 @@ interface Memory {
    * from the console to activate, revert to disable with no other changes needed.
    */
   haulerPool?: boolean;
-  /**
-   * When true (and `Memory.visuals` is on), `runVisuals` draws the perimeter
-   * overlay (walls red / gates blue). Opt-in on its own flag because the overlay
-   * is dense and distracting during normal play — only useful when actively
-   * reviewing the barrier. Toggle: `perimeterVisuals(true)`.
-   */
-  perimeterVisuals?: boolean;
 }
 
 // Screeps provides a global require for loading modules

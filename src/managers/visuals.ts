@@ -138,41 +138,6 @@ function drawStatsOverlay(room: Room): void {
   }
 }
 
-/**
- * Perimeter overlay — draws the planned barrier (walls red, gates blue). Opt-in:
- * gated by `Memory.perimeterVisuals` in `runVisuals` (separate from
- * `Memory.visuals`) because it's dense and distracting during normal play.
- */
-function drawPerimeter(room: Room): void {
-  const mem = Memory.rooms[room.name];
-  if (!mem) return;
-  const v = room.visual;
-
-  const plan = mem.perimeterPlan;
-  if (!plan) return;
-  const gateSet = new Set(plan.gateTiles);
-  for (const key of plan.perimeterTiles) {
-    const comma = key.indexOf(',');
-    const x = Number(key.slice(0, comma));
-    const y = Number(key.slice(comma + 1));
-    if (gateSet.has(key)) {
-      // Gate — blue
-      v.rect(x - 0.5, y - 0.5, 1, 1, {
-        fill: '#3399ff',
-        opacity: 0.4,
-        stroke: '#3399ff',
-      });
-    } else {
-      // Wall — red
-      v.rect(x - 0.5, y - 0.5, 1, 1, {
-        fill: '#ff3333',
-        opacity: 0.25,
-        stroke: '#ff3333',
-      });
-    }
-  }
-}
-
 export function runVisuals(): void {
   if (!Memory.visuals) return;
 
@@ -181,9 +146,6 @@ export function runVisuals(): void {
     if (!room.controller?.my) continue;
     drawHeader(room);
     drawSourceLoad(room);
-    // Perimeter / min-cut A/B overlay is opt-in behind its own flag — it's
-    // dense and distracting, only useful when actively reviewing the barrier.
-    if (Memory.perimeterVisuals) drawPerimeter(room);
     // Draw the stats overlay only on the first owned room so it doesn't repeat
     if (first) {
       drawStatsOverlay(room);
