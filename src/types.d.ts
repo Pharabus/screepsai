@@ -468,6 +468,10 @@ interface Memory {
    * (`computePerimeter`). Off by default — preview the min-cut result via
    * `RoomMemory.perimeterPreview` + `Memory.visuals` before flipping.
    * Toggle: `Memory.perimeterMinCut = true` (or use `perimeterMinCut(true)`).
+   *
+   * SHELVED: the min-cut lost to the radius BFS on wall count in live testing
+   * (W43N58); leave off unless a room's natural walls hug its core. Read the
+   * `perimeterPlanner.ts` header before enabling.
    */
   perimeterMinCut?: boolean;
 }

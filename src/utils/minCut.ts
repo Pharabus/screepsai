@@ -4,6 +4,11 @@
  * This module is Screeps-runtime-free so it can be unit-tested without mocks.
  * The only dependency is a terrain wall predicate.
  *
+ * Consumer: `perimeterPlanner.ts` (`computeMinCutPerimeter`). NOTE: that planner
+ * is currently SHELVED (off by default — radius BFS stays authoritative); the
+ * full why-it's-off rationale lives in the `perimeterPlanner.ts` header. This
+ * algorithm module is correct and tested regardless of that flag.
+ *
  * ## Algorithm
  *
  * Each non-wall tile is split into two nodes: an "in-node" and an "out-node",
