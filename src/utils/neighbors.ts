@@ -98,15 +98,6 @@ export function getNeighbor(playerName: string): NeighborRecord | undefined {
   return loadStore()[playerName];
 }
 
-/** Returns true if any known aggressive neighbor was seen within the last maxAge ticks. */
-export function hasAggressiveNeighbor(maxAgeTicks = 20_000): boolean {
-  const store = loadStore();
-  for (const rec of Object.values(store)) {
-    if (rec.hostility === 'aggressive' && Game.time - rec.lastSeen <= maxAgeTicks) return true;
-  }
-  return false;
-}
-
 /** Returns player names seen recently in a specific room. */
 export function hostilesSeen(roomName: string, maxAgeTicks = 20_000): string[] {
   const store = loadStore();

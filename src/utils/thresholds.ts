@@ -44,10 +44,3 @@ export const BUY_INTERVAL = 500;
 // Energy gates for lab buying: lower threshold for base minerals (H,O,K,L,Z,U,X,G)
 // so the reaction chain can start accumulating well before we hit 100k terminal energy.
 export const MIN_BUY_ENERGY_BASE = 30_000;
-export const MIN_BUY_ENERGY_INTERMEDIATES = 60_000;
-
-export function isTerminalSurplus(room: Room, resource: ResourceConstant): boolean {
-  const terminal = room.terminal;
-  if (!terminal) return false;
-  return terminal.store.getUsedCapacity(resource) > MINERAL_TERMINAL_CEILING;
-}
