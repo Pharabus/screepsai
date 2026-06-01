@@ -212,6 +212,13 @@ interface RoomMemory {
    * `PERIMETER_PLAN_VERSION` bumps or remote-room changes.
    */
   perimeterPlan?: PerimeterPlanData;
+  /**
+   * Min-cut perimeter candidate — populated in the background (when
+   * `Memory.perimeterMinCut` is false) so the operator can preview it via
+   * `Memory.visuals` before flipping the flag to make it authoritative.
+   * Not consumed by construction.ts — preview only.
+   */
+  perimeterPreview?: PerimeterPlanData;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +241,8 @@ interface PerimeterPlanData {
   gateTiles: string[];
   /** Gate targets this plan was computed from — used to detect remote-room changes */
   gateTargets: PerimeterGateTarget[];
+  /** Algorithm used to compute this plan. 'radius' = fixed Chebyshev-radius BFS; 'mincut' = terrain-aware min-cut max-flow. */
+  algo: 'radius' | 'mincut';
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +462,14 @@ interface Memory {
    * from the console to activate, revert to disable with no other changes needed.
    */
   haulerPool?: boolean;
+  /**
+   * When true, `planPerimeter()` uses the terrain-aware min-cut algorithm
+   * (`computeMinCutPerimeter`) instead of the fixed Chebyshev-radius BFS
+   * (`computePerimeter`). Off by default — preview the min-cut result via
+   * `RoomMemory.perimeterPreview` + `Memory.visuals` before flipping.
+   * Toggle: `Memory.perimeterMinCut = true` (or use `perimeterMinCut(true)`).
+   */
+  perimeterMinCut?: boolean;
 }
 
 // Screeps provides a global require for loading modules

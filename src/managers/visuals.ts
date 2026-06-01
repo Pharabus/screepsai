@@ -138,6 +138,60 @@ function drawStatsOverlay(room: Room): void {
   }
 }
 
+/**
+ * Perimeter A/B overlay.
+ *
+ * Draws the authoritative perimeter plan (walls red, gates blue) and the
+ * min-cut preview candidate (green outline) so the operator can eyeball the
+ * min-cut barrier before flipping `Memory.perimeterMinCut`.
+ */
+function drawPerimeter(room: Room): void {
+  const mem = Memory.rooms[room.name];
+  if (!mem) return;
+  const v = room.visual;
+
+  const plan = mem.perimeterPlan;
+  if (plan) {
+    const gateSet = new Set(plan.gateTiles);
+    for (const key of plan.perimeterTiles) {
+      const comma = key.indexOf(',');
+      const x = Number(key.slice(0, comma));
+      const y = Number(key.slice(comma + 1));
+      if (gateSet.has(key)) {
+        // Gate — blue
+        v.rect(x - 0.5, y - 0.5, 1, 1, {
+          fill: '#3399ff',
+          opacity: 0.4,
+          stroke: '#3399ff',
+        });
+      } else {
+        // Wall — red
+        v.rect(x - 0.5, y - 0.5, 1, 1, {
+          fill: '#ff3333',
+          opacity: 0.25,
+          stroke: '#ff3333',
+        });
+      }
+    }
+  }
+
+  // Min-cut preview — green outline only (no fill so it doesn't obscure the plan)
+  const preview = mem.perimeterPreview;
+  if (preview) {
+    for (const key of preview.perimeterTiles) {
+      const comma = key.indexOf(',');
+      const x = Number(key.slice(0, comma));
+      const y = Number(key.slice(comma + 1));
+      v.rect(x - 0.5, y - 0.5, 1, 1, {
+        fill: 'transparent',
+        opacity: 0.8,
+        stroke: '#33ff66',
+        strokeWidth: 0.1,
+      });
+    }
+  }
+}
+
 export function runVisuals(): void {
   if (!Memory.visuals) return;
 
@@ -146,6 +200,7 @@ export function runVisuals(): void {
     if (!room.controller?.my) continue;
     drawHeader(room);
     drawSourceLoad(room);
+    drawPerimeter(room);
     // Draw the stats overlay only on the first owned room so it doesn't repeat
     if (first) {
       drawStatsOverlay(room);

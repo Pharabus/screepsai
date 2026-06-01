@@ -48,6 +48,9 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).STRUCTURE_LAB = 'lab';
 (globalThis as any).STRUCTURE_KEEPER_LAIR = 'keeperLair';
 (globalThis as any).STRUCTURE_FACTORY = 'factory';
+(globalThis as any).STRUCTURE_NUKER = 'nuker';
+(globalThis as any).STRUCTURE_POWER_SPAWN = 'powerSpawn';
+(globalThis as any).STRUCTURE_OBSERVER = 'observer';
 
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';

@@ -61,6 +61,20 @@ export const status = () => {
 
 export const replanPerimeter = (roomName: string): string => replanPerimeterForRoom(roomName);
 
+/**
+ * Toggle the min-cut perimeter algorithm. With no argument, flips the current
+ * state; pass an explicit boolean to set it. Returns the new state.
+ *
+ * When on, planPerimeter() uses the terrain-aware min-cut barrier; when off it
+ * uses the fixed-radius BFS ring (and populates perimeterPreview for the
+ * RoomVisual A/B overlay). Re-run replanPerimeter(room) to recompute now.
+ */
+export const perimeterMinCut = (on?: boolean): string => {
+  const next = on === undefined ? !Memory.perimeterMinCut : on;
+  Memory.perimeterMinCut = next;
+  return `Memory.perimeterMinCut = ${next} (run replanPerimeter(room) to recompute now)`;
+};
+
 export const replanLayout = (roomName: string): string => {
   const room = Game.rooms[roomName];
   if (!room) return `Room ${roomName} not visible`;
@@ -206,6 +220,7 @@ global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
 global.replanPerimeter = replanPerimeter;
+global.perimeterMinCut = perimeterMinCut;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
 global.suggestSpawn = suggestSpawn;
