@@ -474,6 +474,14 @@ interface Memory {
    * `perimeterPlanner.ts` header before enabling.
    */
   perimeterMinCut?: boolean;
+  /**
+   * When true (and `Memory.visuals` is on), `runVisuals` draws the perimeter
+   * A/B overlay (authoritative plan = walls red / gates blue, min-cut preview =
+   * green). Opt-in on its own flag because the overlay is dense and distracting
+   * during normal play — only useful when actively reviewing the barrier.
+   * Toggle: `perimeterVisuals(true)`.
+   */
+  perimeterVisuals?: boolean;
 }
 
 // Screeps provides a global require for loading modules

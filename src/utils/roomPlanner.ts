@@ -243,7 +243,7 @@ export function ensureRoomPlan(room: Room): void {
     // Min-cut is SHELVED (see perimeterPlanner.ts header): only spend the CPU to
     // refresh the preview when the operator is actually viewing the overlay.
     // `replanPerimeter(room)` recomputes it on demand regardless.
-    if (!Memory.perimeterMinCut && Memory.visuals) {
+    if (!Memory.perimeterMinCut && Memory.perimeterVisuals) {
       const preview = computeMinCutPerimeter(room);
       if (preview) mem.perimeterPreview = preview;
     }

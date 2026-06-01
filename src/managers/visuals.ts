@@ -143,7 +143,8 @@ function drawStatsOverlay(room: Room): void {
  *
  * Draws the authoritative perimeter plan (walls red, gates blue) and the
  * min-cut preview candidate (green outline) so the operator can eyeball the
- * min-cut barrier before flipping `Memory.perimeterMinCut`.
+ * min-cut barrier before flipping `Memory.perimeterMinCut`. Opt-in: gated by
+ * `Memory.perimeterVisuals` in `runVisuals` (separate from `Memory.visuals`).
  */
 function drawPerimeter(room: Room): void {
   const mem = Memory.rooms[room.name];
@@ -200,7 +201,9 @@ export function runVisuals(): void {
     if (!room.controller?.my) continue;
     drawHeader(room);
     drawSourceLoad(room);
-    drawPerimeter(room);
+    // Perimeter / min-cut A/B overlay is opt-in behind its own flag — it's
+    // dense and distracting, only useful when actively reviewing the barrier.
+    if (Memory.perimeterVisuals) drawPerimeter(room);
     // Draw the stats overlay only on the first owned room so it doesn't repeat
     if (first) {
       drawStatsOverlay(room);
