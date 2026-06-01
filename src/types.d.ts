@@ -212,13 +212,6 @@ interface RoomMemory {
    * `PERIMETER_PLAN_VERSION` bumps or remote-room changes.
    */
   perimeterPlan?: PerimeterPlanData;
-  /**
-   * Min-cut perimeter candidate — populated in the background (when
-   * `Memory.perimeterMinCut` is false) so the operator can preview it via
-   * `Memory.visuals` before flipping the flag to make it authoritative.
-   * Not consumed by construction.ts — preview only.
-   */
-  perimeterPreview?: PerimeterPlanData;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +234,6 @@ interface PerimeterPlanData {
   gateTiles: string[];
   /** Gate targets this plan was computed from — used to detect remote-room changes */
   gateTargets: PerimeterGateTarget[];
-  /** Algorithm used to compute this plan. 'radius' = fixed Chebyshev-radius BFS; 'mincut' = terrain-aware min-cut max-flow. */
-  algo: 'radius' | 'mincut';
 }
 
 // ---------------------------------------------------------------------------
@@ -444,23 +435,10 @@ interface Memory {
    */
   haulerPool?: boolean;
   /**
-   * When true, `planPerimeter()` uses the terrain-aware min-cut algorithm
-   * (`computeMinCutPerimeter`) instead of the fixed Chebyshev-radius BFS
-   * (`computePerimeter`). Off by default — preview the min-cut result via
-   * `RoomMemory.perimeterPreview` + `Memory.visuals` before flipping.
-   * Toggle: `Memory.perimeterMinCut = true` (or use `perimeterMinCut(true)`).
-   *
-   * SHELVED: the min-cut lost to the radius BFS on wall count in live testing
-   * (W43N58); leave off unless a room's natural walls hug its core. Read the
-   * `perimeterPlanner.ts` header before enabling.
-   */
-  perimeterMinCut?: boolean;
-  /**
    * When true (and `Memory.visuals` is on), `runVisuals` draws the perimeter
-   * A/B overlay (authoritative plan = walls red / gates blue, min-cut preview =
-   * green). Opt-in on its own flag because the overlay is dense and distracting
-   * during normal play — only useful when actively reviewing the barrier.
-   * Toggle: `perimeterVisuals(true)`.
+   * overlay (walls red / gates blue). Opt-in on its own flag because the overlay
+   * is dense and distracting during normal play — only useful when actively
+   * reviewing the barrier. Toggle: `perimeterVisuals(true)`.
    */
   perimeterVisuals?: boolean;
 }
