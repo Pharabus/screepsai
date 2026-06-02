@@ -16,7 +16,8 @@ type CreepRoleName =
   | 'claimer'
   | 'colonyBuilder'
   | 'hunter'
-  | 'keeperKiller';
+  | 'keeperKiller'
+  | 'looter';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -141,6 +142,13 @@ interface RoomMemory {
   // Factory (RCL 7+)
   factoryId?: Id<StructureFactory>;
   factoryRecipe?: ResourceConstant;
+  /**
+   * ID of a foreign-owned structure in this room whose store still holds
+   * resources we want to capture. Set by cleanupClaimedRoom() when a
+   * loot-bearing structure is detected; cleared once the structure is gone.
+   * The looter role dismantles this structure to drop its contents.
+   */
+  lootTargetId?: Id<AnyStoreStructure>;
   // Best spawn position suggestion for a not-yet-claimed room
   suggestedSpawnPos?: { x: number; y: number; score: number };
   /**

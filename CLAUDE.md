@@ -131,6 +131,14 @@ All roles use `src/utils/stateMachine.ts`. Each `StateHandler.run(creep)` return
 
 **Claiming** (`src/utils/colonyPlanner.ts`): `scoreClaimTarget` filters/scores a candidate (sources, distance, hostility, +5 for a mineral none of our rooms already mine); `findClaimCandidates()` ranks all scouted rooms, picking each one's nearest owned room as prospective home. Operator commits via `claim(roomName)`; inspect readiness with `claimCandidates()`. Lifecycle `claiming → bootstrapping → active` in `updateColonyStates`.
 
+### Reclaiming a captured room
+
+A room claimed from a previous owner is littered with their leftover structures. These are **owned by the old player and unusable by us**, and obstruct movement *and* our own construction. `cleanupClaimedRoom(room)` (`construction.ts`, called from `runConstruction` every 5 ticks for each owned room) handles this:
+
+- **Destroys** foreign obstacle structures (`FOREIGN_OBSTACLE_TYPES`: spawn, extension, tower, link, lab, extractor, terminal, factory, observer, powerSpawn, nuker, storage) — via `.destroy()`, which is free/instant and legal because we own the controller. **Critically, it destroys them even when they hold a little energy**: a foreign spawn/extension counts against *our* RCL structure-count limit, so a 300-energy leftover spawn returns `ERR_RCL_NOT_ENOUGH` on our own placement and hard-stalls the colony (observed live in W42N59 — `placeColonySpawn` silently bailed every tick, builders dumped energy into the controller instead). Only `LOOTABLE_TYPES` (storage/terminal) holding `≥ LOOT_MIN_STORE` (10k) are spared for the loot path.
+- **Keeps** roads & containers (ownership-neutral, reusable) and constructedWalls that are in the `perimeterPlan`; destroys unowned walls only when they sit on a planned layout tile.
+- **`.destroy()` voids a structure's store — it does NOT drop the contents.** Loot only drops from destruction by *damage*. So a real hoard (e.g. W42N59's 607k-energy storage) is left standing (recorded in `RoomMemory.lootTargetId`) and the **`looter` role** (`src/roles/looter.ts`, WORK+MOVE) dismantles it to 0 hits → contents drop → existing haulers sweep the pile via `pickupLargeDrop`. The looter is **bank-it gated** (`looterNeeded`): RCL ≥ 4 + our own storage exists + a valid loot target + ≥2 local haulers + no looter alive — so the hoard sits at zero decay in the foreign store until we can bank it. One-shot: recycles itself (`markIdle`) once the vault is gone.
+
 ### Idle creep management
 
 `src/utils/idle.ts` — `markIdle(creep)` registers idle state, parks creeps away from the spawn cluster (deterministic per-name offset), and recycles chronically idle creeps. Builders/repairers/upgraders never idle. Haulers **do not recycle** — the old recycle threshold churned haulers during normal idle gaps, costing more energy than it saved.

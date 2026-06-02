@@ -146,6 +146,52 @@ export function remoteBuilderNeeded(remoteRoom: string): boolean {
 }
 
 /**
+ * Body for the looter creep: pure WORK parts for maximum dismantle power, with
+ * just enough MOVE for 1:1 road movement. Scales with energy capacity up to
+ * 5 WORK parts (enough to chew through 10,000-hit storage in ~20 ticks at 50
+ * dismantle damage per WORK per tick).
+ *
+ * Body is capped: a 5-WORK looter costs 750 energy and finishes a 10k-hit
+ * storage in ≈20 ticks — no need for more parts.
+ */
+export function buildLooterBody(energyCapacityAvailable: number): BodyPartConstant[] {
+  const MAX_WORK = 5;
+  // Each repeat: 1 WORK (100e) + 1 MOVE (50e) = 150e, up to MAX_WORK work parts
+  const repeats = Math.min(MAX_WORK, Math.floor(energyCapacityAvailable / 150));
+  if (repeats === 0) return [];
+  const body: BodyPartConstant[] = [];
+  for (let i = 0; i < repeats; i++) body.push(WORK);
+  for (let i = 0; i < repeats; i++) body.push(MOVE);
+  return body;
+}
+
+/**
+ * True when all conditions for spawning a looter in this room are met:
+ *  1. room.controller.my (defensive guard — caller already filters for this)
+ *  2. RCL >= 4
+ *  3. Our own storage exists (room.storage.my)
+ *  4. A foreign store-bearing structure is present (lootTargetId set and valid)
+ *  5. >= 2 haulers with homeRoom = this room (enough to bank the dropped pile fast)
+ *  6. No looter already alive for this room
+ */
+export function looterNeeded(room: Room): boolean {
+  if (!room.controller?.my) return false;
+  if ((room.controller.level ?? 0) < 4) return false;
+  const storage = room.storage;
+  if (!storage || !(storage as unknown as OwnedStructure).my) return false;
+  const lootId = Memory.rooms[room.name]?.lootTargetId;
+  if (!lootId) return false;
+  // Verify the loot target still exists and has resources.
+  const lootTarget = Game.getObjectById(lootId);
+  if (!lootTarget || !('store' in lootTarget)) return false;
+  if ((lootTarget as unknown as AnyStoreStructure).store.getUsedCapacity() === 0) return false;
+  const haulerCount = countCreepsByRole('hauler', room.name);
+  if (haulerCount < 2) return false;
+  if (countCreepsByRole('looter', room.name) > 0) return false;
+  return true;
+}
+
+/**
  * True when at least one local miner (no targetRoom) is in HARVEST state.
  * A miner in POSITION (travelling to container) produces no energy; the spawn
  * cannot fill up waiting for it, so callers treat this the same as "no producer".
@@ -850,6 +896,24 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
           });
         }
       }
+    }
+
+    // Looter: one-shot dismantle role for foreign-owned stores (e.g. a taken-over
+    // room with a previous owner's loaded storage).  Gated behind RCL 4 + own
+    // storage + ≥2 local haulers so the dropped megapile is banked before we
+    // move it.  Only 1 looter spawned per room; re-queued if it dies before the
+    // target is destroyed (lootTargetId persists until the structure is gone).
+    if (looterNeeded(room)) {
+      queue.push({
+        role: 'looter',
+        body: buildLooterBody(room.energyCapacityAvailable),
+        minCount: countCreepsByRole('looter', room.name) + 1,
+        memory: {
+          role: 'looter' as CreepRoleName,
+          homeRoom: room.name,
+          // loot target is in the home room itself — no separate targetRoom needed
+        },
+      });
     }
 
     // Remote mining roles (lower priority than local economy)

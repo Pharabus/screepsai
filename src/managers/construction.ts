@@ -1150,6 +1150,149 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
 }
 
 /**
+ * Set of obstacle structure types whose foreign instances we destroy.
+ * Roads and containers are intentionally excluded: they are reusable by anyone
+ * (not ownership-locked) and don't block construction site placement.
+ */
+const FOREIGN_OBSTACLE_TYPES: Set<StructureConstant> = new Set([
+  STRUCTURE_SPAWN,
+  STRUCTURE_EXTENSION,
+  STRUCTURE_TOWER,
+  STRUCTURE_LINK,
+  STRUCTURE_LAB,
+  STRUCTURE_EXTRACTOR,
+  STRUCTURE_TERMINAL,
+  STRUCTURE_FACTORY,
+  STRUCTURE_OBSERVER,
+  STRUCTURE_POWER_SPAWN,
+  STRUCTURE_NUKER,
+  STRUCTURE_STORAGE,
+]);
+
+/**
+ * Foreign bulk-store types whose contents are worth capturing with a looter
+ * (dismantle → drop → haul) instead of voiding via destroy(). ONLY these types,
+ * and ONLY when holding ≥ LOOT_MIN_STORE, take the loot path.
+ *
+ * Every other foreign obstacle (spawn, extension, tower, link, lab, …) is
+ * destroyed even if it holds a little energy. This is critical: a foreign SPAWN
+ * or EXTENSION counts against OUR RCL structure-count limit, so leaving one
+ * standing because it held a few hundred energy returns ERR_RCL_NOT_ENOUGH on
+ * our own placement and hard-stalls the colony (observed live in W42N59: a
+ * 300-energy leftover spawn blocked our own spawn for the entire bootstrap).
+ * A little voided energy is a fine price to free the slot.
+ */
+const LOOTABLE_TYPES: Set<StructureConstant> = new Set([STRUCTURE_STORAGE, STRUCTURE_TERMINAL]);
+
+/** Minimum store contents (any resource) that justifies a looter dismantle trip. */
+const LOOT_MIN_STORE = 10000;
+
+/**
+ * Clean up foreign-owned and unowned obstacle structures in a room we control.
+ *
+ * Called every 5 ticks (when runConstruction fires) for each owned room.
+ * Idempotent: re-running when everything is already destroyed is a no-op.
+ *
+ * Rules:
+ * - FOREIGN_OBSTACLE_TYPES → destroy() (free, instant), EXCEPT a LOOTABLE_TYPES
+ *   bulk store (storage/terminal) holding ≥ LOOT_MIN_STORE, which is left for
+ *   the looter role to dismantle (so its hoard drops rather than being voided).
+ *   Spawns/extensions/towers/etc. are destroyed even with a little energy — they
+ *   occupy our RCL structure-count slots and must not block our placement.
+ * - Unowned constructedWalls on tiles our layout/perimeter plan WANTS to
+ *   build on → destroy().  Walls in the perimeter plan are kept; walls on
+ *   unplanned open tiles are left alone (conservative).
+ * - Roads and containers → never touched (ownership-neutral, reusable).
+ *
+ * Also maintains RoomMemory.lootTargetId: records the first qualifying loot
+ * target's ID so the looter role can find it without a repeated
+ * FIND_HOSTILE_STRUCTURES scan.
+ */
+export function cleanupClaimedRoom(room: Room): void {
+  if (!room.controller?.my) return;
+
+  const mem = (Memory.rooms[room.name] ??= {});
+
+  // Build the set of tiles our plan wants — used to decide whether an
+  // unowned constructedWall is blocking something we need.
+  const plannedTiles = getPlannedReserved(room);
+  // Also include perimeter tiles (walls + gates) — we must not destroy walls
+  // that are already part of the perimeter plan.
+  const perimeterTileSet = new Set<string>();
+  if (mem.perimeterPlan) {
+    for (const key of mem.perimeterPlan.perimeterTiles) perimeterTileSet.add(key);
+  }
+
+  // --- Hostile (foreign-owned) structures ---
+  const hostileStructures = room.find(FIND_HOSTILE_STRUCTURES);
+  let lootTargetId: Id<AnyStoreStructure> | undefined;
+
+  for (const s of hostileStructures) {
+    const type = s.structureType as StructureConstant;
+
+    // Never touch roads or containers — they're neutral and may be in use.
+    if (type === STRUCTURE_ROAD || type === STRUCTURE_CONTAINER) continue;
+
+    if (FOREIGN_OBSTACLE_TYPES.has(type)) {
+      const storeUsed =
+        'store' in s ? ((s as unknown as AnyStoreStructure).store.getUsedCapacity() ?? 0) : 0;
+
+      // Only a genuine hoard in a bulk store (storage/terminal) is worth the
+      // looter's dismantle trip. Everything else — a foreign spawn/extension/
+      // tower/link/lab with a few hundred energy, or a near-empty storage — is
+      // destroyed regardless of its trivial store, because it occupies an RCL
+      // structure-count slot we need for our own buildout.
+      if (LOOTABLE_TYPES.has(type) && storeUsed >= LOOT_MIN_STORE) {
+        // Record as loot target (first qualifying one wins); the looter
+        // dismantles it so the hoard drops for haulers to collect.
+        if (!lootTargetId) {
+          lootTargetId = (s as unknown as AnyStoreStructure).id;
+        }
+        continue;
+      }
+
+      s.destroy();
+    }
+  }
+
+  // Update loot target pointer in room memory.
+  if (lootTargetId) {
+    mem.lootTargetId = lootTargetId;
+  } else if (mem.lootTargetId) {
+    // Re-validate: if the recorded target is gone or now empty, clear it.
+    const existing = Game.getObjectById(mem.lootTargetId);
+    const storeUsed =
+      existing && 'store' in existing
+        ? ((existing as unknown as AnyStoreStructure).store.getUsedCapacity() ?? 0)
+        : 0;
+    if (storeUsed === 0) delete mem.lootTargetId;
+  }
+
+  // --- Unowned constructedWalls ---
+  // Only destroy walls that sit on a tile our layout/perimeter plan wants to
+  // build on.  We never destroy perimeter-plan walls (they're intentional) and
+  // we never destroy walls on open tiles we don't need (conservative).
+  const walls = room.find(FIND_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_WALL,
+  }) as StructureWall[];
+
+  for (const wall of walls) {
+    // Skip walls that are in our own perimeter plan — they're either already
+    // ours or will be rebuilt.
+    const key = `${wall.pos.x},${wall.pos.y}`;
+    if (perimeterTileSet.has(key)) continue;
+
+    // Only destroy unowned walls; our own walls are untouched.
+    if ('my' in wall && (wall as unknown as OwnedStructure).my) continue;
+
+    // Only destroy walls that occupy a tile our layout plan intends to use.
+    if (plannedTiles.has(key)) {
+      wall.destroy();
+    }
+  }
+}
+
+/**
  * Place the first spawn construction site in a newly-claimed colony room.
  *
  * Triggered for rooms we own that have no spawn structure AND no spawn site —
@@ -1207,6 +1350,10 @@ export function runConstruction(): void {
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
+
+    // Destroy empty foreign obstacle structures and record any loot target.
+    // Runs every 5 ticks (same cadence as runConstruction) and is idempotent.
+    cleanupClaimedRoom(room);
 
     // Colony-bootstrap rooms get their first spawn placed before anything else —
     // until a spawn exists the room has no economy at all.
