@@ -33,12 +33,14 @@ describe('cleanupClaimedRoom', () => {
     hostileStructures: any[],
     walls: any[] = [],
     mem: Record<string, any> = {},
+    hostileSites: any[] = [],
   ): any {
     const room = mockRoom({
       name: 'W1N1',
       controller: { my: true, level: 2, pos: new (globalThis as any).RoomPosition(30, 30, 'W1N1') },
       find: vi.fn((type: number, opts?: any) => {
         if (type === FIND_HOSTILE_STRUCTURES) return hostileStructures;
+        if (type === FIND_HOSTILE_CONSTRUCTION_SITES) return hostileSites;
         if (type === FIND_STRUCTURES) {
           // filter for walls
           const filter = opts?.filter ?? (() => true);
@@ -50,6 +52,15 @@ describe('cleanupClaimedRoom', () => {
     (Memory as any).rooms = { W1N1: mem };
     (Game as any).rooms = { W1N1: room };
     return room;
+  }
+
+  function makeSite(overrides: Record<string, any>): any {
+    return {
+      structureType: overrides.structureType ?? STRUCTURE_ROAD,
+      pos: new (globalThis as any).RoomPosition(overrides.x ?? 21, overrides.y ?? 26, 'W1N1'),
+      remove: vi.fn(() => OK),
+      ...overrides,
+    };
   }
 
   it('destroys empty foreign obstacle structures (extension)', () => {
@@ -254,6 +265,15 @@ describe('cleanupClaimedRoom', () => {
     const room = makeRoom([]);
     cleanupClaimedRoom(room);
     expect((Memory.rooms as any).W1N1.lootTargetId).toBeUndefined();
+  });
+
+  it('removes all foreign construction sites (any type, incl. roads)', () => {
+    const roadSite = makeSite({ structureType: STRUCTURE_ROAD, x: 21, y: 26 });
+    const terminalSite = makeSite({ structureType: STRUCTURE_TERMINAL, x: 17, y: 27 });
+    const room = makeRoom([], [], {}, [roadSite, terminalSite]);
+    cleanupClaimedRoom(room);
+    expect(roadSite.remove).toHaveBeenCalled();
+    expect(terminalSite.remove).toHaveBeenCalled();
   });
 
   it('is a no-op for non-owned rooms', () => {

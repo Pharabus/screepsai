@@ -1203,6 +1203,9 @@ const LOOT_MIN_STORE = 10000;
  *   build on → destroy().  Walls in the perimeter plan are kept; walls on
  *   unplanned open tiles are left alone (conservative).
  * - Roads and containers → never touched (ownership-neutral, reusable).
+ * - Foreign construction sites → remove() all of them. We can't build another
+ *   player's site and they block our own placement; unlike built roads, an
+ *   unfinished foreign site has no reuse value.
  *
  * Also maintains RoomMemory.lootTargetId: records the first qualifying loot
  * target's ID so the looter role can find it without a repeated
@@ -1289,6 +1292,16 @@ export function cleanupClaimedRoom(room: Room): void {
     if (plannedTiles.has(key)) {
       wall.destroy();
     }
+  }
+
+  // --- Foreign construction sites ---
+  // The previous owner's unfinished sites are pure dead weight: we can't build
+  // another player's site (only its owner can), and they block our own
+  // placement on those tiles (and obstacle-type sites block movement). remove()
+  // is legal because the site is in a room we own. Remove all of them — unlike
+  // built roads/containers (which are reusable), a foreign site is useless to us.
+  for (const site of room.find(FIND_HOSTILE_CONSTRUCTION_SITES)) {
+    site.remove();
   }
 }
 
