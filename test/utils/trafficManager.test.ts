@@ -141,6 +141,51 @@ describe('trafficManager', () => {
       expect(matrix.get(30, 30)).toBe(255);
     });
 
+    it('blocks obstacle-type construction sites at cost 255', () => {
+      // Regression: the engine refuses a move onto your own obstacle-type
+      // construction site, so PathFinder must treat it as impassable. A link
+      // site placed next to a source froze a miner in W44N57 at an RCL upgrade.
+      const sites = [
+        { structureType: STRUCTURE_LINK, pos: { x: 40, y: 20 } },
+        { structureType: STRUCTURE_TERMINAL, pos: { x: 26, y: 6 } },
+        { structureType: STRUCTURE_LAB, pos: { x: 28, y: 8 } },
+        { structureType: STRUCTURE_EXTENSION, pos: { x: 31, y: 5 } },
+        { structureType: STRUCTURE_EXTRACTOR, pos: { x: 2, y: 12 } },
+      ];
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CONSTRUCTION_SITES) return sites;
+          return [];
+        }),
+      });
+
+      const matrix = getRoomCostMatrix(room);
+      expect(matrix.get(40, 20)).toBe(255);
+      expect(matrix.get(26, 6)).toBe(255);
+      expect(matrix.get(28, 8)).toBe(255);
+      expect(matrix.get(31, 5)).toBe(255);
+      expect(matrix.get(2, 12)).toBe(255);
+    });
+
+    it('keeps walkable construction sites (road/container/rampart) passable', () => {
+      const sites = [
+        { structureType: STRUCTURE_ROAD, pos: { x: 10, y: 10 } },
+        { structureType: STRUCTURE_CONTAINER, pos: { x: 11, y: 11 } },
+        { structureType: STRUCTURE_RAMPART, pos: { x: 12, y: 12 } },
+      ];
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CONSTRUCTION_SITES) return sites;
+          return [];
+        }),
+      });
+
+      const matrix = getRoomCostMatrix(room);
+      expect(matrix.get(10, 10)).toBe(0);
+      expect(matrix.get(11, 11)).toBe(0);
+      expect(matrix.get(12, 12)).toBe(0);
+    });
+
     it('reuses the heap-cached base matrix when structure count is unchanged', () => {
       const findCalls: number[] = [];
       const structures = [{ structureType: STRUCTURE_ROAD, pos: { x: 10, y: 10 } }];

@@ -374,16 +374,36 @@ function applyCreepOverlay(room: Room, costs: CostMatrix, creepCost: number): vo
   }
 }
 
-// Extension construction sites have terrain cost by default, so PathFinder
-// routes straight through them — then builders camping there to build create
-// single-tile bottlenecks. Elevate them to cost 10 (swamp) so PathFinder
-// prefers road corridors and plain-terrain detours when they exist, while
-// still routing through sites when there is no other option.
-function applyExtensionSiteOverlay(room: Room, costs: CostMatrix): void {
+// Construction sites of obstacle structure types block our OWN creeps — the
+// Screeps engine refuses a move onto a tile holding your own obstacle-type
+// construction site (extension, link, tower, lab, terminal, storage, spawn,
+// etc.). Road / container / rampart sites stay walkable. These sites are NOT
+// in the base matrix (they aren't FIND_STRUCTURES), so without this overlay
+// PathFinder routes creeps straight onto them at terrain cost, the engine
+// cancels the move, and the creep is stuck — a recurring failure at every RCL
+// upgrade when a batch of new sites lands on live corridors (observed: a miner
+// frozen next to a fresh link site in W44N57). Mark them 255 so PathFinder
+// detours; builders build from range 3 and never need to stand on the tile.
+const OBSTACLE_SITE_TYPES: ReadonlySet<StructureConstant> = new Set([
+  STRUCTURE_SPAWN,
+  STRUCTURE_EXTENSION,
+  STRUCTURE_LINK,
+  STRUCTURE_STORAGE,
+  STRUCTURE_TOWER,
+  STRUCTURE_OBSERVER,
+  STRUCTURE_POWER_SPAWN,
+  STRUCTURE_EXTRACTOR,
+  STRUCTURE_LAB,
+  STRUCTURE_TERMINAL,
+  STRUCTURE_NUKER,
+  STRUCTURE_FACTORY,
+  STRUCTURE_WALL,
+]);
+
+function applyConstructionSiteOverlay(room: Room, costs: CostMatrix): void {
   for (const site of room.find(FIND_MY_CONSTRUCTION_SITES)) {
-    if (site.structureType !== STRUCTURE_EXTENSION) continue;
-    const current = costs.get(site.pos.x, site.pos.y);
-    if (current < 10) costs.set(site.pos.x, site.pos.y, 10);
+    if (!OBSTACLE_SITE_TYPES.has(site.structureType)) continue;
+    costs.set(site.pos.x, site.pos.y, 255);
   }
 }
 
@@ -395,7 +415,7 @@ export function getRoomCostMatrix(room: Room): CostMatrix {
     // pushing PathFinder onto longer detours. Stationary creeps (255) and
     // hostile creeps (255) are still hard obstacles.
     applyCreepOverlay(room, costs, 0);
-    applyExtensionSiteOverlay(room, costs);
+    applyConstructionSiteOverlay(room, costs);
     return costs;
   });
 }
@@ -406,7 +426,7 @@ export function getRoomCostMatrixAvoidCreeps(room: Room, creepCost = 50): CostMa
   // second cached matrix slot per room.
   const costs = getBaseCostMatrix(room).clone();
   applyCreepOverlay(room, costs, creepCost);
-  applyExtensionSiteOverlay(room, costs);
+  applyConstructionSiteOverlay(room, costs);
   return costs;
 }
 
