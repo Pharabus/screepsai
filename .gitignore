@@ -6,3 +6,6 @@ dist/
 .screeps.yaml
 .mcp.json
 coverage/
+
+# Claude Code scheduled-task runtime lock
+.claude/scheduled_tasks.lock

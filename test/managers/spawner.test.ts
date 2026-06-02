@@ -348,7 +348,7 @@ describe('buildSpawnQueue', () => {
 
     const room = mockRoom({
       name: 'W1N1',
-      storage: { store: { getUsedCapacity: () => 150_000 } },
+      storage: { my: true, store: { getUsedCapacity: () => 150_000 } },
     });
     const queue = buildSpawnQueue(room);
 
@@ -1039,7 +1039,11 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
   it('queues remoteHauler when below quota of 3 for reserved room', () => {
     (Memory as any).rooms = {
       W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
-      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+      // containerId set: haulers only spawn once the remote container is built.
+      W2N1: {
+        remoteType: 'reserved',
+        sources: [{ id: 'src1' as any, x: 20, y: 20, containerId: 'cnt1' as any }],
+      },
     };
     // 2 existing haulers for this room — still below quota of 3
     (Game as any).creeps = {
@@ -1075,7 +1079,10 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
   it('does not queue remoteHauler when at quota of 3 for reserved room', () => {
     (Memory as any).rooms = {
       W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
-      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+      W2N1: {
+        remoteType: 'reserved',
+        sources: [{ id: 'src1' as any, x: 20, y: 20, containerId: 'cnt1' as any }],
+      },
     };
     // 3 existing haulers — at quota
     (Game as any).creeps = {
@@ -1117,10 +1124,36 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     expect(haulerEntry).toBeUndefined();
   });
 
+  it('does not queue remoteHauler until the remote source container is built', () => {
+    // Reserved room, below quota, but no containerId yet → the remote miner is
+    // still building the container, so a hauler would have nothing to haul.
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: { remoteType: 'reserved', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+    };
+    (Game as any).creeps = {};
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const noContainer = buildSpawnQueue(room).find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+    expect(noContainer).toBeUndefined();
+
+    // Once the container exists, the hauler is queued.
+    (Memory as any).rooms.W2N1.sources[0].containerId = 'cnt1';
+    const withContainer = buildSpawnQueue(room).find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+    expect(withContainer).toBeDefined();
+  });
+
   it('stops queuing remoteHauler at 2 per source for non-reserved room', () => {
     (Memory as any).rooms = {
       W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
-      W2N1: { remoteType: 'remote', sources: [{ id: 'src1' as any, x: 20, y: 20 }] },
+      W2N1: {
+        remoteType: 'remote',
+        sources: [{ id: 'src1' as any, x: 20, y: 20, containerId: 'cnt1' as any }],
+      },
     };
     // 2 existing haulers — at quota for non-reserved
     (Game as any).creeps = {

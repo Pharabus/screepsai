@@ -923,11 +923,17 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       }
 
       const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isHighCapacity);
+      // Don't spawn remote haulers until the remote miner has built at least one
+      // source container. Before that the miner spends its output building the
+      // container (1 CARRY) and produces little to haul — pre-spawned haulers
+      // would just idle/round-trip for nothing. containerId is set by the miner
+      // (miner.ts) and ensureRemoteRoomPlan once the container exists.
+      const remoteContainerBuilt = remoteMem?.sources?.some((s) => !!s.containerId) ?? false;
       // Use mission-tracked hauler count instead of a live scan. syncMission() above
       // already refreshed mission.haulerIds, so this is O(1). Stalled remotes skip
       // spawning so we don't send creeps into a hostile room.
       const activeHaulers = getActiveMissionHaulerCount(remoteRoom);
-      if (!isStalled && activeHaulers < haulersWanted) {
+      if (!isStalled && remoteContainerBuilt && activeHaulers < haulersWanted) {
         queue.push({
           role: 'remoteHauler',
           pattern: [CARRY, CARRY, MOVE, MOVE],

@@ -5,6 +5,7 @@
 
 import { hostilesSeen, getNeighbor } from './neighbors';
 import { getMyUsername } from './identity';
+import { myStorage } from './ownership';
 
 // Auto-scale cap: hold at 1 remote room until home storage clears this bar so
 // a second remote's spawn/bootstrap cost doesn't stall storage growth.
@@ -14,6 +15,20 @@ export const REMOTE_ROOM_SCALE_THRESHOLD = 100_000;
 export const NPC_SCOUT_REJECT_TICKS = 300;
 /** Selection rejection window after a scouted player sighting — long, players warrant caution. */
 export const PLAYER_SCOUT_REJECT_TICKS = 1500;
+
+/**
+ * Source count dominates the remote score: one extra source outweighs distance
+ * up to this many tiles. So a 2-source room always beats a 1-source room, but
+ * among equal source counts the closer room wins (distance is subtracted raw).
+ */
+const SOURCE_SCORE_WEIGHT = 100;
+/**
+ * Hard reject a remote whose one-way path exceeds this. Beyond it the round-trip
+ * haul cost swamps a single source's ~10 energy/tick even with roads.
+ */
+export const REMOTE_MAX_PATH_TILES = 120;
+/** Recompute a cached remote path distance when older than this many ticks. */
+const REMOTE_DISTANCE_STALE_TICKS = 5000;
 
 export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = false): number {
   const rmem = Memory.rooms[targetRoomName];
@@ -78,7 +93,10 @@ function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'ke
  * re-scouting territory it cannot exploit.
  */
 export function remoteRoomCap(homeRoom: Room): number {
-  const stored = homeRoom.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  // myStorage (not room.storage): a reclaimed room's foreign storage is
+  // owner-agnostic and would otherwise inflate the cap on a colony that can't
+  // yet exploit a second remote.
+  const stored = myStorage(homeRoom)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   const currentCount = Memory.rooms[homeRoom.name]?.remoteRooms?.length ?? 0;
   const scaleDown = Math.round(REMOTE_ROOM_SCALE_THRESHOLD * 0.7);
   return stored >= REMOTE_ROOM_SCALE_THRESHOLD || (currentCount >= 2 && stored >= scaleDown)
@@ -86,29 +104,119 @@ export function remoteRoomCap(homeRoom: Room): number {
     : 1;
 }
 
+/**
+ * Cached one-way path length (tiles) from the home spawn to a remote room's
+ * source cluster. Stored as round-trip ticks (path × 4) in mem.remoteDistance
+ * for reuse by the hauler-count scaler (remoteHaulersWanted); this returns the
+ * one-way tile count. Recomputed when missing or stale. Returns undefined on an
+ * incomplete/empty path so the caller can fall back to a source-only score
+ * rather than caching a bogus distance.
+ */
+function ensureRemotePathLength(
+  mem: RoomMemory,
+  homeSpawn: StructureSpawn,
+  roomName: string,
+): number | undefined {
+  const dist = (mem.remoteDistance ??= {});
+  const updated = (mem.remoteDistanceUpdated ??= {});
+  const lastUpdated = updated[roomName];
+  const fresh = lastUpdated !== undefined && Game.time - lastUpdated <= REMOTE_DISTANCE_STALE_TICKS;
+  const cached = dist[roomName];
+  if (fresh && cached !== undefined) return cached / 4;
+
+  const remoteMem = Memory.rooms[roomName];
+  const sources = remoteMem?.scoutedSourceData;
+  let targetPos: RoomPosition;
+  if (sources && sources.length > 0) {
+    const avgX = Math.floor(sources.reduce((s, p) => s + p.x, 0) / sources.length);
+    const avgY = Math.floor(sources.reduce((s, p) => s + p.y, 0) / sources.length);
+    targetPos = new RoomPosition(avgX, avgY, roomName);
+  } else {
+    targetPos = new RoomPosition(25, 25, roomName);
+  }
+  const result = PathFinder.search(
+    homeSpawn.pos,
+    { pos: targetPos, range: 1 },
+    { maxRooms: 3, maxOps: 2000 },
+  );
+  if (result.incomplete || result.path.length === 0) return undefined;
+  dist[roomName] = result.path.length * 4;
+  updated[roomName] = Game.time;
+  return result.path.length;
+}
+
+/**
+ * True when a SIBLING owned colony already claims this remote room and is at
+ * least as close to it as we are — so it keeps it (de-confliction; prevents two
+ * colonies double-mining one room). Only colonies with their own storage count:
+ * a colony without one will not actually run remotes (selectRemoteRooms gates on
+ * myStorage). Incumbent-stable: an equal- or shorter-path claimant holds the
+ * room, and an unknown distance yields to the incumbent (conservative).
+ */
+function claimedByCloserColony(
+  homeName: string,
+  remoteName: string,
+  myOneWayPath: number,
+): boolean {
+  for (const otherName of Object.keys(Memory.rooms)) {
+    if (otherName === homeName) continue;
+    const other = Game.rooms[otherName];
+    if (!other || !myStorage(other)) continue; // not a remote-capable colony
+    const otherMem = Memory.rooms[otherName];
+    if (!otherMem?.remoteRooms?.includes(remoteName)) continue; // doesn't claim it
+    const otherRt = otherMem.remoteDistance?.[remoteName];
+    if (otherRt === undefined) return true; // claims it, distance unknown → yield
+    if (otherRt / 4 <= myOneWayPath) return true;
+  }
+  return false;
+}
+
 export function selectRemoteRooms(homeRoom: Room): void {
-  // Remote mining only pays off once there's storage to accumulate the energy.
-  // Before that the room's 550-cap spawn/extensions fill quickly and the remote
-  // spawn costs outweigh the gain.
-  if (!homeRoom.storage) return;
+  const mem = (Memory.rooms[homeRoom.name] ??= {});
+
+  // Remote mining only pays off once OUR OWN storage exists to accumulate the
+  // energy. Guard on myStorage, not room.storage: in a reclaimed room the
+  // latter is owner-agnostic and returns the previous owner's full storage,
+  // which would otherwise make a freshly-claimed RCL2 colony spin up remotes it
+  // cannot afford. Clear any stale selection so those remotes are freed for
+  // sibling colonies (de-confliction).
+  if (!myStorage(homeRoom)) {
+    mem.remoteRooms = [];
+    return;
+  }
 
   const exits = Game.map.describeExits(homeRoom.name);
   if (!exits) return;
+  // Initialise distance caches up front so they exist even on a no-spawn /
+  // source-only pass (consumers and eviction below rely on their presence).
+  mem.remoteDistance ??= {};
+  mem.remoteDistanceUpdated ??= {};
+  const homeSpawn = homeRoom.find(FIND_MY_SPAWNS)[0] as StructureSpawn | undefined;
 
   const allowKeeperRooms = homeRoom.energyCapacityAvailable >= 5300;
   const scored: { name: string; score: number }[] = [];
   for (const roomName of Object.values(exits)) {
-    const score = evaluateRemoteRoom(roomName, allowKeeperRooms);
-    if (score > 0) {
-      scored.push({ name: roomName, score });
+    const sourceScore = evaluateRemoteRoom(roomName, allowKeeperRooms);
+    if (sourceScore <= 0) continue;
+
+    // Distance-aware: needs a spawn to path from. Falls back to a source-only
+    // score when there's no spawn, the room is dark, or PathFinder fails — so
+    // selection is never stalled on a transient/degenerate condition.
+    const oneWayPath = homeSpawn ? ensureRemotePathLength(mem, homeSpawn, roomName) : undefined;
+    if (oneWayPath === undefined) {
+      scored.push({ name: roomName, score: sourceScore * SOURCE_SCORE_WEIGHT });
+      continue;
     }
+    if (oneWayPath > REMOTE_MAX_PATH_TILES) continue; // too far to be worth it
+    if (claimedByCloserColony(homeRoom.name, roomName, oneWayPath)) continue; // sibling owns it
+
+    // Source count dominates; distance breaks ties and penalises far rooms.
+    scored.push({ name: roomName, score: sourceScore * SOURCE_SCORE_WEIGHT - oneWayPath });
   }
 
   scored.sort((a, b) => b.score - a.score);
 
-  const mem = (Memory.rooms[homeRoom.name] ??= {});
-  // Auto-scale with hysteresis (see remoteRoomCap). Must read the cap before
-  // reassigning mem.remoteRooms below so the hysteresis sees the current count.
+  // Auto-scale with hysteresis (see remoteRoomCap).
   const cap = remoteRoomCap(homeRoom);
   const selected = scored.slice(0, cap);
   mem.remoteRooms = selected.map((r) => r.name);
@@ -122,41 +230,12 @@ export function selectRemoteRooms(homeRoom: Room): void {
     }
   }
 
-  // Cache round-trip distance for each selected remote room.
-  // roundTripTicks = pathLength × 2 (round trip) × 2 (conservative: no roads yet)
-  // Recomputed on first selection or when >5000 ticks stale.
-  if (!mem.remoteDistance) mem.remoteDistance = {};
-  if (!mem.remoteDistanceUpdated) mem.remoteDistanceUpdated = {};
-  // Evict entries for rooms that are no longer selected
-  for (const key of Object.keys(mem.remoteDistance)) {
-    if (!mem.remoteRooms.includes(key)) {
-      delete mem.remoteDistance[key];
-      delete mem.remoteDistanceUpdated[key];
-    }
-  }
-  const homeSpawn = homeRoom.find(FIND_MY_SPAWNS)[0] as StructureSpawn | undefined;
-  if (homeSpawn) {
-    for (const { name } of selected) {
-      const updatedAt = mem.remoteDistanceUpdated[name];
-      const isStale = updatedAt === undefined || Game.time - updatedAt > 5000;
-      if (!isStale) continue;
-      const remoteMem = Memory.rooms[name];
-      const sources = remoteMem?.scoutedSourceData;
-      let targetPos: RoomPosition;
-      if (sources && sources.length > 0) {
-        const avgX = Math.floor(sources.reduce((s, p) => s + p.x, 0) / sources.length);
-        const avgY = Math.floor(sources.reduce((s, p) => s + p.y, 0) / sources.length);
-        targetPos = new RoomPosition(avgX, avgY, name);
-      } else {
-        targetPos = new RoomPosition(25, 25, name);
-      }
-      const result = PathFinder.search(
-        homeSpawn.pos,
-        { pos: targetPos, range: 1 },
-        { maxRooms: 3, maxOps: 2000 },
-      );
-      mem.remoteDistance[name] = result.path.length * 4;
-      mem.remoteDistanceUpdated[name] = Game.time;
+  // Evict distance-cache entries for rooms that are no longer candidate exits.
+  const exitSet = new Set<string>(Object.values(exits));
+  for (const key of Object.keys(mem.remoteDistance ?? {})) {
+    if (!exitSet.has(key)) {
+      delete mem.remoteDistance![key];
+      delete mem.remoteDistanceUpdated![key];
     }
   }
 }

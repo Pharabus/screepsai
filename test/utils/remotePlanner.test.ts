@@ -10,7 +10,8 @@ import { recordHostile } from '../../src/utils/neighbors';
 import { flushSegments } from '../../src/utils/segments';
 
 function mockStorage(stored: number): any {
-  return { store: { getUsedCapacity: () => stored } };
+  // Owned-colony storage: my === true so myStorage() (ownership-aware) accepts it.
+  return { my: true, store: { getUsedCapacity: () => stored } };
 }
 
 describe('remotePlanner', () => {
@@ -245,7 +246,9 @@ describe('remotePlanner', () => {
   describe('selectRemoteRooms', () => {
     it('does nothing when describeExits returns null', () => {
       Game.map.describeExits = () => null as any;
-      const room = mockRoom({ name: 'W1N1' });
+      // Own storage present so we pass the myStorage guard and reach the
+      // exits-null early return (rather than the no-storage clear path).
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(50_000) });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
       expect(Memory.rooms['W1N1'].remoteRooms).toBeUndefined();
@@ -264,6 +267,103 @@ describe('remotePlanner', () => {
       const result = Memory.rooms['W1N1'].remoteRooms!;
       expect(result).toHaveLength(1);
       expect(result[0]).toBe('W1N2');
+    });
+
+    // ---- #1: distance-aware scoring --------------------------------------
+    function roomWithSpawn(storedEnergy: number): any {
+      const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
+      return mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(storedEnergy),
+        find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
+      });
+    }
+
+    it('prefers the closer room when source counts tie', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+      const room = roomWithSpawn(0); // cap 1
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 320, W1N2: 120 }, // one-way 80 vs 30
+        remoteDistanceUpdated: { W2N1: (Game as any).time, W1N2: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W1N2']);
+    });
+
+    it('still prefers more sources over a closer single-source room', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any; // far, 2 src
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any; // close, 1 src
+      const room = roomWithSpawn(0); // cap 1
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 320, W1N2: 40 }, // one-way 80 vs 10
+        remoteDistanceUpdated: { W2N1: (Game as any).time, W1N2: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
+    });
+
+    it('rejects a remote beyond the max one-way path distance', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      const room = roomWithSpawn(0);
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 600 }, // one-way 150 > REMOTE_MAX_PATH_TILES (120)
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
+    // ---- #2: foreign-storage guard ---------------------------------------
+    it('clears remoteRooms when the room has only a foreign (non-my) storage', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      // A reclaimed room's previous-owner storage: present but not ours.
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: { my: false, store: { getUsedCapacity: () => 600_000 } },
+      });
+      Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
+    // ---- #3: inter-colony de-confliction ---------------------------------
+    it('yields a remote already claimed by a closer sibling colony', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      // Sibling W3N3 owns its storage and claims W2N1, closer (one-way 30).
+      (Game as any).rooms.W3N3 = {
+        storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
+      };
+      Memory.rooms['W3N3'] = { remoteRooms: ['W2N1'], remoteDistance: { W2N1: 120 } } as any;
+      const room = roomWithSpawn(50_000); // this colony is farther (one-way 80)
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 320 },
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
+    it('keeps a remote when this colony is closer than the sibling claimant', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      // Sibling W3N3 claims W2N1 but is farther (one-way 100).
+      (Game as any).rooms.W3N3 = {
+        storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
+      };
+      Memory.rooms['W3N3'] = { remoteRooms: ['W2N1'], remoteDistance: { W2N1: 400 } } as any;
+      const room = roomWithSpawn(50_000); // this colony is closer (one-way 30)
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 120 },
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
     });
 
     it('limits to 1 remote room when storage is below 100k', () => {
@@ -618,7 +718,10 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W2N1']).toBe(5002);
     });
 
-    it('evicts remoteDistance and remoteDistanceUpdated for deselected rooms', () => {
+    it('keeps candidate-exit distances but evicts entries for non-exit rooms', () => {
+      // Distances are now cached for ALL candidate exits (not just selected ones)
+      // so the distance-aware score can use them next cycle. Only entries for
+      // rooms that are no longer exits at all are evicted.
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
       Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any;
@@ -626,22 +729,28 @@ describe('remotePlanner', () => {
       const mockSpawn = { pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1') };
       const room = mockRoom({
         name: 'W1N1',
-        storage: mockStorage(100_000),
+        storage: mockStorage(50_000), // cap 1 → only W2N1 selected
         find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [mockSpawn] : [])),
       });
-      // Both fresh so no recomputation
+      // All fresh so no recomputation. W9N9 is NOT a current exit.
       Memory.rooms['W1N1'] = {
-        remoteDistance: { W2N1: 200, W1N2: 160 },
-        remoteDistanceUpdated: { W2N1: (Game as any).time, W1N2: (Game as any).time },
+        remoteDistance: { W2N1: 200, W1N2: 160, W9N9: 999 },
+        remoteDistanceUpdated: {
+          W2N1: (Game as any).time,
+          W1N2: (Game as any).time,
+          W9N9: (Game as any).time,
+        },
       } as any;
 
-      // Drop storage so only W2N1 (score 2) is selected
-      (room.storage as any).store.getUsedCapacity = () => 50_000;
       selectRemoteRooms(room);
 
+      // Selected room keeps its distance.
       expect(Memory.rooms['W1N1'].remoteDistance!['W2N1']).toBe(200);
-      expect(Memory.rooms['W1N1'].remoteDistance!['W1N2']).toBeUndefined();
-      expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W1N2']).toBeUndefined();
+      // Deselected but still a candidate exit → distance retained.
+      expect(Memory.rooms['W1N1'].remoteDistance!['W1N2']).toBe(160);
+      // Not an exit at all → evicted.
+      expect(Memory.rooms['W1N1'].remoteDistance!['W9N9']).toBeUndefined();
+      expect(Memory.rooms['W1N1'].remoteDistanceUpdated!['W9N9']).toBeUndefined();
     });
 
     it('uses center position (25,25) when no scoutedSourceData is available', () => {
