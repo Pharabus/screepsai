@@ -31,17 +31,27 @@
 export const STALL_HOSTILE_TICKS = 500;
 
 /**
+ * Sentinel targetAmount meaning "drain the source fully" for a TransportMission.
+ * NOT Infinity — JSON.stringify(Infinity) === 'null', which would corrupt the
+ * value on the next Memory parse. With this cap the delivered>=target completion
+ * never fires; the mission ends via the source-exhausted path instead.
+ */
+export const TRANSPORT_DRAIN_ALL = Number.MAX_SAFE_INTEGER;
+
+/**
  * Return the live MissionRegistry, initialising Memory.missions if absent.
  * All public helpers call this instead of touching Memory.missions directly,
  * so the registry is always properly shaped.
  */
 export function getMissionRegistry(): MissionRegistry {
-  if (!Memory.missions) Memory.missions = { remoteMining: {}, colony: {}, defense: {} };
+  if (!Memory.missions)
+    Memory.missions = { remoteMining: {}, colony: {}, defense: {}, transport: {} };
   // Backfill sub-maps for registries created before a type was added (e.g. live
-  // memory from an earlier step that lacks colony/defense).
+  // memory from an earlier step that lacks colony/defense/transport).
   if (!Memory.missions.remoteMining) Memory.missions.remoteMining = {};
   if (!Memory.missions.colony) Memory.missions.colony = {};
   if (!Memory.missions.defense) Memory.missions.defense = {};
+  if (!Memory.missions.transport) Memory.missions.transport = {};
   return Memory.missions;
 }
 
@@ -64,7 +74,7 @@ export function getMissionsOfType<T extends MissionBase>(
  * Mirrors the pattern of other reset* exports in the codebase.
  */
 export function resetMissions(): void {
-  Memory.missions = { remoteMining: {}, colony: {}, defense: {} };
+  Memory.missions = { remoteMining: {}, colony: {}, defense: {}, transport: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -104,11 +114,14 @@ export function garbageCollectMissions(): void {
       if (mission.status !== 'retiring') continue;
       if (Game.time - mission.createdAt <= 300) continue;
 
-      // Remote-mining-specific liveness checks (fields present on the cast type)
-      const rm = mission as Partial<RemoteMiningMission>;
+      // Type-agnostic liveness checks: don't reclaim a mission that still owns
+      // live creeps. remoteMining tracks haulerIds/reserverId; transport tracks
+      // courierIds. A future type with its own creep list adds a check here.
+      const rm = mission as Partial<RemoteMiningMission> & Partial<TransportMission>;
       const hasHaulers = Array.isArray(rm.haulerIds) && rm.haulerIds.length > 0;
       const hasReserver = rm.reserverId != null;
-      if (hasHaulers || hasReserver) continue;
+      const hasCouriers = Array.isArray(rm.courierIds) && rm.courierIds.length > 0;
+      if (hasHaulers || hasReserver || hasCouriers) continue;
 
       delete subMap[id];
     }
@@ -272,6 +285,115 @@ export function syncAllMissions(homeRoom: string, currentRemoteRooms: string[]):
       if (m.status === 'retiring') setMissionStatus(remoteRoom, 'active');
     } else if (m.status !== 'retiring') {
       retireMission(remoteRoom);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transport helpers (manual cross-room energy delivery)
+// ---------------------------------------------------------------------------
+
+/** Build the stable mission id / courier missionId key for a source→dest route. */
+export function getTransportMissionKey(sourceRoom: string, destRoom: string): string {
+  return `transport:${sourceRoom}->${destRoom}`;
+}
+
+/**
+ * Create (or refresh the target of) a transport mission for a source→dest route.
+ * Idempotent: re-running with a new amount on an existing route resets its
+ * targetAmount/deliveredAmount and re-activates it (so an operator can re-issue
+ * a drained route without manual cleanup).
+ *
+ * `amount` is a CAP — the mission completes on delivered >= amount OR when the
+ * source is exhausted. Pass Infinity (the deliverEnergy default) to drain fully.
+ */
+export function createTransportMission(
+  sourceRoom: string,
+  destRoom: string,
+  amount: number,
+  resource: ResourceConstant = RESOURCE_ENERGY,
+): TransportMission {
+  const missions = getMissionsOfType<TransportMission>('transport');
+  const id = getTransportMissionKey(sourceRoom, destRoom);
+  const existing = missions[id];
+  if (existing) {
+    existing.targetAmount = amount;
+    existing.deliveredAmount = 0;
+    existing.resource = resource;
+    existing.status = 'active';
+    existing.lastSynced = Game.time;
+    return existing;
+  }
+  missions[id] = {
+    type: 'transport',
+    id,
+    sourceRoom,
+    destRoom,
+    resource,
+    targetAmount: amount,
+    deliveredAmount: 0,
+    status: 'active',
+    createdAt: Game.time,
+    lastSynced: Game.time,
+    courierIds: [],
+  };
+  return missions[id];
+}
+
+/** Fetch a transport mission by its id, or undefined. */
+export function getTransportMission(id: string): TransportMission | undefined {
+  return Memory.missions?.transport?.[id];
+}
+
+/** All transport missions (active and retiring). */
+export function getTransportMissions(): TransportMission[] {
+  return Object.values(Memory.missions?.transport ?? {});
+}
+
+/** Number of live couriers serving a transport mission (after syncTransportMission). */
+export function getActiveCourierCount(id: string): number {
+  return Memory.missions?.transport?.[id]?.courierIds.length ?? 0;
+}
+
+/**
+ * Refresh a transport mission: rebuild courierIds from live creeps, and retire it
+ * when the goal is met. Completion (→ 'retiring') triggers on EITHER:
+ *  - deliveredAmount >= targetAmount (operator's cap reached), OR
+ *  - the source's withdrawable store is visible-and-empty AND no courier is still
+ *    carrying the resource (source exhausted — delivers whatever was available,
+ *    never hangs waiting for energy that isn't coming).
+ *
+ * The source-empty check requires vision of the source room (a courier in COLLECT
+ * provides it); when the source is dark we hold (a courier will arrive and grant
+ * vision), so we never retire prematurely on a transient lack of visibility.
+ */
+export function syncTransportMission(id: string): void {
+  const mission = Memory.missions?.transport?.[id];
+  if (!mission) return;
+
+  mission.courierIds = Object.values(Game.creeps)
+    .filter((c) => c.memory.missionId === id && c.memory.role === 'courier')
+    .map((c) => c.name);
+  mission.lastSynced = Game.time;
+
+  if (mission.status === 'retiring') return;
+
+  if (mission.deliveredAmount >= mission.targetAmount) {
+    mission.status = 'retiring';
+    return;
+  }
+
+  const source = Game.rooms[mission.sourceRoom];
+  if (source) {
+    const bank =
+      (source.storage?.store.getUsedCapacity(mission.resource) ?? 0) +
+      (source.terminal?.store.getUsedCapacity(mission.resource) ?? 0);
+    const carrying = mission.courierIds.some((name) => {
+      const c = Game.creeps[name];
+      return c ? c.store.getUsedCapacity(mission.resource) > 0 : false;
+    });
+    if (bank === 0 && !carrying) {
+      mission.status = 'retiring';
     }
   }
 }

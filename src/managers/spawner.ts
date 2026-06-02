@@ -24,6 +24,9 @@ import {
   syncAllMissions,
   getRemoteMissionKey,
   STALL_HOSTILE_TICKS,
+  getTransportMissions,
+  getTransportMission,
+  syncTransportMission,
 } from '../utils/missions';
 import { getNeighbor } from '../utils/neighbors';
 
@@ -1000,6 +1003,38 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE], minCount: buildersNeeded(room) });
     queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
     queue.push({ role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 1 });
+  }
+
+  // Transport missions (operator-created via deliverEnergy): couriers spawn from
+  // the DESTINATION room — the natural empty→source→full→dest loop, and the dest
+  // is a mature colony with ample spawn capacity. Added last (lowest priority):
+  // a manual transport must never starve the local economy or defenders.
+  for (const t of getTransportMissions()) {
+    if (t.destRoom !== room.name || t.status === 'retiring') continue;
+    syncTransportMission(t.id);
+    // Re-fetch: syncTransportMission may have flipped status to 'retiring'.
+    const m = getTransportMission(t.id);
+    if (!m || m.status === 'retiring') continue;
+    const carried = m.courierIds.reduce((sum, name) => {
+      const c = Game.creeps[name];
+      return sum + (c ? c.store.getUsedCapacity(m.resource) : 0);
+    }, 0);
+    if (m.deliveredAmount + carried >= m.targetAmount) continue;
+    const dist = Game.map.getRoomLinearDistance(room.name, m.sourceRoom);
+    const courierCap = Math.min(4, 1 + dist); // modest, distance-scaled
+    if (m.courierIds.length >= courierCap) continue;
+    queue.push({
+      role: 'courier',
+      pattern: [CARRY, CARRY, MOVE, MOVE],
+      maxRepeats: 8,
+      minCount: countCreepsByRole('courier', room.name) + 1,
+      memory: {
+        role: 'courier' as CreepRoleName,
+        homeRoom: room.name, // destination
+        targetRoom: m.sourceRoom,
+        missionId: m.id,
+      },
+    });
   }
 
   return queue;

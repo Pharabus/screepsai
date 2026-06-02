@@ -29,6 +29,11 @@ import {
   findClaimCandidates,
   allColonies,
 } from './utils/colonyPlanner';
+import {
+  createTransportMission,
+  getTransportMissions,
+  TRANSPORT_DRAIN_ALL,
+} from './utils/missions';
 import { roles } from './roles';
 
 // Console-callable exports.
@@ -200,6 +205,44 @@ export const claimCandidates = (): string => {
   return lines.join('\n');
 };
 
+/**
+ * Start a manual cross-room transport: couriers spawned from `dest` shuttle the
+ * resource out of `source`'s storage/terminal into dest's OWN storage. `amount`
+ * is a cap — the mission ends on delivered≥amount OR when the source is exhausted
+ * (never hangs). Omit `amount` to drain the source fully.
+ *
+ * Primary use: drain a reclaimed room's previous-owner storage hoard into a
+ * mature colony — which also empties the husk so the source can build its storage.
+ *
+ *   deliverEnergy('W42N59', 'W43N58')          // drain fully
+ *   deliverEnergy('W42N59', 'W43N58', 100000)  // up to 100k
+ */
+export const deliverEnergy = (source: string, dest: string, amount?: number): string => {
+  if (source === dest) return 'deliver refused: source and dest are the same room';
+  const destRoom = Game.rooms[dest];
+  if (!destRoom?.controller?.my) return `deliver refused: ${dest} is not an owned room`;
+  if (!destRoom.storage?.my) return `deliver refused: ${dest} has no own storage to receive into`;
+  const cap = amount && amount > 0 ? amount : TRANSPORT_DRAIN_ALL;
+  const m = createTransportMission(source, dest, cap);
+  const capStr = cap === TRANSPORT_DRAIN_ALL ? 'all available' : `up to ${cap}`;
+  return `transport ${source}->${dest} started: ${capStr} ${m.resource} (couriers spawn from ${dest})`;
+};
+
+/** List transport missions with delivered/target progress and live courier count. */
+export const transports = (): string => {
+  const missions = getTransportMissions();
+  if (missions.length === 0) return 'No transport missions.';
+  const lines = ['source   dest     resource  delivered  target     status    couriers'];
+  for (const m of missions) {
+    const target = m.targetAmount === TRANSPORT_DRAIN_ALL ? 'all' : String(m.targetAmount);
+    lines.push(
+      `${m.sourceRoom.padEnd(8)} ${m.destRoom.padEnd(8)} ${String(m.resource).padEnd(9)} ` +
+        `${String(m.deliveredAmount).padEnd(10)} ${target.padEnd(10)} ${m.status.padEnd(9)} ${m.courierIds.length}`,
+    );
+  }
+  return lines.join('\n');
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
@@ -213,6 +256,8 @@ global.claim = claim;
 global.colonies = colonies;
 global.evaluateClaim = evaluateClaim;
 global.claimCandidates = claimCandidates;
+global.deliverEnergy = deliverEnergy;
+global.transports = transports;
 global.roles = roles;
 
 export const loop = ErrorMapper.wrapLoop(() => {

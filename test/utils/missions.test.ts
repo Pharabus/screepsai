@@ -20,8 +20,20 @@ import {
   getMissionRegistry,
   getMissionsOfType,
   resetMissions,
+  getTransportMissionKey,
+  createTransportMission,
+  getTransportMission,
+  getTransportMissions,
+  syncTransportMission,
+  getActiveCourierCount,
+  TRANSPORT_DRAIN_ALL,
 } from '../../src/utils/missions';
 import { resetGameGlobals } from '../mocks/screeps';
+
+/** Minimal store stub: getUsedCapacity(resource?) returns `energy` for energy/total, else 0. */
+const courierStore = (energy = 0): any => ({
+  getUsedCapacity: (r?: string) => (r === undefined || r === RESOURCE_ENERGY ? energy : 0),
+});
 
 beforeEach(() => {
   resetGameGlobals();
@@ -589,8 +601,125 @@ describe('resetMissions', () => {
     expect(registry.remoteMining).toBeDefined();
     expect(registry.colony).toBeDefined();
     expect(registry.defense).toBeDefined();
+    expect(registry.transport).toBeDefined();
     expect(Object.keys(registry.remoteMining)).toHaveLength(0);
     expect(Object.keys(registry.colony)).toHaveLength(0);
     expect(Object.keys(registry.defense)).toHaveLength(0);
+    expect(Object.keys(registry.transport)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transport missions
+// ---------------------------------------------------------------------------
+
+describe('transport missions', () => {
+  beforeEach(() => {
+    resetMissions();
+  });
+
+  it('getTransportMissionKey returns the expected format', () => {
+    expect(getTransportMissionKey('W42N59', 'W43N58')).toBe('transport:W42N59->W43N58');
+  });
+
+  it('createTransportMission creates a record with the right shape', () => {
+    const m = createTransportMission('W42N59', 'W43N58', 100000);
+    expect(m.type).toBe('transport');
+    expect(m.id).toBe('transport:W42N59->W43N58');
+    expect(m.sourceRoom).toBe('W42N59');
+    expect(m.destRoom).toBe('W43N58');
+    expect(m.resource).toBe(RESOURCE_ENERGY);
+    expect(m.targetAmount).toBe(100000);
+    expect(m.deliveredAmount).toBe(0);
+    expect(m.status).toBe('active');
+    expect(m.courierIds).toEqual([]);
+    expect(getTransportMission('transport:W42N59->W43N58')).toBe(m);
+  });
+
+  it('createTransportMission is idempotent and resets target/delivered/status on re-issue', () => {
+    const first = createTransportMission('W42N59', 'W43N58', 50000);
+    first.deliveredAmount = 40000;
+    first.status = 'retiring';
+    const again = createTransportMission('W42N59', 'W43N58', 200000);
+    expect(again).toBe(first); // same record, not a duplicate
+    expect(getTransportMissions()).toHaveLength(1);
+    expect(again.targetAmount).toBe(200000);
+    expect(again.deliveredAmount).toBe(0);
+    expect(again.status).toBe('active');
+  });
+
+  it('TRANSPORT_DRAIN_ALL is a finite, JSON-safe sentinel (not Infinity)', () => {
+    expect(Number.isFinite(TRANSPORT_DRAIN_ALL)).toBe(true);
+    expect(JSON.parse(JSON.stringify({ a: TRANSPORT_DRAIN_ALL })).a).toBe(TRANSPORT_DRAIN_ALL);
+  });
+
+  it('syncTransportMission rebuilds courierIds from live creeps', () => {
+    const m = createTransportMission('W42N59', 'W43N58', TRANSPORT_DRAIN_ALL);
+    (Game as any).creeps = {
+      c1: { name: 'c1', memory: { role: 'courier', missionId: m.id }, store: courierStore(0) },
+      c2: { name: 'c2', memory: { role: 'courier', missionId: m.id }, store: courierStore(0) },
+      other: { name: 'other', memory: { role: 'hauler', missionId: m.id }, store: courierStore(0) },
+    };
+    syncTransportMission(m.id);
+    expect(m.courierIds.sort()).toEqual(['c1', 'c2']);
+    expect(getActiveCourierCount(m.id)).toBe(2);
+  });
+
+  it('retires when deliveredAmount reaches the target', () => {
+    const m = createTransportMission('W42N59', 'W43N58', 100000);
+    m.deliveredAmount = 100000;
+    (Game as any).creeps = {};
+    syncTransportMission(m.id);
+    expect(m.status).toBe('retiring');
+  });
+
+  it('retires when the source is visible-empty and no courier is carrying (exhausted)', () => {
+    const m = createTransportMission('W42N59', 'W43N58', TRANSPORT_DRAIN_ALL);
+    m.deliveredAmount = 73000; // short of "all" — ends via exhaustion, never hangs
+    (Game as any).rooms = {
+      W42N59: { storage: { store: { getUsedCapacity: () => 0 } }, terminal: undefined },
+    };
+    (Game as any).creeps = {
+      c1: { name: 'c1', memory: { role: 'courier', missionId: m.id }, store: courierStore(0) },
+    };
+    syncTransportMission(m.id);
+    expect(m.status).toBe('retiring');
+  });
+
+  it('does NOT retire on exhaustion while a courier still carries the resource', () => {
+    const m = createTransportMission('W42N59', 'W43N58', TRANSPORT_DRAIN_ALL);
+    (Game as any).rooms = {
+      W42N59: { storage: { store: { getUsedCapacity: () => 0 } }, terminal: undefined },
+    };
+    (Game as any).creeps = {
+      c1: {
+        name: 'c1',
+        memory: { role: 'courier', missionId: m.id },
+        store: courierStore(200),
+      },
+    };
+    syncTransportMission(m.id);
+    expect(m.status).toBe('active');
+  });
+
+  it('does NOT retire when the source room is dark (no vision)', () => {
+    const m = createTransportMission('W42N59', 'W43N58', TRANSPORT_DRAIN_ALL);
+    (Game as any).rooms = {}; // source not visible
+    (Game as any).creeps = {};
+    syncTransportMission(m.id);
+    expect(m.status).toBe('active');
+  });
+
+  it('GC keeps a retiring transport with live couriers, deletes once drained and aged', () => {
+    const m = createTransportMission('W42N59', 'W43N58', 100000);
+    m.status = 'retiring';
+    m.createdAt = (Game as any).time - 400; // older than the 300-tick GC age
+    m.courierIds = ['c1'];
+    garbageCollectMissions();
+    expect(getTransportMission(m.id)).toBeDefined(); // live courier → kept
+
+    m.courierIds = [];
+    garbageCollectMissions();
+    expect(getTransportMission(m.id)).toBeUndefined(); // drained + aged → reclaimed
   });
 });

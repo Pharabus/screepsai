@@ -16,7 +16,8 @@ type CreepRoleName =
   | 'claimer'
   | 'colonyBuilder'
   | 'hunter'
-  | 'keeperKiller';
+  | 'keeperKiller'
+  | 'courier';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -287,7 +288,7 @@ interface ProfilerSample {
 // ---------------------------------------------------------------------------
 
 /** Extensible union of all mission types. Extend by adding '| newType'. */
-type MissionType = 'remoteMining' | 'colony' | 'defense';
+type MissionType = 'remoteMining' | 'colony' | 'defense' | 'transport';
 
 /**
  * Common fields every mission record must carry.
@@ -389,6 +390,39 @@ interface DefenseMission extends MissionBase {
 }
 
 /**
+ * A TransportMission is a manual, operator-created cross-room energy (or mineral)
+ * delivery: couriers shuttle a resource from sourceRoom's primary store to
+ * destRoom's OWN storage. Created via the deliverEnergy() console command.
+ *
+ * Primary use: drain a reclaimed room's previous-owner storage hoard into a
+ * mature colony (the source can't bank or locally absorb it, and a terminal
+ * doesn't exist until RCL6) — which also empties the husk so the source can build
+ * its own storage. Works at any RCL; complements the terminal-based, automatic
+ * sendEnergyToColonies (terminal.ts).
+ *
+ * targetAmount is a CAP: the mission completes on delivered >= target OR when the
+ * source is exhausted (delivers whatever was available), so it never hangs.
+ * Couriers spawn from destRoom (CreepMemory.homeRoom = dest, targetRoom = source).
+ */
+interface TransportMission extends MissionBase {
+  type: 'transport';
+  /** Stable key == `transport:<sourceRoom>-><destRoom>`. */
+  id: string;
+  sourceRoom: string;
+  destRoom: string;
+  /** Resource being moved (default RESOURCE_ENERGY). */
+  resource: ResourceConstant;
+  /** Cap on total delivered; mission completes at this OR when the source empties. */
+  targetAmount: number;
+  /** Running total deposited into destRoom storage (credited by the courier role). */
+  deliveredAmount: number;
+  /** 'active' while delivering; 'retiring' once target met or source exhausted (GC reclaims). */
+  status: 'active' | 'retiring';
+  /** Names of courier creeps serving this mission (derived from missionId scan). */
+  courierIds: string[];
+}
+
+/**
  * Strictly-typed mission registry.  Adding a future mission type requires one
  * extra field here and a matching sub-map guard in getMissionRegistry().
  */
@@ -399,6 +433,8 @@ interface MissionRegistry {
   colony: Record<string, ColonyMission>;
   /** One record per owned room with an active/recent combat engagement. Key = room name. */
   defense: Record<string, DefenseMission>;
+  /** One record per active manual cross-room transport. Key = `transport:<src>-><dest>`. */
+  transport: Record<string, TransportMission>;
 }
 
 interface Memory {

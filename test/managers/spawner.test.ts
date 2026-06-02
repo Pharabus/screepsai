@@ -18,6 +18,11 @@ import { resetTickCache } from '../../src/utils/tickCache';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
 import { flushSegments } from '../../src/utils/segments';
 import { recordHostile } from '../../src/utils/neighbors';
+import {
+  createTransportMission,
+  resetMissions,
+  TRANSPORT_DRAIN_ALL,
+} from '../../src/utils/missions';
 
 beforeEach(() => {
   resetGameGlobals();
@@ -2191,5 +2196,51 @@ describe('defender spawn queue boost attachment', () => {
 
     expect(rangedEntry?.memory?.boosts).toBeUndefined();
     expect(healerEntry?.memory?.boosts).toBeUndefined();
+  });
+});
+
+describe('buildSpawnQueue — transport missions', () => {
+  beforeEach(() => {
+    resetMissions();
+    (Game as any).map.getRoomLinearDistance = () => 3;
+  });
+
+  it('queues a courier from the destination room while a transport is active', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], remoteRooms: [] } };
+    (Game as any).creeps = {};
+    createTransportMission('W2N1', 'W1N1', TRANSPORT_DRAIN_ALL); // dest = W1N1
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+    const courierEntry = queue.find(
+      (r) => r.role === 'courier' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+
+    expect(courierEntry).toBeDefined();
+    expect((courierEntry!.memory as any).homeRoom).toBe('W1N1'); // spawns from dest
+    expect((courierEntry!.memory as any).missionId).toBe('transport:W2N1->W1N1');
+  });
+
+  it('does not queue a courier for a transport whose dest is a different room', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], remoteRooms: [] } };
+    (Game as any).creeps = {};
+    createTransportMission('W2N1', 'W9N9', TRANSPORT_DRAIN_ALL); // dest = W9N9, not W1N1
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+
+    expect(queue.find((r) => r.role === 'courier')).toBeUndefined();
+  });
+
+  it('does not queue a courier once the delivered target is met', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], remoteRooms: [] } };
+    (Game as any).creeps = {};
+    const m = createTransportMission('W2N1', 'W1N1', 100000);
+    m.deliveredAmount = 100000;
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const queue = buildSpawnQueue(room);
+
+    expect(queue.find((r) => r.role === 'courier')).toBeUndefined();
   });
 });
