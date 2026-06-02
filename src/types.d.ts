@@ -16,8 +16,7 @@ type CreepRoleName =
   | 'claimer'
   | 'colonyBuilder'
   | 'hunter'
-  | 'keeperKiller'
-  | 'looter';
+  | 'keeperKiller';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -145,8 +144,9 @@ interface RoomMemory {
   /**
    * ID of a foreign-owned structure in this room whose store still holds
    * resources we want to capture. Set by cleanupClaimedRoom() when a
-   * loot-bearing structure is detected; cleared once the structure is gone.
-   * The looter role dismantles this structure to drop its contents.
+   * loot-bearing structure is detected; cleared once the structure is empty.
+   * Haulers drain it losslessly via withdraw() (pickupForeignStore in hauler.ts);
+   * cleanupClaimedRoom() destroys the empty husk to free the storage slot.
    */
   lootTargetId?: Id<AnyStoreStructure>;
   // Best spawn position suggestion for a not-yet-claimed room

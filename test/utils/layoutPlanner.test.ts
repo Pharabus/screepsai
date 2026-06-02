@@ -54,7 +54,7 @@ describe('computeLayout', () => {
 
   it('uses existing storage position when storage is present', () => {
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     expect(plan.storagePos).toEqual({ x: 28, y: 25 });
@@ -62,7 +62,7 @@ describe('computeLayout', () => {
 
   it('lab positions are at storagePos + (2,2) + LAB_STAMP offsets', () => {
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     const ax = 28 + 2; // 30
@@ -78,7 +78,7 @@ describe('computeLayout', () => {
 
   it('extension positions do not overlap with lab positions', () => {
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     const labSet = new Set(plan.labPositions.map((p) => `${p.x},${p.y}`));
@@ -89,7 +89,7 @@ describe('computeLayout', () => {
 
   it('extension positions do not overlap with terminal position', () => {
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     const termKey = `${plan.terminalPos.x},${plan.terminalPos.y}`;
@@ -99,7 +99,7 @@ describe('computeLayout', () => {
 
   it('all positions are within room bounds [2..47]', () => {
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     const allPositions = [
@@ -145,7 +145,7 @@ describe('computeLayout', () => {
   it('produces at least 40 extension positions for typical terrain', () => {
     // 40 = RCL 6 max. Should always be achievable in open terrain.
     const room = makeRoom({
-      storage: { pos: new RoomPosition(28, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     expect(plan.extensionPositions.length).toBeGreaterThanOrEqual(40);
@@ -382,7 +382,7 @@ describe('isAccessible filter in lab stamp loop', () => {
   it('all planned lab positions have ≥1 walkable cardinal neighbour in the final plan', () => {
     // In a clean room, the filter must ensure every placed lab remains reachable.
     const room = makeRoom({
-      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(27, 25, 'W1N1') },
     });
     const plan = computeLayout(room)!;
     // Build the set of lab keys to check accessibility in the final configuration.
@@ -396,16 +396,6 @@ describe('isAccessible filter in lab stamp loop', () => {
       [0, -1],
       [0, 1],
     ];
-    const NON_WALKABLE = new Set([
-      STRUCTURE_LAB,
-      STRUCTURE_SPAWN,
-      STRUCTURE_EXTENSION,
-      STRUCTURE_STORAGE,
-      STRUCTURE_TERMINAL,
-      STRUCTURE_TOWER,
-      STRUCTURE_LINK,
-      STRUCTURE_WALL,
-    ]);
     for (const { x, y } of plan.labPositions) {
       const hasWalkable = cardinals.some(([dx, dy]) => {
         const nx = x + dx;
@@ -433,7 +423,7 @@ describe('isAccessible filter in lab stamp loop', () => {
     };
     room.getTerrain = () => makeTerrain();
     // Force storage position to (16,29) so labAx=18, labAy=31
-    (room as any).storage = { pos: new RoomPosition(16, 29, 'W1N1') };
+    (room as any).storage = { my: true, pos: new RoomPosition(16, 29, 'W1N1') };
     const plan = computeLayout(room)!;
     const labKeys = new Set(plan.labPositions.map((p) => `${p.x},${p.y}`));
     // Rejected positions must not be in the plan
@@ -448,7 +438,7 @@ describe('isAccessible filter in lab stamp loop', () => {
   it('under-fill log is emitted when accessibility rejects stamp positions', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const room = makeRoom({
-      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(27, 25, 'W1N1') },
     });
     computeLayout(room);
     const calls = consoleSpy.mock.calls.map((args) => args.join(' '));
@@ -485,7 +475,7 @@ describe('isAccessible filter in lab stamp loop', () => {
     }
     const room = makeRoom({
       terrain: makeTerrain(walls),
-      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(27, 25, 'W1N1') },
     });
     computeLayout(room);
     const calls = consoleSpy.mock.calls.map((args) => args.join(' '));
@@ -512,7 +502,7 @@ describe('isAccessible filter in factory placement', () => {
     // Wall off (28,23) so the extension's only open cardinal would be (28,25) itself
     // (which is blocked if factory is placed there) — making it inaccessible.
     const room = makeRoom({
-      storage: { pos: new RoomPosition(27, 25, 'W1N1') },
+      storage: { my: true, pos: new RoomPosition(27, 25, 'W1N1') },
     });
     // Wall at (28,23) — extension at (28,24) would then rely on (28,25) as its
     // sole non-wall walkable cardinal, but that's the factory candidate tile.

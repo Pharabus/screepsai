@@ -1,3 +1,5 @@
+import { myStorage } from './ownership';
+
 // Lab stamp: [dx, dy] offsets from lab anchor = storagePos + (2,2).
 // Positions 0-1 are input labs; 2-9 are output labs.
 // RCL 6 → 3 labs (indices 0-2), RCL 7 → 9 labs (indices 0-8), RCL 8 → 10 labs (all).
@@ -329,9 +331,11 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   // a planned slot on top of an already-built structure of a different type.
   const liveMap = buildLiveMap(room);
 
-  // Step 1: Storage position
-  const storagePos = room.storage
-    ? { x: room.storage.pos.x, y: room.storage.pos.y }
+  // Step 1: Storage position — use OWN storage so a foreign storage in a reclaimed
+  // room doesn't lock the layout plan onto the wrong tile.
+  const ownStorageForLayout = myStorage(room);
+  const storagePos = ownStorageForLayout
+    ? { x: ownStorageForLayout.pos.x, y: ownStorageForLayout.pos.y }
     : pickStoragePosition(liveMap, spawn.pos, terrain);
 
   const reserved = new Set<string>();

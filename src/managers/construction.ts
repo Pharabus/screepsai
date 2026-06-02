@@ -4,6 +4,7 @@ import {
   getBaseCostMatrixForRoom,
   TUNNEL_WALL_COST,
 } from '../utils/trafficManager';
+import { myStorage } from '../utils/ownership';
 
 // Max extensions per RCL level (from Screeps CONTROLLER_STRUCTURES).
 // At RCL 7 each extension holds 100 energy (up from 50), at RCL 8 it's 200,
@@ -289,7 +290,10 @@ export function placeControllerContainer(room: Room): void {
 export function placeStorage(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 4) return;
-  if (room.storage) return;
+  // Only skip when OUR storage already exists. A foreign storage (previous owner's
+  // structure in a reclaimed room) occupies the single storage slot — haulers drain
+  // it first; cleanupClaimedRoom destroys the empty husk; then we place ours.
+  if (myStorage(room)) return;
 
   const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
     filter: (s) => s.structureType === STRUCTURE_STORAGE,
@@ -367,8 +371,10 @@ export function placeRoads(room: Room): void {
   if (room.controller) {
     targets.push(room.controller.pos);
   }
-  if (room.storage) {
-    targets.push(room.storage.pos);
+  // Only road to OWN storage — a foreign storage will be drained and destroyed.
+  const ownStorageForRoads = myStorage(room);
+  if (ownStorageForRoads) {
+    targets.push(ownStorageForRoads.pos);
   }
 
   const reserved = getPlannedReserved(room);
@@ -424,7 +430,8 @@ export function placeTerminal(room: Room): void {
     filter: (s) => s.structureType === STRUCTURE_TERMINAL,
   });
   if (sites.length > 0) return;
-  if (!room.storage) return;
+  // Gate on OWN storage so we don't anchor the terminal to a foreign storage's position.
+  if (!myStorage(room)) return;
 
   const mem = Memory.rooms[room.name];
   const plan = mem?.layoutPlan;
@@ -438,7 +445,7 @@ export function placeTerminal(room: Room): void {
     return;
   }
 
-  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
+  const pos = findOpenPosition(room, myStorage(room)!.pos, 1, 3);
   if (pos) room.createConstructionSite(pos, STRUCTURE_TERMINAL);
 }
 
@@ -467,8 +474,11 @@ export function placeFactory(room: Room): void {
     return;
   }
 
-  if (!room.storage) return;
-  const pos = findOpenPosition(room, room.storage.pos, 1, 3);
+  // Anchor to OWN storage position — a foreign storage in a reclaimed room must
+  // not be used as an anchor (it may be on the wrong tile for our layout plan).
+  const ownStorageForFactory = myStorage(room);
+  if (!ownStorageForFactory) return;
+  const pos = findOpenPosition(room, ownStorageForFactory.pos, 1, 3);
   if (pos) room.createConstructionSite(pos, STRUCTURE_FACTORY);
 }
 
@@ -552,11 +562,15 @@ export function placeLinks(room: Room): void {
   // findOpenPosition to return undefined and source links fill both RCL-5 link
   // slots instead. The extension planner pre-generates 70 positions for 60 needed
   // at RCL 8 — one tile occupied by the storage link costs at most 1 extension slot.
-  if (room.storage && !mem?.storageLinkId) {
-    const existing = room.storage.pos.findInRange(FIND_MY_STRUCTURES, 3, {
+  //
+  // Use myStorage (ownership-aware): anchor the storage link only to OUR storage,
+  // not to a previous owner's foreign storage in a reclaimed room.
+  const ownStorage = myStorage(room);
+  if (ownStorage && !mem?.storageLinkId) {
+    const existing = ownStorage.pos.findInRange(FIND_MY_STRUCTURES, 3, {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
-    const existingSites = room.storage.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 3, {
+    const existingSites = ownStorage.pos.findInRange(FIND_MY_CONSTRUCTION_SITES, 3, {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     });
     if (existing.length === 0 && existingSites.length === 0) {
@@ -570,7 +584,7 @@ export function placeLinks(room: Room): void {
       if (plan?.factoryPos) storageReserved.add(`${plan.factoryPos.x},${plan.factoryPos.y}`);
       for (const p of plan?.towerPositions ?? []) if (p) storageReserved.add(`${p.x},${p.y}`);
       for (const p of plan?.spawnPositions ?? []) if (p) storageReserved.add(`${p.x},${p.y}`);
-      const pos = findOpenPosition(room, room.storage.pos, 2, 3, storageReserved);
+      const pos = findOpenPosition(room, ownStorage.pos, 2, 3, storageReserved);
       if (pos) {
         room.createConstructionSite(pos, STRUCTURE_LINK);
         return;
@@ -755,7 +769,9 @@ export function placeLabs(room: Room): void {
   if (hasUnbuiltLinkSites(room)) return;
   const current = countStructuresAndSites(room, STRUCTURE_LAB);
   if (current >= max) return;
-  if (!room.storage) return;
+  // Gate on OWN storage — a foreign storage in a reclaimed room must not gate labs.
+  const ownStorageForLabs = myStorage(room);
+  if (!ownStorageForLabs) return;
 
   const mem = Memory.rooms[room.name];
   const plan = mem?.layoutPlan;
@@ -791,10 +807,10 @@ export function placeLabs(room: Room): void {
     return;
   }
 
-  // Fallback: stamp relative to storage
+  // Fallback: stamp relative to own storage
   const terrain = room.getTerrain();
-  const ox = room.storage.pos.x + 2;
-  const oy = room.storage.pos.y + 2;
+  const ox = ownStorageForLabs.pos.x + 2;
+  const oy = ownStorageForLabs.pos.y + 2;
   for (const [dx, dy] of LAB_STAMP) {
     const x = ox + dx;
     const y = oy + dy;
@@ -870,8 +886,11 @@ export function placeRamparts(room: Room): void {
       filter: (s) => s.structureType === STRUCTURE_LAB,
     }),
   ];
-  if (room.storage) critical.push(room.storage);
-  if (room.terminal) critical.push(room.terminal);
+  // Only rampart OWN storage/terminal — foreign structures in a reclaimed room
+  // will be destroyed once drained; ramparting them wastes construction resources.
+  const ownStorageForRampart = myStorage(room);
+  if (ownStorageForRampart) critical.push(ownStorageForRampart);
+  if (room.terminal?.my) critical.push(room.terminal);
   if (room.controller) critical.push(room.controller);
 
   for (const structure of critical) {
@@ -1170,9 +1189,11 @@ const FOREIGN_OBSTACLE_TYPES: Set<StructureConstant> = new Set([
 ]);
 
 /**
- * Foreign bulk-store types whose contents are worth capturing with a looter
- * (dismantle → drop → haul) instead of voiding via destroy(). ONLY these types,
- * and ONLY when holding ≥ LOOT_MIN_STORE, take the loot path.
+ * Foreign bulk-store types whose contents are worth draining directly with
+ * haulers (via withdraw()) instead of voiding via destroy(). ONLY these types,
+ * and ONLY when still holding resources (storeUsed > 0), take the drain-then-
+ * destroy path. Haulers drain the store via pickupForeignStore; once truly empty
+ * the husk is destroyed, freeing the single storage slot for our own placement.
  *
  * Every other foreign obstacle (spawn, extension, tower, link, lab, …) is
  * destroyed even if it holds a little energy. This is critical: a foreign SPAWN
@@ -1184,9 +1205,6 @@ const FOREIGN_OBSTACLE_TYPES: Set<StructureConstant> = new Set([
  */
 const LOOTABLE_TYPES: Set<StructureConstant> = new Set([STRUCTURE_STORAGE, STRUCTURE_TERMINAL]);
 
-/** Minimum store contents (any resource) that justifies a looter dismantle trip. */
-const LOOT_MIN_STORE = 10000;
-
 /**
  * Clean up foreign-owned and unowned obstacle structures in a room we control.
  *
@@ -1195,10 +1213,13 @@ const LOOT_MIN_STORE = 10000;
  *
  * Rules:
  * - FOREIGN_OBSTACLE_TYPES → destroy() (free, instant), EXCEPT a LOOTABLE_TYPES
- *   bulk store (storage/terminal) holding ≥ LOOT_MIN_STORE, which is left for
- *   the looter role to dismantle (so its hoard drops rather than being voided).
- *   Spawns/extensions/towers/etc. are destroyed even with a little energy — they
- *   occupy our RCL structure-count slots and must not block our placement.
+ *   bulk store (storage/terminal) that is still non-empty (storeUsed > 0).
+ *   Non-empty lootable stores are spared while haulers drain them directly via
+ *   withdraw() (pickupForeignStore in hauler.ts) — lossless, no dismantle needed.
+ *   Once truly empty, the husk is destroyed next cleanup tick, freeing the single
+ *   storage slot for our own placement. Spawns/extensions/towers/etc. are always
+ *   destroyed even with a little energy — they occupy our RCL structure-count
+ *   slots and must not block our placement.
  * - Unowned constructedWalls on tiles our layout/perimeter plan WANTS to
  *   build on → destroy().  Walls in the perimeter plan are kept; walls on
  *   unplanned open tiles are left alone (conservative).
@@ -1207,9 +1228,9 @@ const LOOT_MIN_STORE = 10000;
  *   player's site and they block our own placement; unlike built roads, an
  *   unfinished foreign site has no reuse value.
  *
- * Also maintains RoomMemory.lootTargetId: records the first qualifying loot
- * target's ID so the looter role can find it without a repeated
- * FIND_HOSTILE_STRUCTURES scan.
+ * Also maintains RoomMemory.lootTargetId: records the first qualifying non-empty
+ * loot target's ID so haulers can find it without a repeated FIND_HOSTILE_STRUCTURES
+ * scan. Cleared once the structure is drained to 0.
  */
 export function cleanupClaimedRoom(room: Room): void {
   if (!room.controller?.my) return;
@@ -1240,14 +1261,14 @@ export function cleanupClaimedRoom(room: Room): void {
       const storeUsed =
         'store' in s ? ((s as unknown as AnyStoreStructure).store.getUsedCapacity() ?? 0) : 0;
 
-      // Only a genuine hoard in a bulk store (storage/terminal) is worth the
-      // looter's dismantle trip. Everything else — a foreign spawn/extension/
-      // tower/link/lab with a few hundred energy, or a near-empty storage — is
-      // destroyed regardless of its trivial store, because it occupies an RCL
-      // structure-count slot we need for our own buildout.
-      if (LOOTABLE_TYPES.has(type) && storeUsed >= LOOT_MIN_STORE) {
-        // Record as loot target (first qualifying one wins); the looter
-        // dismantles it so the hoard drops for haulers to collect.
+      // A non-empty lootable bulk store (storage/terminal) is drained by haulers
+      // directly via withdraw() — lossless, no dismantle needed. Spare it until
+      // truly empty (storeUsed > 0). Everything else — foreign spawn/extension/
+      // tower/link/lab, or a lootable type at exactly 0 — is destroyed, because
+      // it occupies an RCL structure-count slot we need for our own buildout.
+      if (LOOTABLE_TYPES.has(type) && storeUsed > 0) {
+        // Record as loot target (first qualifying one wins); haulers drain it
+        // via pickupForeignStore before cleanupClaimedRoom destroys the empty husk.
         if (!lootTargetId) {
           lootTargetId = (s as unknown as AnyStoreStructure).id;
         }

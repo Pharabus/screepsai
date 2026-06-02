@@ -81,6 +81,7 @@ describe('hauler terminal logistics', () => {
 
   it('delivers minerals to terminal when terminal exists', () => {
     const terminal = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: mockStore({}),
     };
@@ -106,6 +107,7 @@ describe('hauler terminal logistics', () => {
 
   it('delivers minerals to storage when no terminal exists', () => {
     const storage = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: mockStore({}),
     };
@@ -133,10 +135,12 @@ describe('hauler terminal logistics', () => {
   it('picks up excess minerals from storage for terminal transfer when idle', () => {
     const storageStore = mockStore({ energy: 100, H: 8000 }, 1000000);
     const storage = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: storageStore,
     };
     const terminal = {
+      my: true,
       pos: new RoomPosition(28, 28, 'W1N1'),
       store: mockStore({}, 300000),
     };
@@ -169,10 +173,12 @@ describe('hauler terminal logistics', () => {
     // the 200-unit surplus.
     const storageStore = mockStore({ energy: 100, GH2O: 5200 }, 1000000);
     const storage = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: storageStore,
     };
     const terminal = {
+      my: true,
       pos: new RoomPosition(28, 28, 'W1N1'),
       store: mockStore({}, 300000),
     };
@@ -200,10 +206,12 @@ describe('hauler terminal logistics', () => {
 
   it('fills storage buffer before overflowing to terminal when storage mineral is below floor', () => {
     const storage = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: mockStore({ energy: 50000, H: 0 }, 1000000), // 0 H in storage
     };
     const terminal = {
+      my: true,
       pos: new RoomPosition(28, 28, 'W1N1'),
       store: mockStore({}, 300000),
     };
@@ -233,10 +241,12 @@ describe('hauler terminal logistics', () => {
   it('does not move minerals to terminal when storage is below floor', () => {
     const storageStore = mockStore({ energy: 100, H: 3000 });
     const storage = {
+      my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
       store: storageStore,
     };
     const terminal = {
+      my: true,
       pos: new RoomPosition(28, 28, 'W1N1'),
       store: mockStore({}),
     };
@@ -981,6 +991,7 @@ describe('hauler pickup priority', () => {
 
     const storage = {
       id: 'storage1' as Id<StructureStorage>,
+      my: true,
       store: mockStore({ energy: 20000 }, 1000000),
       structureType: STRUCTURE_STORAGE,
       pos: new RoomPosition(25, 24, 'W1N1'),
@@ -1444,6 +1455,7 @@ describe('hauler delivery priority', () => {
   it('delivers to storage before controller container when storage is below floor', () => {
     const storage = {
       id: 'stor1',
+      my: true,
       pos: new RoomPosition(16, 29, 'W1N1'),
       store: mockStore({ energy: 5000 }, 1000000),
     };
@@ -2019,5 +2031,223 @@ describe('hauler pool dispatcher integration', () => {
     // Note: creep.withdraw is called with the object from room.find (cA), not from getObjectById.
     expect(testHauler.withdraw).toHaveBeenCalledWith(cA, RESOURCE_ENERGY);
     expect(testHauler.withdraw).not.toHaveBeenCalledWith(emptyCB, RESOURCE_ENERGY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickupForeignStore — direct withdrawal from reclaimed-room foreign store
+// ---------------------------------------------------------------------------
+
+describe('hauler pickupForeignStore', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('withdraws energy from a foreign storage when lootTargetId is set and store has energy', () => {
+    const foreignStorage = {
+      id: 'fStorage' as any,
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 100_000 }, 1_000_000),
+    };
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'fStorage') return foreignStorage;
+      return null;
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'fStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(foreignStorage, RESOURCE_ENERGY);
+  });
+
+  it('returns false (skips) when lootTargetId is not set', () => {
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // No foreign store pickup attempted
+    // (the test just verifies no crash and creep can still idle)
+    expect(creep.withdraw).not.toHaveBeenCalled();
+  });
+
+  it('returns false (skips) when loot target store is empty', () => {
+    const emptyStorage = {
+      id: 'fStorage' as any,
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({}, 1_000_000),
+    };
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'fStorage') return emptyStorage;
+      return null;
+    });
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'fStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(emptyStorage, RESOURCE_ENERGY);
+  });
+
+  it('returns false (skips) when loot target is gone (getObjectById returns null)', () => {
+    (Game as any).getObjectById = vi.fn(() => null);
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'goneStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalled();
+  });
+
+  it('skips mineral when no own storage or terminal present (avoids trapping mineral in hauler)', () => {
+    // Foreign storage holds only a mineral (no energy). Room has no OWN storage/terminal.
+    const foreignStorage = {
+      id: 'fStorage' as any,
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      // Add store with H but no energy
+      store: {
+        getUsedCapacity: vi.fn((r?: string) => {
+          if (r === undefined) return 5000;
+          if (r === RESOURCE_ENERGY) return 0;
+          if (r === 'H') return 5000;
+          return 0;
+        }),
+        getFreeCapacity: vi.fn(() => 995000),
+      },
+    };
+    // Override Object.keys for this store to return ['H']
+    Object.defineProperty(foreignStorage.store, Symbol.iterator, { value: undefined });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'fStorage') return foreignStorage;
+      return null;
+    });
+
+    // No own storage (storage is undefined), no terminal
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: undefined,
+      find: vi.fn(() => []),
+    });
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'fStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // No mineral should be withdrawn when there's no own store to deliver to
+    expect(creep.withdraw).not.toHaveBeenCalledWith(foreignStorage, 'H');
+  });
+
+  it('picks mineral from foreign store when own storage is present', () => {
+    // Foreign storage holds only a mineral (no energy). Room has OWN storage.
+    const foreignStorage = {
+      id: 'fStorage' as any,
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: {
+        getUsedCapacity: vi.fn((r?: string) => {
+          if (r === undefined) return 5000;
+          if (r === RESOURCE_ENERGY) return 0;
+          if (r === 'H') return 5000;
+          return 0;
+        }),
+        getFreeCapacity: vi.fn(() => 995000),
+      },
+    };
+    // Make Object.keys(foreignStorage.store) return ['H']
+    const storeProxy = new Proxy(foreignStorage.store, {
+      ownKeys: () => ['H'],
+      getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
+    });
+    foreignStorage.store = storeProxy as any;
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'fStorage') return foreignStorage;
+      return null;
+    });
+
+    const ownStorage = {
+      my: true,
+      pos: new RoomPosition(16, 28, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 1_000_000),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: ownStorage,
+      find: vi.fn(() => []),
+    });
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'fStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(foreignStorage, 'H');
   });
 });

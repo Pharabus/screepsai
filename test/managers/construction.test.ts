@@ -290,7 +290,7 @@ describe('construction RCL gating', () => {
       });
 
       const room = roomAt(6, {
-        storage: { pos: new RoomPosition(25, 25, 'W1N1') },
+        storage: { my: true, pos: new RoomPosition(25, 25, 'W1N1') },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(16, 31, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) return opts?.filter ? [] : [];
@@ -338,7 +338,7 @@ describe('construction RCL gating', () => {
     it('places at RCL 7 when storage exists and no factory present', () => {
       const storagePos = new RoomPosition(27, 25, 'W1N1');
       const room = roomAt(7, {
-        storage: { pos: storagePos },
+        storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
@@ -391,7 +391,7 @@ describe('construction RCL gating', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
       const room = roomAt(6, {
-        storage: { pos: storagePos },
+        storage: { my: true, pos: storagePos },
       });
       placeLabs(room);
       expect(room.createConstructionSite).toHaveBeenCalledWith(
@@ -404,7 +404,7 @@ describe('construction RCL gating', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
       const room = roomAt(6, {
-        storage: { pos: storagePos },
+        storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
@@ -423,7 +423,7 @@ describe('construction RCL gating', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
       const room = roomAt(7, {
-        storage: { pos: storagePos },
+        storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
@@ -445,7 +445,7 @@ describe('construction RCL gating', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
       const room = roomAt(7, {
-        storage: { pos: storagePos },
+        storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
@@ -468,7 +468,7 @@ describe('construction RCL gating', () => {
         { structureType: STRUCTURE_ROAD },
       ]);
       try {
-        const room = roomAt(7, { storage: { pos: { x: 25, y: 25 } } });
+        const room = roomAt(7, { storage: { my: true, pos: { x: 25, y: 25 } } });
         (Memory as any).rooms = {
           W1N1: {
             layoutPlan: {
@@ -505,7 +505,7 @@ describe('construction RCL gating', () => {
         { structureType: STRUCTURE_ROAD },
       ]);
       try {
-        const room = roomAt(7, { storage: { pos: { x: 25, y: 25 } } });
+        const room = roomAt(7, { storage: { my: true, pos: { x: 25, y: 25 } } });
         (Memory as any).rooms = {
           W1N1: {
             layoutPlan: {
@@ -544,7 +544,7 @@ describe('construction RCL gating', () => {
       // ^ also covers [lab, rampart] coexistence — see the test below
       try {
         const room = roomAt(7, {
-          storage: { pos: { x: 25, y: 25 } },
+          storage: { my: true, pos: { x: 25, y: 25 } },
           find: vi.fn((type: number, opts?: any) => {
             if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
             if (type === FIND_MY_STRUCTURES) {
@@ -591,7 +591,7 @@ describe('construction RCL gating', () => {
       );
       try {
         const room = roomAt(7, {
-          storage: { pos: { x: 25, y: 25 } },
+          storage: { my: true, pos: { x: 25, y: 25 } },
           find: vi.fn((type: number, opts?: any) => {
             if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
             if (type === FIND_MY_STRUCTURES) {
@@ -871,7 +871,7 @@ describe('link-first gating', () => {
     const mineralPos = new RoomPosition(40, 40, 'W1N1');
     (mineralPos as any).lookFor = vi.fn(() => []);
     return roomAt(rcl, {
-      storage: { pos: storagePos },
+      storage: { my: true, pos: storagePos },
       find: vi.fn((type: number, opts?: any) => {
         if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
         if (type === FIND_MY_CONSTRUCTION_SITES) {
@@ -1272,6 +1272,46 @@ describe('placeSecondSpawn', () => {
       return [];
     });
     placeSecondSpawn(room);
+    expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// placeStorage — ownership-aware guard tests
+// ---------------------------------------------------------------------------
+
+describe('placeStorage ownership', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('places storage when only a FOREIGN storage exists (occupies the slot)', () => {
+    // The foreign storage is owner-agnostic (room.storage returns it), but .my is false.
+    // placeStorage should use myStorage() and proceed to place our own site.
+    const foreignStorage = {
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: { getUsedCapacity: () => 100_000 },
+    };
+    const room = roomAt(4, { storage: foreignStorage });
+    (Memory as any).rooms = { W1N1: {} };
+
+    placeStorage(room);
+
+    expect(room.createConstructionSite).toHaveBeenCalled();
+  });
+
+  it('skips placement when OWN storage already exists', () => {
+    const ownStorage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: { getUsedCapacity: () => 50_000 },
+    };
+    const room = roomAt(4, { storage: ownStorage });
+    (Memory as any).rooms = { W1N1: {} };
+
+    placeStorage(room);
+
     expect(room.createConstructionSite).not.toHaveBeenCalled();
   });
 });

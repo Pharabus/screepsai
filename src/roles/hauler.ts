@@ -13,6 +13,7 @@ import {
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
+import { myStorage, myTerminal } from '../utils/ownership';
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 // Only dispatch a hauler for lab minerals when the lab genuinely needs a
@@ -164,6 +165,51 @@ function pickWithdrawResource(structure: AnyStoreStructure): ResourceConstant | 
   return allTypes.find((r) => (structure.store.getUsedCapacity(r) ?? 0) > 0);
 }
 
+/**
+ * Withdraw directly from a foreign-owned bulk store (e.g. a reclaimed room's
+ * previous-owner storage). This is lossless — withdraw() works on foreign
+ * structures in a room we own, no WORK parts needed.
+ *
+ * Only runs when mem.lootTargetId is set and the structure is non-empty.
+ * Minerals are only taken when we have an own storage or terminal to deposit
+ * them into — mirrors the dropped-mineral guard at pickup lines ~252 and ~411.
+ *
+ * Returns true when claiming the task (even if not yet in range).
+ */
+function pickupForeignStore(creep: Creep, mem: RoomMemory | undefined): boolean {
+  const lootId = mem?.lootTargetId;
+  if (!lootId) return false;
+  const target = Game.getObjectById(lootId);
+  if (!target || !('store' in target)) return false;
+  const store = (target as unknown as AnyStoreStructure).store;
+  if (store.getUsedCapacity() === 0) return false;
+
+  const room = creep.room;
+  // Pick energy first; fall through to minerals only when no energy remains.
+  let resource: ResourceConstant | undefined;
+  if (store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+    resource = RESOURCE_ENERGY;
+  } else {
+    // Only withdraw a mineral when we have somewhere to deliver it (own store).
+    // Without this guard the hauler would get permanently stuck in DELIVER with
+    // no valid deposit target (young/reclaimed colony without own storage yet).
+    if (!myStorage(room) && !myTerminal(room)) return false;
+    const allTypes = Object.keys(store) as ResourceConstant[];
+    resource = allTypes.find((r) => r !== RESOURCE_ENERGY && (store.getUsedCapacity(r) ?? 0) > 0);
+  }
+  if (!resource) return false;
+
+  const targetStructure = target as unknown as AnyStoreStructure;
+  creep.memory.targetId = targetStructure.id as Id<StructureStorage>;
+  if (creep.withdraw(targetStructure, resource) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, targetStructure, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ffaa00' },
+    });
+  }
+  return true;
+}
+
 function pickup(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
 
@@ -195,6 +241,11 @@ function pickup(creep: Creep): boolean {
   // Decay-critical: a large dropped pile means the link pipeline can't keep
   // up. Preempt link drain and lab work to clear it before more decays.
   if (pickupLargeDrop(creep)) return true;
+
+  // Foreign store drain: directly withdraw from a reclaimed room's previous-owner
+  // storage/terminal. Lossless (withdraw() works on foreign structures in owned
+  // rooms). Runs high — draining the hoard outranks routine link/lab pickups.
+  if (pickupForeignStore(creep, mem)) return true;
 
   // Lab work first: flushing/loading is otherwise starved when the storage
   // link keeps refilling above the drain threshold. Each branch returns
@@ -247,9 +298,11 @@ function pickup(creep: Creep): boolean {
     return true;
   }
 
-  // Dropped minerals (non-energy) — decay-sensitive, but only if deliverable
+  // Dropped minerals (non-energy) — decay-sensitive, but only if deliverable.
+  // Use ownership-aware guards: a foreign storage in a reclaimed room is NOT a
+  // valid deposit target for minerals picked up by a hauler.
   const droppedMineral =
-    creep.room.storage || creep.room.terminal
+    myStorage(creep.room) || myTerminal(creep.room)
       ? creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
           filter: (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
         })
@@ -406,9 +459,11 @@ function pickupAbandonedLoot(creep: Creep): boolean {
   if (!target) return false;
   const resource = pickWithdrawResource(target as unknown as AnyStoreStructure);
   if (!resource) return false;
-  // Don't pick up non-energy minerals when the room has nowhere to deliver them.
-  // Young colonies without storage/terminal would get permanently stuck in DELIVER.
-  if (resource !== RESOURCE_ENERGY && !creep.room.storage && !creep.room.terminal) return false;
+  // Don't pick up non-energy minerals when the room has nowhere OWN to deliver them.
+  // Young colonies and reclaimed rooms without own storage/terminal would get
+  // permanently stuck in DELIVER (foreign storage is not a valid mineral deposit).
+  if (resource !== RESOURCE_ENERGY && !myStorage(creep.room) && !myTerminal(creep.room))
+    return false;
   creep.memory.targetId = target.id;
   if (creep.withdraw(target, resource) === ERR_NOT_IN_RANGE) {
     moveTo(creep, target, {
@@ -616,8 +671,9 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
 }
 
 function pickupForTerminal(creep: Creep): boolean {
-  const storage = creep.room.storage;
-  const terminal = creep.room.terminal;
+  // Use ownership-aware helpers so we only move minerals from OUR storage to OUR terminal.
+  const storage = myStorage(creep.room);
+  const terminal = myTerminal(creep.room);
   if (!storage || !terminal || terminal.store.getFreeCapacity() < 1000) return false;
 
   for (const resource of Object.keys(storage.store) as ResourceConstant[]) {
@@ -727,7 +783,9 @@ function deliver(creep: Creep): void {
 
   if (deliverToTerminalEnergy(creep)) return;
 
-  const storage = creep.room.storage;
+  // Only deposit into OWN storage — a foreign storage in a reclaimed room must
+  // not receive our energy (it has a separate owner and would void it on destroy).
+  const storage = myStorage(creep.room);
 
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -743,7 +801,9 @@ function deliver(creep: Creep): void {
 }
 
 function deliverToTerminalEnergy(creep: Creep): boolean {
-  const terminal = creep.room.terminal;
+  // Only deposit into OWN terminal — a foreign terminal in a reclaimed room must
+  // not receive our energy.
+  const terminal = myTerminal(creep.room);
   if (!terminal) return false;
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= TERMINAL_ENERGY_FLOOR) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
@@ -760,7 +820,8 @@ function deliverToFactory(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.factoryId || !mem.factoryRecipe) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
-  const storage = creep.room.storage;
+  // Guard on OWN storage energy — a foreign storage's energy is not ours to account for.
+  const storage = myStorage(creep.room);
   if (!storage || storage.store.getUsedCapacity(RESOURCE_ENERGY) <= FACTORY_ENERGY_FLOOR)
     return false;
   const factory = Game.getObjectById(mem.factoryId);
@@ -853,8 +914,10 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
   );
   if (!mineralType) return false;
 
-  const storage = creep.room.storage;
-  const terminal = creep.room.terminal;
+  // Use ownership-aware helpers: deposits must not flow into a foreign storage/terminal
+  // (e.g. previous owner's structures in a reclaimed room).
+  const storage = myStorage(creep.room);
+  const terminal = myTerminal(creep.room);
 
   // Keep a working buffer in storage so pickupLabInput can load labs without
   // touching the terminal (which requires an extra trip across the room).
@@ -881,7 +944,7 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
     return true;
   }
 
-  // Terminal full or absent — spill into storage
+  // Terminal full or absent — spill into own storage
   if (storage) {
     if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {
