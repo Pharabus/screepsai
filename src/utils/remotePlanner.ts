@@ -199,19 +199,20 @@ export function selectRemoteRooms(homeRoom: Room): void {
     const sourceScore = evaluateRemoteRoom(roomName, allowKeeperRooms);
     if (sourceScore <= 0) continue;
 
-    // Distance-aware: needs a spawn to path from. Falls back to a source-only
-    // score when there's no spawn, the room is dark, or PathFinder fails — so
-    // selection is never stalled on a transient/degenerate condition.
+    // Distance-aware: needs a spawn to path from. An UNKNOWN distance (no spawn,
+    // dark room, or unpathable) is treated as maximally far — never let an
+    // un-pathed candidate win by default. (Live: scoring an un-pathed room at the
+    // full source-only value made W44N57 abandon its established 28-tile remote
+    // W44N58 for an unpathable W45N57.) A known-close room thus always outranks
+    // an unknown one, and selection still isn't stalled — the candidate stays
+    // eligible (bottom-ranked) and gets a real distance once a miner grants vision.
     const oneWayPath = homeSpawn ? ensureRemotePathLength(mem, homeSpawn, roomName) : undefined;
-    if (oneWayPath === undefined) {
-      scored.push({ name: roomName, score: sourceScore * SOURCE_SCORE_WEIGHT });
-      continue;
-    }
-    if (oneWayPath > REMOTE_MAX_PATH_TILES) continue; // too far to be worth it
-    if (claimedByCloserColony(homeRoom.name, roomName, oneWayPath)) continue; // sibling owns it
+    const effectivePath = oneWayPath ?? REMOTE_MAX_PATH_TILES;
+    if (effectivePath > REMOTE_MAX_PATH_TILES) continue; // strictly beyond the cap → skip
+    if (claimedByCloserColony(homeRoom.name, roomName, effectivePath)) continue; // sibling owns it
 
     // Source count dominates; distance breaks ties and penalises far rooms.
-    scored.push({ name: roomName, score: sourceScore * SOURCE_SCORE_WEIGHT - oneWayPath });
+    scored.push({ name: roomName, score: sourceScore * SOURCE_SCORE_WEIGHT - effectivePath });
   }
 
   scored.sort((a, b) => b.score - a.score);

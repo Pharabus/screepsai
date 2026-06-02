@@ -305,6 +305,27 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
     });
 
+    it('ranks a known-close room above one with an unknown distance', () => {
+      // Regression: an un-pathed candidate must NOT win by default. W2N1 has a
+      // known short path; W1N2 (same source count) has no cached distance and a
+      // dark/unpathable room (no scoutedSourceData) → treated as maximally far.
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+      const room = roomWithSpawn(0); // cap 1
+      // Only W2N1 has a fresh cached distance; W1N2 has none and will fail to path
+      // (no scoutedSourceData → target 25,25; mocked PathFinder returns incomplete).
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 200 }, // one-way 50
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      (globalThis as any).PathFinder = {
+        search: () => ({ path: [], incomplete: true }),
+      };
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
+    });
+
     it('rejects a remote beyond the max one-way path distance', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
