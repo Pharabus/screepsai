@@ -168,17 +168,23 @@ export function buildLooterBody(energyCapacityAvailable: number): BodyPartConsta
 /**
  * True when all conditions for spawning a looter in this room are met:
  *  1. room.controller.my (defensive guard — caller already filters for this)
- *  2. RCL >= 4
- *  3. Our own storage exists (room.storage.my)
- *  4. A foreign store-bearing structure is present (lootTargetId set and valid)
- *  5. >= 2 haulers with homeRoom = this room (enough to bank the dropped pile fast)
- *  6. No looter already alive for this room
+ *  2. RCL >= 4  (we are entitled to a storage, so we can bank the loot right after)
+ *  3. A foreign store-bearing structure is present (lootTargetId set and valid)
+ *  4. >= 2 haulers with homeRoom = this room (enough to bank the dropped pile fast)
+ *  5. No looter already alive for this room
+ *
+ * We deliberately do NOT require our own storage to already exist. A reclaimed
+ * room's foreign storage occupies the room's single storage slot — `room.storage`
+ * returns it (owner-agnostic), so `placeStorage` skips placing ours and the
+ * looter could never spawn under an own-storage gate: a circular deadlock
+ * (own storage needs the slot freed; freeing the slot needs the looter; the
+ * looter needed the own storage). Looting is the PREREQUISITE for our storage,
+ * not the reverse — so we crack it at RCL 4 and `placeStorage` builds ours on
+ * the freed tile the next tick, banking the dropped pile (~90% recovered).
  */
 export function looterNeeded(room: Room): boolean {
   if (!room.controller?.my) return false;
   if ((room.controller.level ?? 0) < 4) return false;
-  const storage = room.storage;
-  if (!storage || !(storage as unknown as OwnedStructure).my) return false;
   const lootId = Memory.rooms[room.name]?.lootTargetId;
   if (!lootId) return false;
   // Verify the loot target still exists and has resources.

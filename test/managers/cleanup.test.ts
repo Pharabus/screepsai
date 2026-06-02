@@ -370,9 +370,11 @@ describe('looterNeeded', () => {
     expect(looterNeeded(room)).toBe(false);
   });
 
-  it('returns false when no own storage', () => {
+  it('returns TRUE when we have no own storage yet (foreign storage occupies the slot)', () => {
+    // The whole point of looting: the foreign storage blocks our own storage,
+    // so we must NOT gate on having our own storage first (that would deadlock).
     const room = makeGatedRoom({ hasMy: false });
-    expect(looterNeeded(room)).toBe(false);
+    expect(looterNeeded(room)).toBe(true);
   });
 
   it('returns false when no lootTargetId in memory', () => {
