@@ -387,6 +387,42 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
     });
 
+    it('yields to a closer sibling even if it has not selected the remote yet', () => {
+      // Order-independence: the sibling is closer (one-way 30) but has NOT selected
+      // W2N1 this cycle (remoteRooms empty). Distance alone must trigger the yield —
+      // a current-claim check was order-dependent and let both colonies grab it.
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      (Game as any).rooms.W3N3 = {
+        storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
+      };
+      Memory.rooms['W3N3'] = { remoteRooms: [], remoteDistance: { W2N1: 120 } } as any;
+      const room = roomWithSpawn(50_000); // farther (one-way 80)
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 320 },
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
+    it('breaks an equal-distance remote tie deterministically by room name', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      // Sibling W0N0 (name < W1N1) is equidistant → it keeps the room, we yield.
+      (Game as any).rooms.W0N0 = {
+        storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
+      };
+      Memory.rooms['W0N0'] = { remoteRooms: [], remoteDistance: { W2N1: 320 } } as any;
+      const room = roomWithSpawn(50_000);
+      Memory.rooms['W1N1'] = {
+        remoteDistance: { W2N1: 320 }, // same one-way 80
+        remoteDistanceUpdated: { W2N1: (Game as any).time },
+      } as any;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
     it('limits to 1 remote room when storage is below 100k', () => {
       Game.map.describeExits = () =>
         ({ '1': 'W2N1', '3': 'W1N2', '5': 'W0N1', '7': 'W1N0' }) as any;

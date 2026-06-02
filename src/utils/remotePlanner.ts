@@ -146,12 +146,18 @@ function ensureRemotePathLength(
 }
 
 /**
- * True when a SIBLING owned colony already claims this remote room and is at
- * least as close to it as we are — so it keeps it (de-confliction; prevents two
- * colonies double-mining one room). Only colonies with their own storage count:
- * a colony without one will not actually run remotes (selectRemoteRooms gates on
- * myStorage). Incumbent-stable: an equal- or shorter-path claimant holds the
- * room, and an unknown distance yields to the incumbent (conservative).
+ * True when a SIBLING owned colony is closer to this remote room than we are —
+ * so it owns the room and we yield it (de-confliction; prevents two colonies
+ * double-mining one room). Only colonies with their own storage count: a colony
+ * without one will not run remotes (selectRemoteRooms gates on myStorage).
+ *
+ * Decided purely on **cached one-way distance**, NOT on whether the sibling has
+ * already selected the room this cycle — selection runs per-room sequentially, so
+ * a current-claim check was order-dependent and let two colonies grab the same
+ * room (observed live: W43N58 ran first and took W44N58 before closer W44N57
+ * claimed it). Distance is order-independent. A sibling with no cached distance to
+ * the room is not a contender (the room isn't its exit, or it hasn't pathed it
+ * yet). Ties broken deterministically by room name so exactly one colony keeps it.
  */
 function claimedByCloserColony(
   homeName: string,
@@ -161,12 +167,12 @@ function claimedByCloserColony(
   for (const otherName of Object.keys(Memory.rooms)) {
     if (otherName === homeName) continue;
     const other = Game.rooms[otherName];
-    if (!other || !myStorage(other)) continue; // not a remote-capable colony
-    const otherMem = Memory.rooms[otherName];
-    if (!otherMem?.remoteRooms?.includes(remoteName)) continue; // doesn't claim it
-    const otherRt = otherMem.remoteDistance?.[remoteName];
-    if (otherRt === undefined) return true; // claims it, distance unknown → yield
-    if (otherRt / 4 <= myOneWayPath) return true;
+    if (!other || !myStorage(other)) continue; // only storage-bearing (remote-capable) colonies
+    const otherRt = Memory.rooms[otherName]?.remoteDistance?.[remoteName];
+    if (otherRt === undefined) continue; // sibling can't path it (not its exit) → not a contender
+    const otherPath = otherRt / 4;
+    if (otherPath < myOneWayPath) return true; // strictly-closer sibling owns it
+    if (otherPath === myOneWayPath && otherName < homeName) return true; // deterministic tie-break
   }
   return false;
 }

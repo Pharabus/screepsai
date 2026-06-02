@@ -242,11 +242,6 @@ function pickup(creep: Creep): boolean {
   // up. Preempt link drain and lab work to clear it before more decays.
   if (pickupLargeDrop(creep)) return true;
 
-  // Foreign store drain: directly withdraw from a reclaimed room's previous-owner
-  // storage/terminal. Lossless (withdraw() works on foreign structures in owned
-  // rooms). Runs high — draining the hoard outranks routine link/lab pickups.
-  if (pickupForeignStore(creep, mem)) return true;
-
   // Lab work first: flushing/loading is otherwise starved when the storage
   // link keeps refilling above the drain threshold. Each branch returns
   // false fast when there's nothing to do (full lab or no active reaction),
@@ -360,6 +355,17 @@ function pickup(creep: Creep): boolean {
     }
     return true;
   }
+
+  // Foreign store drain: directly withdraw from a reclaimed room's previous-owner
+  // storage/terminal (lossless — withdraw() works on foreign structures in rooms
+  // we own). Ranks LOW deliberately: a foreign storage is a non-decaying reserve,
+  // so it is drained only after every decay-sensitive / fresh-income pickup —
+  // floor drops, abandoned loot, and (critically) full source containers. Placing
+  // it high starved the local economy: source containers overflowed to 2000 and
+  // miner output decayed on the floor while haulers drained a hoard that loses
+  // nothing by waiting (observed live in W42N59). It still outranks only partial
+  // containers and minor banked pickups, so the hoard drains with spare capacity.
+  if (pickupForeignStore(creep, mem)) return true;
 
   // Mineral container — elevated above partially-full source containers
   if (mem?.mineralContainerId) {

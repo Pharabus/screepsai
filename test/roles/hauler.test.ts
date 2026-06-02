@@ -2250,4 +2250,46 @@ describe('hauler pickupForeignStore', () => {
 
     expect(creep.withdraw).toHaveBeenCalledWith(foreignStorage, 'H');
   });
+
+  it('drains a full source container before the foreign storage', () => {
+    // Priority: a non-decaying foreign hoard must not preempt emptying a full
+    // (near-overflow) source container — fresh miner income comes first.
+    const fullContainer = {
+      id: 'cSrc' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      store: mockStore({ energy: 1500 }, 2000),
+      pos: new RoomPosition(8, 15, 'W1N1'),
+    };
+    const foreignStorage = {
+      id: 'fStorage' as any,
+      my: false,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 100_000 }, 1_000_000),
+    };
+    (Game as any).getObjectById = vi.fn((id: string) =>
+      id === 'fStorage' ? foreignStorage : null,
+    );
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((_type: number, opts?: any) => {
+        const all = [fullContainer];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+    (Memory as any).rooms = { W1N1: { lootTargetId: 'fStorage' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(fullContainer, RESOURCE_ENERGY);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(foreignStorage, RESOURCE_ENERGY);
+  });
 });
