@@ -27,7 +27,14 @@ function makeTower(opts: { energy?: number; capacity?: number; operational?: boo
     structureType: STRUCTURE_TOWER,
     hits: 3000,
     hitsMax: 3000,
-    pos: { x: 25, y: 25, findClosestByRange: vi.fn(() => null) },
+    pos: {
+      x: 25,
+      y: 25,
+      getRangeTo: (other: any) => {
+        const pos = other.pos ?? other;
+        return Math.max(Math.abs(25 - pos.x), Math.abs(25 - pos.y));
+      },
+    },
     store: {
       getUsedCapacity: () => energy,
       getCapacity: () => capacity,
@@ -51,9 +58,11 @@ function makeStruct(structureType: string, opts: { hits: number; x?: number; y?:
 }
 
 /**
- * Build a room + register it on Game.rooms. `myStructures` feeds
- * find(FIND_MY_STRUCTURES) (the tower scan); `allStructures` feeds
- * find(FIND_STRUCTURES) (getStructuresByType, used for repair-target search).
+ * Build a room + register it on Game.rooms. `towers` feeds
+ * find(FIND_STRUCTURES) (getStructuresByType, used for tower scan and repair
+ * search); `allStructures` overrides the full structure list when you need
+ * non-tower structures too; `myCreeps` feeds find(FIND_MY_CREEPS) (wounded
+ * heal scan).
  */
 function makeRoom(opts: {
   name?: string;
@@ -61,9 +70,11 @@ function makeRoom(opts: {
   storageEnergy?: number;
   towers: any[];
   allStructures?: any[];
+  myCreeps?: any[];
 }): any {
   const name = opts.name ?? 'W1N1';
   const allStructures = opts.allStructures ?? opts.towers;
+  const myCreeps = opts.myCreeps ?? [];
   const storage =
     opts.storageEnergy === undefined
       ? undefined
@@ -74,8 +85,8 @@ function makeRoom(opts: {
     storage,
     find: (type: number, findOpts?: { filter?: (s: any) => boolean }) => {
       let arr: any[];
-      if (type === FIND_MY_STRUCTURES) arr = opts.towers;
-      else if (type === FIND_STRUCTURES) arr = allStructures;
+      if (type === FIND_STRUCTURES) arr = allStructures;
+      else if (type === FIND_MY_CREEPS) arr = myCreeps;
       else arr = [];
       if (findOpts?.filter) arr = arr.filter(findOpts.filter);
       return arr;
@@ -167,9 +178,8 @@ describe('runTowers — heal & repair (no combat target)', () => {
   it('heals the nearest wounded creep before repairing', () => {
     const wounded = mockCreep({ name: 'hurt', hits: 50, hitsMax: 100 });
     const tower = makeTower();
-    tower.pos.findClosestByRange = vi.fn(() => wounded);
     const wall = makeStruct(STRUCTURE_WALL, { hits: 100 });
-    makeRoom({ towers: [tower], allStructures: [tower, wall] });
+    makeRoom({ towers: [tower], allStructures: [tower, wall], myCreeps: [wounded] });
 
     runTowers();
 

@@ -286,6 +286,7 @@ describe('runDefense — safe mode guard', () => {
     expect(Memory.rooms['W1N1']?.invaderSeenAt).toBe(1000);
 
     // Second tick: room clear — invaderSeenAt should be removed
+    resetTickCache(); // simulate new tick — clears the per-tick hostile cache
     room.find = vi.fn((type: number) => {
       if (type === FIND_HOSTILE_CREEPS) return [];
       return [];

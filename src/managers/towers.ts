@@ -49,9 +49,9 @@ const TOWER_DRAIN_WARN_PCT = 25;
 
 export function runTowers(): void {
   for (const room of Object.values(Game.rooms)) {
-    const towers = room.find(FIND_MY_STRUCTURES, {
-      filter: (s): s is StructureTower => s.structureType === STRUCTURE_TOWER && isOperational(s),
-    });
+    const towers = (
+      (getStructuresByType(room)[STRUCTURE_TOWER] as StructureTower[] | undefined) ?? []
+    ).filter(isOperational);
     if (towers.length === 0) continue;
 
     // Priority 1: focus-fire the highest-threat hostile. Having every tower
@@ -113,10 +113,18 @@ export function runTowers(): void {
       });
     });
 
+    const woundedCreeps = cached('towers:wounded:' + room.name, () =>
+      room.find(FIND_MY_CREEPS, { filter: (c) => c.hits < c.hitsMax }),
+    );
+
     for (const tower of towers) {
-      const wounded = tower.pos.findClosestByRange(FIND_MY_CREEPS, {
-        filter: (c) => c.hits < c.hitsMax,
-      });
+      const wounded =
+        woundedCreeps.length > 0
+          ? woundedCreeps.reduce<Creep | null>((best, c) => {
+              if (!best) return c;
+              return tower.pos.getRangeTo(c) < tower.pos.getRangeTo(best) ? c : best;
+            }, null)
+          : null;
       if (wounded) {
         tower.heal(wounded);
         continue;

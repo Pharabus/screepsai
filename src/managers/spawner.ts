@@ -154,16 +154,18 @@ export function remoteBuilderNeeded(remoteRoom: string): boolean {
  * cannot fill up waiting for it, so callers treat this the same as "no producer".
  */
 function hasActiveLocalMiner(room: Room): boolean {
-  for (const c of Object.values(Game.creeps)) {
-    if (
-      c.memory.role === 'miner' &&
-      c.memory.homeRoom === room.name &&
-      !c.memory.targetRoom &&
-      c.memory.state === 'HARVEST'
-    )
-      return true;
-  }
-  return false;
+  return cached('spawner:activeLocalMiner:' + room.name, () => {
+    for (const c of Object.values(Game.creeps)) {
+      if (
+        c.memory.role === 'miner' &&
+        c.memory.homeRoom === room.name &&
+        !c.memory.targetRoom &&
+        c.memory.state === 'HARVEST'
+      )
+        return true;
+    }
+    return false;
+  });
 }
 
 /**
@@ -364,7 +366,7 @@ export function defenderComposition(room: Room): DefenderComposition {
   const needed = defendersNeeded(room);
   if (needed === 0) return { melee: 0, ranged: 0, healer: 0 };
 
-  const hostiles = room.find(FIND_HOSTILE_CREEPS);
+  const hostiles = cached('defense:hostiles:' + room.name, () => room.find(FIND_HOSTILE_CREEPS));
   const totalThreat = hostiles.reduce((sum, h) => sum + threatScore(h), 0);
   const hasHealer = hostiles.some((h) => h.body.some((p) => p.type === HEAL && p.hits > 0));
 
@@ -605,7 +607,7 @@ export function reserveBoostLab(room: Room): void {
  */
 export function defenderBoostsWanted(room: Room): boolean {
   if ((room.controller?.level ?? 0) < 7) return false;
-  const hostiles = room.find(FIND_HOSTILE_CREEPS);
+  const hostiles = cached('defense:hostiles:' + room.name, () => room.find(FIND_HOSTILE_CREEPS));
   for (const creep of hostiles) {
     const owner = creep.owner?.username;
     if (!owner || owner === 'Invader' || owner === 'Source Keeper') continue;
@@ -902,11 +904,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
           )
             continue;
           // If dying or dead, skip if a replacement is already en route to this room
-          const hasReplacement = Object.values(Game.creeps).some(
-            (c) =>
-              c.memory.role === 'miner' &&
-              c.memory.targetRoom === remoteRoom &&
-              c.name !== (entry.minerName ?? ''),
+          const hasReplacement = cached(
+            'spawner:hasReplacement:' + remoteRoom + ':' + entry.id,
+            () =>
+              Object.values(Game.creeps).some(
+                (c) =>
+                  c.memory.role === 'miner' &&
+                  c.memory.targetRoom === remoteRoom &&
+                  c.name !== (entry.minerName ?? ''),
+              ),
           );
           if (hasReplacement) continue;
           queue.push({
@@ -1021,7 +1027,12 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     }, 0);
     if (m.deliveredAmount + carried >= m.targetAmount) continue;
     const dist = Game.map.getRoomLinearDistance(room.name, m.sourceRoom);
-    const courierCap = Math.min(4, 1 + dist); // modest, distance-scaled
+    // Linear distance under-provisions diagonal neighbours: W42N59↔W43N58 are
+    // Chebyshev dist=1 but share no border, so the real route detours through a
+    // third room (~165-tile round trip). 1+dist gave only 2 couriers and a
+    // ~24 e/tick drain. 2+dist (3 for adjacent, capped at 4) roughly doubles
+    // throughput; still lowest-priority so it never starves the local economy.
+    const courierCap = Math.min(4, 2 + dist);
     if (m.courierIds.length >= courierCap) continue;
     queue.push({
       role: 'courier',

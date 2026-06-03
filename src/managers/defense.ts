@@ -14,9 +14,14 @@
 
 import { threatScore } from '../utils/threat';
 import { recordHostile, requestNeighborSegment } from '../utils/neighbors';
-import { getStructuresByType } from '../utils/tickCache';
+import { cached, getStructuresByType } from '../utils/tickCache';
 import { logCombat } from '../utils/combatLog';
 import { getMissionsOfType } from '../utils/missions';
+
+/** Per-tick-cached full hostile list for a room (no filter). */
+function cachedHostiles(room: Room): Creep[] {
+  return cached('defense:hostiles:' + room.name, () => room.find(FIND_HOSTILE_CREEPS));
+}
 
 const DEFENDER_ROLES: ReadonlySet<CreepRoleName> = new Set(['defender', 'rangedDefender']);
 
@@ -100,9 +105,7 @@ const THREAT_PER_TOWER = 500;
 const TOWER_DPS_ESTIMATE = 300;
 
 function hostileNearCriticalStructure(room: Room): boolean {
-  const hostiles = room.find(FIND_HOSTILE_CREEPS, {
-    filter: (c) => threatScore(c) > 0,
-  });
+  const hostiles = cachedHostiles(room).filter((c) => threatScore(c) > 0);
   if (hostiles.length === 0) return false;
 
   const targets: RoomPosition[] = [];
@@ -165,7 +168,7 @@ function tryActivateSafeMode(room: Room, mem: RoomMemory): void {
 export function runDefense(): void {
   for (const room of Object.values(Game.rooms)) {
     const mem = (Memory.rooms[room.name] ??= {});
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const hostiles = cachedHostiles(room);
 
     // Track NPC Invader presence in every visible room so the spawner can
     // queue hunters for remote/transit rooms regardless of who owns them.
@@ -251,7 +254,7 @@ export function defendersNeeded(room: Room): number {
     (getStructuresByType(room)[STRUCTURE_TOWER] as StructureTower[] | undefined) ?? []
   ).filter((t) => t.my && t.store.getUsedCapacity(RESOURCE_ENERGY) >= TOWER_ENERGY_COST);
   if (towers.length > 0 && threat <= towers.length * THREAT_PER_TOWER) {
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const hostiles = cachedHostiles(room);
     const hostileHeal = hostiles.reduce(
       (sum, h) => sum + h.body.filter((p) => p.type === HEAL && p.hits > 0).length * HEAL_POWER,
       0,

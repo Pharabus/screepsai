@@ -85,6 +85,7 @@ describe('DefenseMission lifecycle (runDefense)', () => {
       memory: { role: 'healer' },
     });
     Game.time = 1005;
+    resetTickCache(); // simulate new tick
     ownedRoomWith([
       makeHostile({ threatScore: 300, owner: 'Enemy' }),
       makeHostile({ threatScore: 100, owner: 'Enemy' }),
@@ -107,6 +108,7 @@ describe('DefenseMission lifecycle (runDefense)', () => {
     expect(defenseMission()!.status).toBe('active');
 
     Game.time = 1010;
+    resetTickCache(); // simulate new tick
     ownedRoomWith([]); // hostiles gone
     runDefense();
 
@@ -120,11 +122,13 @@ describe('DefenseMission lifecycle (runDefense)', () => {
     runDefense(); // open
 
     Game.time = 1010;
+    resetTickCache(); // simulate new tick
     ownedRoomWith([]);
     runDefense(); // retiring
     expect(defenseMission()!.status).toBe('retiring');
 
     Game.time = 1020;
+    resetTickCache(); // simulate new tick
     ownedRoomWith([makeHostile({ threatScore: 500, owner: 'Raider' })]);
     runDefense(); // reactivate
 
