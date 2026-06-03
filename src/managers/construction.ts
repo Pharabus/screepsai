@@ -1191,11 +1191,29 @@ export function placePerimeterRamparts(room: Room): void {
   const perimPlan = mem?.perimeterPlan;
   if (!perimPlan) return;
 
-  // Energy gate: pause new sites when storage is low.
+  const gateSet = new Set(perimPlan.gateTiles);
+
+  // Reconciliation pass — FREE and energy-INDEPENDENT (runs before the energy gate).
+  // A tile that was a WALL under an older plan but is now a gate still carries its
+  // constructedWall, and a rampart can't sit on a wall tile, so the gate would never
+  // open and egress toward that target stays sealed. Destroy the stale wall first;
+  // the rampart lands next tick. A sealed egress must not wait on a storage buffer —
+  // a low-energy room (or one under siege) needs its gates working most of all.
+  for (const key of gateSet) {
+    const comma = key.indexOf(',');
+    const x = Number(key.slice(0, comma));
+    const y = Number(key.slice(comma + 1));
+    const pos = new RoomPosition(x, y, room.name);
+    const wall = pos.lookFor(LOOK_STRUCTURES).find((s) => s.structureType === STRUCTURE_WALL);
+    if (wall) {
+      wall.destroy();
+      return; // one structure op per tick
+    }
+  }
+
+  // Energy gate: pause NEW rampart sites when storage is low.
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   if (room.storage && stored < PERIMETER_STORAGE_MIN) return;
-
-  const gateSet = new Set(perimPlan.gateTiles);
 
   for (const key of perimPlan.perimeterTiles) {
     // At RCL 6+, walls handle non-gate tiles — this function only manages gates.

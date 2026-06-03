@@ -229,6 +229,28 @@ describe('perimeterPlanner', () => {
       }
     });
 
+    it('aligns an edge-target gate with the spawn→target line, not a corner (regression)', () => {
+      // Source pinned to the east edge (49,25). Chebyshev distance from every
+      // east-wall tile to (49,25) saturates on the 24-tile x-gap, so the old
+      // scoring tied them all and stamped the gate at an arbitrary corner. The
+      // spawn→target line scoring must put it opposite the exit, at y≈spawn.y (25).
+      const room = makeRoom({
+        spawnPos: { x: 25, y: 25 },
+        sources: [{ id: 'east', x: 49, y: 25 }],
+      });
+      Game.rooms['W1N1'] = room;
+
+      const plan = computePerimeter(room)!;
+      const eastWallX = Math.max(...plan.perimeterTiles.map((k) => Number(k.split(',')[0])));
+      const eastGates = plan.gateTiles
+        .map((k) => k.split(',').map(Number))
+        .filter(([x]) => x === eastWallX);
+      expect(eastGates.length).toBeGreaterThan(0);
+      for (const [, y] of eastGates) {
+        expect(Math.abs(y - 25)).toBeLessThanOrEqual(3); // aligned with the line, not a corner
+      }
+    });
+
     it("gate tiles are NOT in wallTiles (walls don't block gate positions)", () => {
       const room = makeRoom({
         spawnPos: { x: 25, y: 25 },
@@ -336,7 +358,7 @@ describe('perimeterPlanner', () => {
   // -------------------------------------------------------------------
   // Version constant
   // -------------------------------------------------------------------
-  it('PERIMETER_PLAN_VERSION is 3', () => {
-    expect(PERIMETER_PLAN_VERSION).toBe(3);
+  it('PERIMETER_PLAN_VERSION is 4', () => {
+    expect(PERIMETER_PLAN_VERSION).toBe(4);
   });
 });

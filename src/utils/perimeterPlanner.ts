@@ -26,7 +26,7 @@
  * around v1.0.216–v1.0.218 if it's ever worth revisiting against fresh data.)
  */
 
-export const PERIMETER_PLAN_VERSION = 3;
+export const PERIMETER_PLAN_VERSION = 4;
 export const CORE_RADIUS = 10;
 
 // Minimum buildable tile coordinate (avoid border tiles which can't hold structures).
@@ -154,25 +154,36 @@ function getGateTargets(room: Room, spawnX: number, spawnY: number, mem: RoomMem
  * For each gate target, find the perimeter tile(s) closest to a straight-line
  * path from spawn to the target. Returns a 2-tile-wide gate set.
  */
-function identifyGateTiles(perimeterSet: Set<string>, targets: GateTarget[]): Set<string> {
+function identifyGateTiles(
+  perimeterSet: Set<string>,
+  targets: GateTarget[],
+  spawnX: number,
+  spawnY: number,
+): Set<string> {
   const gateTiles = new Set<string>();
 
   for (const target of targets) {
-    // Score each perimeter tile by how close it sits to the line from spawn→target.
-    // We use the distance of each perimeter tile from the target (close = on the path).
-    let best: { key: string; dist: number } | undefined;
-    let secondBest: { key: string; dist: number } | undefined;
+    // Place the gate where the straight line from spawn→target crosses the
+    // perimeter — score each tile by the total Euclidean path spawn→tile→target.
+    // That sum is minimised by the tile sitting on (and between) the spawn-target
+    // line, so the gate aligns with the road that actually exits toward the target.
+    //
+    // (The earlier version scored Chebyshev distance to the target alone. For a
+    // room-edge exit target — x or y pinned to 0/49 — that distance saturates on
+    // the axis gap, so every tile on the facing wall tied and the gate landed on
+    // an arbitrary corner instead of opposite the exit. Observed live in W43N58:
+    // the W42N58 east gate stamped at the SE corner, not beside the exit.)
+    let best: { key: string; score: number } | undefined;
+    let secondBest: { key: string; score: number } | undefined;
 
     for (const key of perimeterSet) {
       const { x, y } = decodeXY(key);
-      // Primary sort: proximity to the target (i.e. this tile is the first wall
-      // an attacker coming from the target would hit — so it's the natural gate).
-      const dist = chebyshev(x, y, target.x, target.y);
-      if (!best || dist < best.dist) {
+      const score = Math.hypot(x - spawnX, y - spawnY) + Math.hypot(x - target.x, y - target.y);
+      if (!best || score < best.score) {
         secondBest = best;
-        best = { key, dist };
-      } else if (!secondBest || dist < secondBest.dist) {
-        secondBest = { key, dist };
+        best = { key, score };
+      } else if (!secondBest || score < secondBest.score) {
+        secondBest = { key, score };
       }
     }
 
@@ -297,7 +308,7 @@ export function computePerimeter(room: Room): PerimeterPlanData | undefined {
 
   // Step 6: Gate targets and gate tiles
   const gateTargets = getGateTargets(room, spawnX, spawnY, mem);
-  const gateTilesSet = identifyGateTiles(perimeterSet, gateTargets);
+  const gateTilesSet = identifyGateTiles(perimeterSet, gateTargets, spawnX, spawnY);
 
   return {
     version: PERIMETER_PLAN_VERSION,

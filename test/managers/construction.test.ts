@@ -8,6 +8,7 @@ import {
   placeRoads,
   placeCorridorRoads,
   placeRamparts,
+  placePerimeterRamparts,
   placeLinks,
   placeTerminal,
   placeFactory,
@@ -258,6 +259,61 @@ describe('construction RCL gating', () => {
       });
       placeRamparts(room);
       expect(room.createConstructionSite).toHaveBeenCalled();
+    });
+  });
+
+  describe('placePerimeterRamparts — wall→gate reconciliation', () => {
+    it('destroys a stale constructedWall sitting on a gate tile (so the gate can open)', () => {
+      const wallDestroy = vi.fn(() => OK);
+      const room = roomAt(6); // RCL 6, no storage → energy gate skipped
+      (Memory as any).rooms = {
+        W1N1: { perimeterPlan: { perimeterTiles: ['40,25'], gateTiles: ['40,25'] } },
+      };
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(function (
+        this: any,
+        type: string,
+      ) {
+        if (type === LOOK_STRUCTURES && this.x === 40 && this.y === 25) {
+          return [{ structureType: STRUCTURE_WALL, destroy: wallDestroy }];
+        }
+        return [];
+      });
+      try {
+        placePerimeterRamparts(room);
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+      }
+
+      expect(wallDestroy).toHaveBeenCalledOnce();
+      expect(room.createConstructionSite).not.toHaveBeenCalled(); // returns after the destroy
+    });
+
+    it('opens the gate even when storage is below the perimeter energy threshold', () => {
+      const wallDestroy = vi.fn(() => OK);
+      const room = roomAt(6, {
+        storage: { store: { getUsedCapacity: () => 0 } }, // 0 < PERIMETER_STORAGE_MIN
+      });
+      (Memory as any).rooms = {
+        W1N1: { perimeterPlan: { perimeterTiles: ['40,25'], gateTiles: ['40,25'] } },
+      };
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(function (
+        this: any,
+        type: string,
+      ) {
+        if (type === LOOK_STRUCTURES && this.x === 40 && this.y === 25) {
+          return [{ structureType: STRUCTURE_WALL, destroy: wallDestroy }];
+        }
+        return [];
+      });
+      try {
+        placePerimeterRamparts(room);
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+      }
+
+      expect(wallDestroy).toHaveBeenCalledOnce(); // reconciliation runs before the energy gate
     });
   });
 
