@@ -538,6 +538,76 @@ export function placeMineralContainer(room: Room): void {
   }
 }
 
+// Structure types that do not block walking — a tile holding only these still
+// counts as a passable neighbour of storage (and a road may be cleared to free it).
+const LINK_WALKABLE_TYPES: Set<StructureConstant> = new Set([
+  STRUCTURE_ROAD,
+  STRUCTURE_RAMPART,
+  STRUCTURE_CONTAINER,
+]);
+
+/**
+ * Last-resort storage-link placement for a built-out room. The normal storage-link
+ * path searches only range 2–3 of storage (a range-1 link could seal storage's last
+ * passable neighbour); once the extension diamond is complete every range 2–3 tile is
+ * occupied and `findOpenPosition` returns nothing, so a lost storage link can never be
+ * replaced. This places the link on a range-1 tile instead — but only one that leaves
+ * storage with at least one OTHER passable neighbour — clearing a road on the chosen
+ * tile first. Fires at most once (the next tick the link site is found by the range-3
+ * existing-site guard). Returns true if a site was placed.
+ */
+function placeStorageLinkAdjacentFallback(
+  room: Room,
+  storagePos: RoomPosition,
+  reserved: Set<string>,
+): boolean {
+  const terrain = room.getTerrain();
+  const isPassable = (x: number, y: number): boolean => {
+    if ((terrain.get(x, y) & TERRAIN_MASK_WALL) !== 0) return false;
+    return room
+      .lookForAt(LOOK_STRUCTURES, x, y)
+      .every((s) => LINK_WALKABLE_TYPES.has(s.structureType));
+  };
+
+  const neighbours: { x: number; y: number; passable: boolean }[] = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const x = storagePos.x + dx;
+      const y = storagePos.y + dy;
+      if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+      neighbours.push({ x, y, passable: isPassable(x, y) });
+    }
+  }
+  const passableCount = neighbours.filter((n) => n.passable).length;
+  // Occupying any passable neighbour leaves passableCount-1; require ≥1 remains so a
+  // hauler can still reach storage. (If only one passable tile exists, never take it.)
+  if (passableCount < 2) return false;
+
+  const candidates = neighbours.filter((n) => {
+    if (!n.passable) return false;
+    if (reserved.has(`${n.x},${n.y}`)) return false;
+    const structs = room.lookForAt(LOOK_STRUCTURES, n.x, n.y);
+    if (structs.some((s) => s.structureType !== STRUCTURE_ROAD)) return false; // road-only or empty
+    if (room.lookForAt(LOOK_CONSTRUCTION_SITES, n.x, n.y).length > 0) return false;
+    return true;
+  });
+  if (candidates.length === 0) return false;
+
+  // Prefer an already-empty tile (no road to clear); deterministic tie-break by x,y.
+  candidates.sort((a, b) => {
+    const ra = room.lookForAt(LOOK_STRUCTURES, a.x, a.y).length;
+    const rb = room.lookForAt(LOOK_STRUCTURES, b.x, b.y).length;
+    return ra - rb || a.x - b.x || a.y - b.y;
+  });
+  const chosen = candidates[0]!;
+  const road = room
+    .lookForAt(LOOK_STRUCTURES, chosen.x, chosen.y)
+    .find((s) => s.structureType === STRUCTURE_ROAD);
+  if (road) road.destroy(); // instant — the tile is free for the link site this tick
+  return room.createConstructionSite(chosen.x, chosen.y, STRUCTURE_LINK) === OK;
+}
+
 export function placeLinks(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_LINKS[rcl] ?? 0;
@@ -589,6 +659,12 @@ export function placeLinks(room: Room): void {
         room.createConstructionSite(pos, STRUCTURE_LINK);
         return;
       }
+      // Range 2–3 fully built out (mature room) — findOpenPosition found nothing.
+      // Fall back to a range-1 tile that doesn't seal storage, clearing a road
+      // blocker if needed. Recovers a lost storage link once the surrounding
+      // extension diamond is complete (the original tile is usually re-paved and
+      // every range 2–3 slot is taken, so no other path can replace it).
+      if (placeStorageLinkAdjacentFallback(room, ownStorage.pos, storageReserved)) return;
     }
   }
 
@@ -804,10 +880,19 @@ export function placeLabs(room: Room): void {
         blockedLog[key] = Game.time;
       }
     }
+    // Plan exhausted (every planned lab slot is built or blocked) but the room
+    // still needs more labs than the plan could place — this happens when the
+    // rigid LAB_STAMP collided with a spawn/extension/road at compute time and
+    // produced fewer positions than MAX_LABS[rcl] (observed live in W44N57:
+    // input-lab slot landed on the spawn, two output slots on extensions, so
+    // the plan capped at 6/9). Fall through to an adjacency-aware overflow that
+    // searches the full Chebyshev-range-2 region around the input labs rather
+    // than the congested stamp box — so the extra labs are still reaction-valid.
+    placeAdjacencyValidLab(room, plan);
     return;
   }
 
-  // Fallback: stamp relative to own storage
+  // Fallback: stamp relative to own storage (pre-plan rooms only).
   const terrain = room.getTerrain();
   const ox = ownStorageForLabs.pos.x + 2;
   const oy = ownStorageForLabs.pos.y + 2;
@@ -822,6 +907,98 @@ export function placeLabs(room: Room): void {
     if (blocked) continue;
     room.createConstructionSite(pos, STRUCTURE_LAB);
     return;
+  }
+}
+
+/**
+ * Resolve the two input-lab anchor positions for a room. Reaction adjacency
+ * requires every output lab to be within Chebyshev range 2 of BOTH input labs,
+ * so the overflow search anchors on these.
+ *
+ * Prefers the actual built input labs (the first two labs, matching the
+ * `inputLabIds` designation in roomPlanner.ts) so we never drift away from the
+ * cluster the reactions already run on. Falls back to the planned stamp inputs
+ * (labPositions[0..1]) before any lab is built.
+ */
+function resolveLabInputAnchors(
+  room: Room,
+  plan: { labPositions: { x: number; y: number }[] },
+): [{ x: number; y: number }, { x: number; y: number }] | undefined {
+  const labs = room.find(FIND_MY_STRUCTURES, {
+    filter: (s): s is StructureLab => s.structureType === STRUCTURE_LAB,
+  });
+  if (labs.length >= 2) {
+    // First two labs are the designated inputs (stable; see roomPlanner.ts).
+    const ids = Memory.rooms[room.name]?.inputLabIds;
+    if (ids && ids.length >= 2) {
+      const l1 = labs.find((l) => l.id === ids[0]);
+      const l2 = labs.find((l) => l.id === ids[1]);
+      if (l1 && l2)
+        return [
+          { x: l1.pos.x, y: l1.pos.y },
+          { x: l2.pos.x, y: l2.pos.y },
+        ];
+    }
+    const a = labs[0]!;
+    const b = labs[1]!;
+    return [
+      { x: a.pos.x, y: a.pos.y },
+      { x: b.pos.x, y: b.pos.y },
+    ];
+  }
+  // No (or one) built lab yet — use the planned stamp inputs.
+  const p0 = plan.labPositions[0];
+  const p1 = plan.labPositions[1];
+  if (p0 && p1)
+    return [
+      { x: p0.x, y: p0.y },
+      { x: p1.x, y: p1.y },
+    ];
+  return undefined;
+}
+
+/**
+ * Overflow lab placement that respects reaction adjacency. Searches all tiles
+ * within Chebyshev range 2 of BOTH input labs (the only tiles a reaction-valid
+ * output lab can occupy) and places one buildable, accessible lab per tick.
+ *
+ * Skips reserved/occupied tiles using the same live lookFor predicate as the
+ * planned path, plus the layout-plan reserved set so we never steal an
+ * extension/tower/road slot. One placement per tick; caller has already
+ * verified current < MAX_LABS[rcl].
+ */
+function placeAdjacencyValidLab(
+  room: Room,
+  plan: { labPositions: { x: number; y: number }[] },
+): void {
+  const anchors = resolveLabInputAnchors(room, plan);
+  if (!anchors) return;
+  const [in1, in2] = anchors;
+
+  const terrain = room.getTerrain();
+  const reserved = getPlannedReserved(room);
+  const cheb = (ax: number, ay: number, b: { x: number; y: number }): number =>
+    Math.max(Math.abs(ax - b.x), Math.abs(ay - b.y));
+
+  // Scan the bounding box of the range-2-of-both region. A tile must be within
+  // range 2 of each input independently for the reaction to address it.
+  const minX = Math.max(2, Math.min(in1.x, in2.x) - 2);
+  const maxX = Math.min(47, Math.max(in1.x, in2.x) + 2);
+  const minY = Math.max(2, Math.min(in1.y, in2.y) - 2);
+  const maxY = Math.min(47, Math.max(in1.y, in2.y) + 2);
+
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) {
+      if (cheb(x, y, in1) > 2 || cheb(x, y, in2) > 2) continue; // adjacency-invalid
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+      if (reserved.has(`${x},${y}`)) continue; // don't steal a planned non-lab slot
+      const pos = new RoomPosition(x, y, room.name);
+      const blocked =
+        pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
+      if (blocked) continue;
+      room.createConstructionSite(pos, STRUCTURE_LAB);
+      return; // one per tick
+    }
   }
 }
 

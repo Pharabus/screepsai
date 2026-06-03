@@ -318,6 +318,67 @@ describe('construction RCL gating', () => {
       expect(Math.abs(placedPos.x - containerAPos.x) <= 1).toBe(true);
       expect(Math.abs(placedPos.y - containerAPos.y) <= 1).toBe(true);
     });
+
+    describe('storage-link range-1 fallback (built-out room)', () => {
+      // findOpenPosition (range 2–3) finds nothing because every ring tile reads as
+      // blocked; the fallback must then place on a non-sealing range-1 tile.
+      let origLookFor: any;
+      beforeEach(() => {
+        origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+        (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(() => [
+          { structureType: STRUCTURE_EXTENSION },
+        ]);
+      });
+      afterEach(() => {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+      });
+
+      it('places a storage link on a range-1 tile, clearing the road there', () => {
+        const storagePos = new RoomPosition(16, 29, 'W1N1');
+        const road = { structureType: STRUCTURE_ROAD, destroy: vi.fn(() => OK) };
+        const room = roomAt(7, {
+          storage: { my: true, pos: storagePos },
+          // Every range-1 neighbour of storage is a (clearable) road → 8 passable tiles.
+          lookForAt: vi.fn((type: string, x: number, y: number) => {
+            if (type !== LOOK_STRUCTURES) return [];
+            const cheb = Math.max(Math.abs(x - 16), Math.abs(y - 29));
+            return cheb === 1 ? [road] : [];
+          }),
+        });
+        (Memory as any).rooms = { W1N1: { sources: [] } };
+
+        placeLinks(room);
+
+        expect(room.createConstructionSite).toHaveBeenCalledOnce();
+        const call = (room.createConstructionSite as any).mock.calls[0];
+        const [x, y, type] = call;
+        expect(type).toBe(STRUCTURE_LINK);
+        expect(Math.max(Math.abs(x - 16), Math.abs(y - 29))).toBe(1); // adjacent to storage
+        expect(road.destroy).toHaveBeenCalledOnce(); // road blocker cleared first
+      });
+
+      it('does NOT place a range-1 link that would seal storage (only one passable neighbour)', () => {
+        const storagePos = new RoomPosition(16, 29, 'W1N1');
+        const road = { structureType: STRUCTURE_ROAD, destroy: vi.fn(() => OK) };
+        const extension = { structureType: STRUCTURE_EXTENSION };
+        const room = roomAt(7, {
+          storage: { my: true, pos: storagePos },
+          // Only (15,29) is a road; the other 7 neighbours are extensions (impassable).
+          lookForAt: vi.fn((type: string, x: number, y: number) => {
+            if (type !== LOOK_STRUCTURES) return [];
+            const cheb = Math.max(Math.abs(x - 16), Math.abs(y - 29));
+            if (cheb !== 1) return [];
+            return x === 15 && y === 29 ? [road] : [extension];
+          }),
+        });
+        (Memory as any).rooms = { W1N1: { sources: [] } };
+
+        placeLinks(room);
+
+        expect(room.createConstructionSite).not.toHaveBeenCalled();
+        expect(road.destroy).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('placeTerminal', () => {
@@ -548,7 +609,13 @@ describe('construction RCL gating', () => {
           find: vi.fn((type: number, opts?: any) => {
             if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
             if (type === FIND_MY_STRUCTURES) {
-              if (opts?.filter) return Array(6).fill({}); // 6 labs < 9 max → triggers loop
+              // 6 labs < 9 max → triggers loop; give them positions so the
+              // adjacency overflow can resolve input anchors (real labs have pos).
+              if (opts?.filter)
+                return Array.from({ length: 6 }, (_, i) => ({
+                  structureType: STRUCTURE_LAB,
+                  pos: new RoomPosition(10 + i, 10, 'W1N1'),
+                }));
               return [];
             }
             if (type === FIND_MY_CONSTRUCTION_SITES) return [];
@@ -572,6 +639,8 @@ describe('construction RCL gating', () => {
         (Game as any).time = 1;
         placeLabs(room);
         expect(logSpy).not.toHaveBeenCalled();
+        // Every tile reports an existing lab via the lookFor override, so the
+        // adjacency overflow finds no open tile and places nothing.
         expect(room.createConstructionSite).not.toHaveBeenCalled();
       } finally {
         (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
@@ -595,7 +664,11 @@ describe('construction RCL gating', () => {
           find: vi.fn((type: number, opts?: any) => {
             if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
             if (type === FIND_MY_STRUCTURES) {
-              if (opts?.filter) return Array(6).fill({});
+              if (opts?.filter)
+                return Array.from({ length: 6 }, (_, i) => ({
+                  structureType: STRUCTURE_LAB,
+                  pos: new RoomPosition(10 + i, 10, 'W1N1'),
+                }));
               return [];
             }
             if (type === FIND_MY_CONSTRUCTION_SITES) return [];
@@ -620,6 +693,145 @@ describe('construction RCL gating', () => {
         (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
         logSpy.mockRestore();
       }
+    });
+  });
+
+  describe('placeLabs — adjacency-aware overflow (plan short of MAX_LABS)', () => {
+    // Models the live W44N57 bug: the rigid LAB_STAMP collided with a spawn /
+    // extensions / road at compute time, so the plan only carries the 2 input
+    // lab slots (both built). At RCL 7 the room needs 9 labs but the planned
+    // loop is exhausted — the overflow must place the extras on adjacency-valid
+    // tiles (Chebyshev range 2 of BOTH input labs), never on a stray tile.
+    const IN1 = { x: 28, y: 8 };
+    const IN2 = { x: 27, y: 8 };
+
+    /**
+     * Build a room whose two input labs sit at IN1/IN2 (both built) and whose
+     * plan only lists those two positions. Tile occupancy is controlled
+     * separately via installOccupancy (RoomPosition.lookFor override).
+     */
+    function labOverflowRoom(): any {
+      const lab1 = {
+        structureType: STRUCTURE_LAB,
+        id: 'lab1',
+        pos: new RoomPosition(IN1.x, IN1.y, 'W1N1'),
+      };
+      const lab2 = {
+        structureType: STRUCTURE_LAB,
+        id: 'lab2',
+        pos: new RoomPosition(IN2.x, IN2.y, 'W1N1'),
+      };
+      return roomAt(7, {
+        storage: { my: true, pos: new RoomPosition(5, 5, 'W1N1') },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(5, 6, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return [lab1, lab2]; // 2 labs < 9 max
+            return [];
+          }
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+        getTerrain: vi.fn(() => ({ get: () => 0 })),
+      });
+    }
+
+    let origLookFor: any;
+    beforeEach(() => {
+      origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+    });
+    afterEach(() => {
+      (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+    });
+
+    function installOccupancy(occupied: Set<string>): void {
+      (globalThis as any).RoomPosition.prototype.lookFor = function (type: string) {
+        if (type !== LOOK_STRUCTURES) return [];
+        return occupied.has(`${this.x},${this.y}`) ? [{ structureType: STRUCTURE_LAB }] : [];
+      };
+    }
+
+    function planWithInputsOnly(): any {
+      return {
+        layoutPlan: {
+          storagePos: { x: 5, y: 5 },
+          terminalPos: { x: 6, y: 5 },
+          towerPositions: [],
+          labPositions: [IN1, IN2], // both built → planned loop exhausted
+          extensionPositions: [],
+        },
+        inputLabIds: ['lab1', 'lab2'],
+      };
+    }
+
+    function isAdjacencyValid(x: number, y: number): boolean {
+      const cheb = (p: { x: number; y: number }) => Math.max(Math.abs(x - p.x), Math.abs(y - p.y));
+      return cheb(IN1) <= 2 && cheb(IN2) <= 2;
+    }
+
+    it('places an additional adjacency-valid lab when the plan is short of MAX_LABS', () => {
+      // Only the two input-lab tiles are occupied; the cluster has free room.
+      const occupied = new Set<string>([`${IN1.x},${IN1.y}`, `${IN2.x},${IN2.y}`]);
+      installOccupancy(occupied);
+      const room = labOverflowRoom();
+      (Memory as any).rooms = { W1N1: planWithInputsOnly() };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      expect(room.createConstructionSite).toHaveBeenCalledTimes(1);
+      const [pos, type] = (room.createConstructionSite as any).mock.calls[0];
+      expect(type).toBe(STRUCTURE_LAB);
+      // The placed lab must be reaction-valid: within range 2 of BOTH inputs.
+      expect(isAdjacencyValid(pos.x, pos.y)).toBe(true);
+      // ...and not on an input tile.
+      expect(`${pos.x},${pos.y}`).not.toBe(`${IN1.x},${IN1.y}`);
+      expect(`${pos.x},${pos.y}`).not.toBe(`${IN2.x},${IN2.y}`);
+    });
+
+    it('does NOT place a non-adjacent lab when no adjacency-valid tile is free', () => {
+      // Occupy every tile within range 2 of both inputs (the only valid region).
+      const occupied = new Set<string>();
+      for (let x = 25; x <= 30; x++) {
+        for (let y = 6; y <= 10; y++) {
+          if (isAdjacencyValid(x, y)) occupied.add(`${x},${y}`);
+        }
+      }
+      // Leave a far-away free tile that the engine could reach but is NOT
+      // adjacency-valid — the overflow must refuse it.
+      installOccupancy(occupied);
+      const room = labOverflowRoom();
+      (Memory as any).rooms = { W1N1: planWithInputsOnly() };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
+
+    it('does NOT exceed MAX_LABS — no overflow when already at the cap', () => {
+      // 9 labs already (RCL7 cap). placeLabs returns before any placement.
+      const labs = Array.from({ length: 9 }, (_, i) => ({
+        structureType: STRUCTURE_LAB,
+        id: `lab${i}`,
+        pos: new RoomPosition(25 + (i % 5), 6 + Math.floor(i / 5), 'W1N1'),
+      }));
+      installOccupancy(new Set());
+      const room = roomAt(7, {
+        storage: { my: true, pos: new RoomPosition(5, 5, 'W1N1') },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(5, 6, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) return opts?.filter ? labs : [];
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+      });
+      (Memory as any).rooms = { W1N1: planWithInputsOnly() };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
   });
 
