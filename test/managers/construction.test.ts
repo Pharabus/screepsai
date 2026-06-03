@@ -423,6 +423,34 @@ describe('construction RCL gating', () => {
         expect(Math.max(Math.abs(x - 16), Math.abs(y - 29))).toBe(1); // adjacent to storage
         expect(`${x},${y}`).not.toBe('15,29'); // never the severing bridge tile
       });
+
+      it('does NOT pick a tile that is an adjacent extension’s only access', () => {
+        // storage (16,29). Two road candidates: 15,29 and 17,30. The extension at
+        // (14,29) has only one passable neighbour — 15,29 — so taking 15,29 would
+        // strand it. The guard must choose 17,30 instead.
+        const storagePos = new RoomPosition(16, 29, 'W1N1');
+        const roadDestroy = vi.fn(() => OK);
+        const roadSet = new Set(['15,29', '17,30', '17,31', '16,32', '18,30']);
+        const room = roomAt(7, {
+          storage: { my: true, pos: storagePos },
+          getTerrain: () => ({ get: () => 0 }),
+          lookForAt: vi.fn((type: string, x: number, y: number) => {
+            if (type !== LOOK_STRUCTURES) return [];
+            const k = `${x},${y}`;
+            if (k === '16,29') return [{ structureType: STRUCTURE_STORAGE }];
+            if (roadSet.has(k)) return [{ structureType: STRUCTURE_ROAD, destroy: roadDestroy }];
+            return [{ structureType: STRUCTURE_EXTENSION }]; // 14,29 et al. are extensions
+          }),
+        });
+        (Memory as any).rooms = { W1N1: { sources: [] } };
+
+        placeLinks(room);
+
+        expect(room.createConstructionSite).toHaveBeenCalledOnce();
+        const [x, y, type] = (room.createConstructionSite as any).mock.calls[0];
+        expect(type).toBe(STRUCTURE_LINK);
+        expect(`${x},${y}`).toBe('17,30'); // 15,29 would strand the 14,29 extension
+      });
     });
   });
 

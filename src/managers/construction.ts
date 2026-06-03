@@ -594,6 +594,39 @@ function placeStorageLinkAdjacentFallback(
   });
   if (candidates.length === 0) return false;
 
+  // Extension-serviceability guard: never take a tile that is some adjacent
+  // extension's LAST passable access — that would strand the extension (no creep
+  // could ever stand beside it to fill it). Keep only tiles that strand none; if
+  // every candidate would strand one (degenerate), fall back to the full set since
+  // a storage link is worth more than one unreachable extension.
+  const strandsExtension = (c: { x: number; y: number }): boolean => {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const ex = c.x + dx;
+        const ey = c.y + dy;
+        const isExt = room
+          .lookForAt(LOOK_STRUCTURES, ex, ey)
+          .some((s) => s.structureType === STRUCTURE_EXTENSION);
+        if (!isExt) continue;
+        let access = 0;
+        for (let ax = -1; ax <= 1; ax++) {
+          for (let ay = -1; ay <= 1; ay++) {
+            if (ax === 0 && ay === 0) continue;
+            const nx = ex + ax;
+            const ny = ey + ay;
+            if (nx === c.x && ny === c.y) continue; // the link tile is now blocked
+            if (isPassable(nx, ny)) access++;
+          }
+        }
+        if (access === 0) return true; // c is this extension's only remaining access
+      }
+    }
+    return false;
+  };
+  const serviceable = candidates.filter((c) => !strandsExtension(c));
+  const pool = serviceable.length > 0 ? serviceable : candidates;
+
   // Connectivity-aware pick. A range-1 link must extend the structure cluster, not
   // plug a corridor: blocking a stepping-stone road beside the storage/terminal/spawn
   // stack can force a ~40-tile detour from one side to the other (observed live in
@@ -637,7 +670,7 @@ function placeStorageLinkAdjacentFallback(
     }
     return worst;
   };
-  candidates.sort((a, b) => {
+  pool.sort((a, b) => {
     const da = disruption(a);
     const db = disruption(b);
     if (da !== db) return da - db;
@@ -646,7 +679,7 @@ function placeStorageLinkAdjacentFallback(
     const rb = room.lookForAt(LOOK_STRUCTURES, b.x, b.y).length;
     return ra - rb || a.x - b.x || a.y - b.y;
   });
-  const chosen = candidates[0]!;
+  const chosen = pool[0]!;
   const road = room
     .lookForAt(LOOK_STRUCTURES, chosen.x, chosen.y)
     .find((s) => s.structureType === STRUCTURE_ROAD);

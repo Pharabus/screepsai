@@ -160,8 +160,22 @@ function tryActivateSafeMode(room: Room, mem: RoomMemory): void {
       safeModesLeft: (c.safeModeAvailable ?? 1) - 1,
     });
     console.log(`[defense] ${room.name}: safe mode activated`);
-  } else {
-    console.log(`[defense] ${room.name}: safe mode activation failed (${result})`);
+  } else if (!mem.combatSafeModeLogged) {
+    // Failed despite passing the charge/cooldown pre-checks — almost always
+    // ERR_BUSY (-4): another of our rooms is already in safe mode (only one is
+    // allowed account-wide at a time). We keep retrying every tick (cheap, no
+    // intent cost) so it fires the moment the other room's safe mode clears, but
+    // log only once per combat instead of spamming the console each tick.
+    mem.combatSafeModeLogged = true;
+    const reason = result === ERR_BUSY ? 'another room already in safe mode' : `error ${result}`;
+    logCombat({
+      tick: Game.time,
+      room: room.name,
+      event: 'safe_mode_unavailable',
+      safeModesLeft: c.safeModeAvailable ?? 0,
+      details: reason,
+    });
+    console.log(`[defense] ${room.name}: safe mode activation failed — ${reason}`);
   }
 }
 
