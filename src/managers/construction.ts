@@ -594,8 +594,54 @@ function placeStorageLinkAdjacentFallback(
   });
   if (candidates.length === 0) return false;
 
-  // Prefer an already-empty tile (no road to clear); deterministic tie-break by x,y.
+  // Connectivity-aware pick. A range-1 link must extend the structure cluster, not
+  // plug a corridor: blocking a stepping-stone road beside the storage/terminal/spawn
+  // stack can force a ~40-tile detour from one side to the other (observed live in
+  // W43N58 when 15,29 was chosen over the original 16,28). Score each candidate by the
+  // worst local detour it creates between storage's OTHER passable neighbours — using a
+  // BFS bounded to the storage's neighbourhood, with the candidate treated as blocked.
+  // Infinity = it severs the local corridor. Lowest score wins; the "wall-extending"
+  // tile scores ~0 because storage's remaining neighbours stay adjacent.
+  const LOCAL_R = 5;
+  const passableNbrs = neighbours.filter((n) => n.passable);
+  const disruption = (c: { x: number; y: number }): number => {
+    const others = passableNbrs.filter((n) => !(n.x === c.x && n.y === c.y));
+    if (others.length <= 1) return 0;
+    const start = others[0]!;
+    const dist: Record<string, number> = { [`${start.x},${start.y}`]: 0 };
+    const queue: [number, number][] = [[start.x, start.y]];
+    let head = 0;
+    while (head < queue.length) {
+      const [x, y] = queue[head++]!;
+      const d = dist[`${x},${y}`]!;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx === c.x && ny === c.y) continue; // candidate is blocked by the link
+          if (Math.abs(nx - storagePos.x) > LOCAL_R || Math.abs(ny - storagePos.y) > LOCAL_R)
+            continue;
+          const k = `${nx},${ny}`;
+          if (dist[k] !== undefined || !isPassable(nx, ny)) continue;
+          dist[k] = d + 1;
+          queue.push([nx, ny]);
+        }
+      }
+    }
+    let worst = 0;
+    for (const o of others) {
+      const d = dist[`${o.x},${o.y}`];
+      if (d === undefined) return Number.POSITIVE_INFINITY; // severs the local corridor
+      if (d > worst) worst = d;
+    }
+    return worst;
+  };
   candidates.sort((a, b) => {
+    const da = disruption(a);
+    const db = disruption(b);
+    if (da !== db) return da - db;
+    // Tie-break: prefer an already-empty tile (no road to clear), then x,y.
     const ra = room.lookForAt(LOOK_STRUCTURES, a.x, a.y).length;
     const rb = room.lookForAt(LOOK_STRUCTURES, b.x, b.y).length;
     return ra - rb || a.x - b.x || a.y - b.y;

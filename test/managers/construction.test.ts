@@ -378,6 +378,51 @@ describe('construction RCL gating', () => {
         expect(room.createConstructionSite).not.toHaveBeenCalled();
         expect(road.destroy).not.toHaveBeenCalled();
       });
+
+      it('does NOT pick a corridor tile that severs the local north/south passage', () => {
+        // Mini-W43N58: storage at (16,29). (15,29) is the ONLY passable y=29 tile —
+        // the single stepping-stone bridging the north pocket to the south roads.
+        // Picking it would force a long detour; the fallback must avoid it.
+        const storagePos = new RoomPosition(16, 29, 'W1N1');
+        const roadDestroy = vi.fn(() => OK);
+        const roadSet = new Set([
+          '15,29', // the bridge (the tile we must NOT choose)
+          '15,30',
+          '15,31',
+          '16,32',
+          '17,30',
+          '17,31',
+          '14,31',
+          '15,32',
+          '17,32', // south roads
+          '16,28',
+          '16,27',
+          '14,27',
+          '14,28',
+          '15,26',
+          '16,26', // north pocket
+        ]);
+        const room = roomAt(7, {
+          storage: { my: true, pos: storagePos },
+          getTerrain: () => ({ get: () => 0 }),
+          lookForAt: vi.fn((type: string, x: number, y: number) => {
+            if (type !== LOOK_STRUCTURES) return [];
+            const k = `${x},${y}`;
+            if (k === '16,29') return [{ structureType: STRUCTURE_STORAGE }];
+            if (roadSet.has(k)) return [{ structureType: STRUCTURE_ROAD, destroy: roadDestroy }];
+            return [{ structureType: STRUCTURE_EXTENSION }]; // everything else walls the corridor
+          }),
+        });
+        (Memory as any).rooms = { W1N1: { sources: [] } };
+
+        placeLinks(room);
+
+        expect(room.createConstructionSite).toHaveBeenCalledOnce();
+        const [x, y, type] = (room.createConstructionSite as any).mock.calls[0];
+        expect(type).toBe(STRUCTURE_LINK);
+        expect(Math.max(Math.abs(x - 16), Math.abs(y - 29))).toBe(1); // adjacent to storage
+        expect(`${x},${y}`).not.toBe('15,29'); // never the severing bridge tile
+      });
     });
   });
 
