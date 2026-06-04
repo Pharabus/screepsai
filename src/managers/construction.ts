@@ -1184,21 +1184,22 @@ const PERIMETER_STORAGE_MIN = 20_000;
  * One site per call to stay within the global site cap.
  */
 export function placePerimeterRamparts(room: Room): void {
-  const rcl = room.controller?.level ?? 0;
-  if (rcl < 5) return;
-
   const mem = Memory.rooms[room.name];
   const perimPlan = mem?.perimeterPlan;
   if (!perimPlan) return;
 
   const gateSet = new Set(perimPlan.gateTiles);
 
-  // Reconciliation pass — FREE and energy-INDEPENDENT (runs before the energy gate).
-  // A tile that was a WALL under an older plan but is now a gate still carries its
-  // constructedWall, and a rampart can't sit on a wall tile, so the gate would never
-  // open and egress toward that target stays sealed. Destroy the stale wall first;
-  // the rampart lands next tick. A sealed egress must not wait on a storage buffer —
-  // a low-energy room (or one under siege) needs its gates working most of all.
+  // Reconciliation pass — FREE, energy-INDEPENDENT, and RCL-INDEPENDENT (runs
+  // before BOTH the RCL gate and the energy gate). A tile that was a WALL under
+  // an older plan — or a foreign wall a reclaimed room inherited — but is now a
+  // gate still carries its constructedWall, and a rampart can't sit on a wall
+  // tile, so the gate would never open and egress toward that target stays
+  // sealed. This must not wait on RCL 5: a reclaimed room sits at RCL 2–4 with
+  // exactly this problem (live: W42N59's west gate at 6,26 kept a previous
+  // owner's wall, blocking the W43N59 remote road and forcing a wall tunnel).
+  // Destroying the stale wall is free and always correct on a gate tile (gates
+  // are meant to be passable). The rampart-placement loop below stays RCL-gated.
   for (const key of gateSet) {
     const comma = key.indexOf(',');
     const x = Number(key.slice(0, comma));
@@ -1210,6 +1211,10 @@ export function placePerimeterRamparts(room: Room): void {
       return; // one structure op per tick
     }
   }
+
+  // New rampart sites: RCL 5+ only (we don't harden the perimeter before then).
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 5) return;
 
   // Energy gate: pause NEW rampart sites when storage is low.
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;

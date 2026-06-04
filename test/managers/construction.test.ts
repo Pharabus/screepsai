@@ -289,6 +289,36 @@ describe('construction RCL gating', () => {
       expect(room.createConstructionSite).not.toHaveBeenCalled(); // returns after the destroy
     });
 
+    it('opens the gate at a pre-RCL5 reclaimed room (foreign wall on a gate tile)', () => {
+      // A reclaimed room at RCL 4 inherits the previous owner's wall on what is
+      // now a gate tile. Reconciliation must run regardless of RCL so the gate
+      // (and the remote road through it) is never sealed. Observed live: W42N59
+      // RCL4, west gate 6,26 kept a foreign wall and the road tunnelled around.
+      const wallDestroy = vi.fn(() => OK);
+      const room = roomAt(4); // RCL 4 — below the new-rampart RCL gate
+      (Memory as any).rooms = {
+        W1N1: { perimeterPlan: { perimeterTiles: ['40,25'], gateTiles: ['40,25'] } },
+      };
+      const origLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = vi.fn(function (
+        this: any,
+        type: string,
+      ) {
+        if (type === LOOK_STRUCTURES && this.x === 40 && this.y === 25) {
+          return [{ structureType: STRUCTURE_WALL, destroy: wallDestroy }];
+        }
+        return [];
+      });
+      try {
+        placePerimeterRamparts(room);
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = origLookFor;
+      }
+
+      expect(wallDestroy).toHaveBeenCalledOnce(); // reconciliation runs below RCL 5
+      expect(room.createConstructionSite).not.toHaveBeenCalled(); // no rampart site at RCL4
+    });
+
     it('opens the gate even when storage is below the perimeter energy threshold', () => {
       const wallDestroy = vi.fn(() => OK);
       const room = roomAt(6, {

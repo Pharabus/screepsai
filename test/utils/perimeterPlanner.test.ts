@@ -358,7 +358,60 @@ describe('perimeterPlanner', () => {
   // -------------------------------------------------------------------
   // Version constant
   // -------------------------------------------------------------------
-  it('PERIMETER_PLAN_VERSION is 4', () => {
-    expect(PERIMETER_PLAN_VERSION).toBe(4);
+  it('PERIMETER_PLAN_VERSION is 5', () => {
+    expect(PERIMETER_PLAN_VERSION).toBe(5);
+  });
+
+  // -------------------------------------------------------------------
+  // Remote-room exit gate target — Euclidean, not Chebyshev (regression)
+  // -------------------------------------------------------------------
+  describe('remote-room exit gate target', () => {
+    it('picks the exit tile nearest spawn by Euclidean distance, not a saturated corner', () => {
+      // Spawn far from the west edge on the x-axis (17,23). Every west-edge exit
+      // tile (x=0) ties on Chebyshev — the 17-tile x-gap saturates — so the old
+      // code picked the lowest-index tile (y=5) and the gate landed up at a
+      // corner, forcing the remote road to tunnel through natural walls to reach
+      // the actual y≈23 crossing. Euclidean does not saturate: it picks y≈23,
+      // beside the road. (Observed live in W42N59 → W43N59.)
+      const name = 'W1N1';
+      const terrain = makeTerrainMock(new Set());
+      Memory.rooms[name] = { sources: [], remoteRooms: ['W1N2'] } as RoomMemory;
+      const spawnObj = {
+        pos: new RoomPosition(17, 23, name),
+        structureType: STRUCTURE_SPAWN,
+      };
+      const leftExits: RoomPosition[] = [];
+      for (let y = 5; y <= 45; y++) leftExits.push(new RoomPosition(0, y, name));
+      const room = {
+        name,
+        find(type: any) {
+          if (type === FIND_MY_SPAWNS) return [spawnObj];
+          if (type === FIND_EXIT_LEFT) return leftExits;
+          return [];
+        },
+        controller: undefined,
+        getTerrain: () => terrain,
+      } as unknown as Room;
+      (Game as any).map.findExit = () => FIND_EXIT_LEFT;
+      Game.rooms[name] = room;
+
+      const plan = computePerimeter(room)!;
+      const remoteTarget = plan.gateTargets.find((t) => t.reason.startsWith('remote:'));
+      expect(remoteTarget).toBeDefined();
+      expect(remoteTarget!.x).toBe(0);
+      // Euclidean-nearest to spawn.y=23, NOT the saturated corner at y=5.
+      expect(Math.abs(remoteTarget!.y - 23)).toBeLessThanOrEqual(2);
+
+      // And the resulting gate must sit on the west wall near that crossing,
+      // not pinned to a corner far from the road.
+      const westWallX = Math.min(...plan.perimeterTiles.map((k) => Number(k.split(',')[0])));
+      const westGates = plan.gateTiles
+        .map((k) => k.split(',').map(Number))
+        .filter(([x]) => x === westWallX);
+      expect(westGates.length).toBeGreaterThan(0);
+      for (const [, y] of westGates) {
+        expect(Math.abs(y - 23)).toBeLessThanOrEqual(4);
+      }
+    });
   });
 });

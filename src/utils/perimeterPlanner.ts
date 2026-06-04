@@ -26,7 +26,7 @@
  * around v1.0.216–v1.0.218 if it's ever worth revisiting against fresh data.)
  */
 
-export const PERIMETER_PLAN_VERSION = 4;
+export const PERIMETER_PLAN_VERSION = 5;
 export const CORE_RADIUS = 10;
 
 // Minimum buildable tile coordinate (avoid border tiles which can't hold structures).
@@ -95,13 +95,23 @@ function getGateTargets(room: Room, spawnX: number, spawnY: number, mem: RoomMem
 
       // Find the room exit tile closest to our spawn — that's where the road
       // from spawn to the remote room will cross the perimeter boundary.
+      //
+      // Use Euclidean distance, NOT Chebyshev: every exit tile sits on a room
+      // edge (x or y pinned to 0/49), so Chebyshev to spawn saturates on the
+      // perpendicular-axis gap — all tiles within that gap tie, and the first
+      // (lowest-index) tile wins, pinning the gate target to a corner. Observed
+      // live in W42N59: spawn (17,23), west exit chose y=6 (the lowest tied
+      // tile) instead of y=22 beside the road corridor, so the gate landed at
+      // y12 and the remote road tunnelled through natural walls to reach y27.
+      // Euclidean does not saturate, so it picks the tile genuinely nearest the
+      // road's crossing point. (Same root cause as the identifyGateTiles fix.)
       const exitTiles = room.find(exitDir as FindConstant);
       if (!exitTiles || exitTiles.length === 0) continue;
 
       let bestTile: RoomPosition | undefined;
       let bestDist = Infinity;
       for (const tile of exitTiles as RoomPosition[]) {
-        const d = chebyshev(tile.x, tile.y, spawnX, spawnY);
+        const d = Math.hypot(tile.x - spawnX, tile.y - spawnY);
         if (d < bestDist) {
           bestDist = d;
           bestTile = tile;
@@ -123,7 +133,9 @@ function getGateTargets(room: Room, spawnX: number, spawnY: number, mem: RoomMem
       let bestTile: RoomPosition | undefined;
       let bestDist = Infinity;
       for (const tile of tiles as RoomPosition[]) {
-        const d = chebyshev(tile.x, tile.y, spawnX, spawnY);
+        // Euclidean, not Chebyshev — see the remote-exit loop above: edge tiles
+        // saturate Chebyshev on the perpendicular axis and pin the gate to a corner.
+        const d = Math.hypot(tile.x - spawnX, tile.y - spawnY);
         if (d < bestDist) {
           bestDist = d;
           bestTile = tile;
