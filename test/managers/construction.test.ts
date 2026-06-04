@@ -19,6 +19,7 @@ import {
   placeColonyBootstrapRoads,
   clearLabBlockers,
   getPlannedReserved,
+  applyRoadSiteOverlay,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -259,6 +260,35 @@ describe('construction RCL gating', () => {
       });
       placeRamparts(room);
       expect(room.createConstructionSite).toHaveBeenCalled();
+    });
+  });
+
+  describe('applyRoadSiteOverlay', () => {
+    it('stamps road sites at cost 1, leaves non-road sites and hard blocks alone', () => {
+      const store = new Map<string, number>();
+      const matrix: any = {
+        get: (x: number, y: number) => store.get(`${x},${y}`) ?? 0,
+        set: (x: number, y: number, v: number) => store.set(`${x},${y}`, v),
+      };
+      store.set('5,5', 255); // a reserved/blocked tile must stay blocked
+      const room: any = {
+        find: (type: number) =>
+          type === FIND_MY_CONSTRUCTION_SITES
+            ? [
+                { structureType: STRUCTURE_ROAD, pos: { x: 1, y: 1 } },
+                { structureType: STRUCTURE_ROAD, pos: { x: 2, y: 2 } },
+                { structureType: STRUCTURE_EXTENSION, pos: { x: 3, y: 3 } },
+                { structureType: STRUCTURE_ROAD, pos: { x: 5, y: 5 } },
+              ]
+            : [],
+      };
+
+      applyRoadSiteOverlay(matrix, room);
+
+      expect(matrix.get(1, 1)).toBe(1); // road site → cost 1
+      expect(matrix.get(2, 2)).toBe(1);
+      expect(matrix.get(3, 3)).toBe(0); // extension site untouched
+      expect(matrix.get(5, 5)).toBe(255); // hard block preserved (not lowered)
     });
   });
 

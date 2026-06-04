@@ -142,6 +142,27 @@ export function getPlannedReserved(room: Room): Set<string> {
   return set;
 }
 
+/**
+ * Stamp existing road construction sites at cost 1 so a re-planned road reuses
+ * the line it already started instead of laying a parallel one.
+ *
+ * Road sites are NOT FIND_STRUCTURES, so the base/engine cost matrix leaves them
+ * at terrain cost (plain = 2). Across open plain that makes many parallel routes
+ * equal-cost, and each periodic road-planner recompute can pick a different one;
+ * the per-tile `hasRoad` guard only blocks re-placing the SAME tile, so a fresh
+ * site lands one row over — accreting a double row (observed live in W43N58: a
+ * parallel road at y29 beside the y30 line to the W42N58 exit). Treating
+ * in-progress sites as cost-1 (like built roads) makes planning path-stable.
+ * Never lowers a hard-blocked (255 — reserved / structure) tile.
+ */
+export function applyRoadSiteOverlay(matrix: CostMatrix, room: Room): void {
+  for (const site of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+    if (site.structureType !== STRUCTURE_ROAD) continue;
+    if (matrix.get(site.pos.x, site.pos.y) === 255) continue;
+    matrix.set(site.pos.x, site.pos.y, 1);
+  }
+}
+
 export function placeExtensions(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_EXTENSIONS[rcl] ?? 0;
@@ -384,12 +405,13 @@ export function placeRoads(room: Room): void {
       ignoreCreeps: true,
       range: 1,
       costCallback(_roomName, costMatrix) {
-        if (!reserved.size) return costMatrix;
         const matrix = costMatrix.clone();
         for (const key of reserved) {
           const comma = key.indexOf(',');
           matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
         }
+        // Reuse already-placed road sites so the path doesn't wobble parallel.
+        applyRoadSiteOverlay(matrix, room);
         return matrix;
       },
     });
@@ -1342,6 +1364,10 @@ export function placeRemoteRoads(room: Room): void {
             // This overlay is LOCAL to road planning — creep movement matrices
             // are unaffected. See TUNNEL_WALL_COST for the threshold rationale.
             applyTunnelWalls(matrix, r, TUNNEL_WALL_COST);
+            // Reuse already-placed road sites so the path doesn't wobble onto a
+            // parallel line between recomputes (after tunnelWalls so an
+            // in-progress tunnel road keeps cost 1, not the wall penalty).
+            applyRoadSiteOverlay(matrix, r);
             return matrix;
           },
         },
@@ -1412,17 +1438,15 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
         roomCallback(roomName) {
           const r = Game.rooms[roomName];
           if (!r) return false;
-          const base = getBaseCostMatrixForRoom(r);
+          const matrix = getBaseCostMatrixForRoom(r).clone();
           // Set reserved tiles to impassable so roads route around planned structures.
-          if (reserved.size > 0) {
-            const matrix = base.clone();
-            for (const key of reserved) {
-              const comma = key.indexOf(',');
-              matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
-            }
-            return matrix;
+          for (const key of reserved) {
+            const comma = key.indexOf(',');
+            matrix.set(Number(key.slice(0, comma)), Number(key.slice(comma + 1)), 255);
           }
-          return base;
+          // Reuse already-placed road sites so the path doesn't wobble parallel.
+          applyRoadSiteOverlay(matrix, r);
+          return matrix;
         },
       },
     );
