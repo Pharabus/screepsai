@@ -117,10 +117,20 @@ export function garbageCollectMissions(): void {
       // Type-agnostic liveness checks: don't reclaim a mission that still owns
       // live creeps. remoteMining tracks haulerIds/reserverId; transport tracks
       // courierIds. A future type with its own creep list adds a check here.
+      //
+      // Count LIVE creeps, not the stored array length — a mission's id arrays
+      // are only refreshed while its sync runs, and a retiring transport mission
+      // is skipped by the spawner's sync (it continues past retiring missions),
+      // so its courierIds keep pointing at dead couriers forever. Trusting the
+      // raw length then blocks GC permanently (observed: W42N59→W43N58 transport
+      // stuck 'retiring' with 3 dead courierIds after the hoard drained). Live
+      // counting makes GC self-sufficient regardless of sync cadence.
       const rm = mission as Partial<RemoteMiningMission> & Partial<TransportMission>;
-      const hasHaulers = Array.isArray(rm.haulerIds) && rm.haulerIds.length > 0;
-      const hasReserver = rm.reserverId != null;
-      const hasCouriers = Array.isArray(rm.courierIds) && rm.courierIds.length > 0;
+      const liveCount = (ids?: string[]) =>
+        Array.isArray(ids) ? ids.filter((n) => Game.creeps[n] != null).length : 0;
+      const hasHaulers = liveCount(rm.haulerIds) > 0;
+      const hasReserver = rm.reserverId != null && Game.creeps[rm.reserverId] != null;
+      const hasCouriers = liveCount(rm.courierIds) > 0;
       if (hasHaulers || hasReserver || hasCouriers) continue;
 
       delete subMap[id];

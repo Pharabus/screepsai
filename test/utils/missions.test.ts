@@ -357,10 +357,24 @@ describe('garbageCollectMissions', () => {
     m.createdAt = Game.time - 400;
     m.haulerIds = ['still_alive'];
     m.reserverId = null;
+    (Game.creeps as any)['still_alive'] = { name: 'still_alive' };
 
     garbageCollectMissions();
 
     expect(getRemoteMiningMission('W43N59')).toBeDefined();
+  });
+
+  it('collects a retiring mission whose hauler ids are all DEAD (stale, not in Game.creeps)', () => {
+    ensureRemoteMiningMission('W43N58', 'W43N59');
+    retireMission('W43N59');
+    const m = getRemoteMiningMission('W43N59')!;
+    m.createdAt = Game.time - 400;
+    m.haulerIds = ['ghost1', 'ghost2']; // names with no Game.creeps entry
+    m.reserverId = null;
+
+    garbageCollectMissions();
+
+    expect(getRemoteMiningMission('W43N59')).toBeUndefined();
   });
 
   it('keeps retiring missions that still have a live reserver', () => {
@@ -370,6 +384,7 @@ describe('garbageCollectMissions', () => {
     m.createdAt = Game.time - 400;
     m.haulerIds = [];
     m.reserverId = 'res_alive';
+    (Game.creeps as any)['res_alive'] = { name: 'res_alive' };
 
     garbageCollectMissions();
 
@@ -423,6 +438,20 @@ describe('garbageCollectMissions', () => {
     // Aged retiring one is gone; active one survives
     expect(getRemoteMiningMission('W43N59')).toBeUndefined();
     expect(getRemoteMiningMission('W44N58')).toBeDefined();
+  });
+
+  it('collects a retiring transport mission whose courierIds are all DEAD', () => {
+    // Reproduces the live W42N59→W43N58 leak: the hoard drained, the mission
+    // retired, but its courierIds kept pointing at dead couriers (the spawner
+    // skips sync on retiring missions), so GC never reclaimed it.
+    const m = createTransportMission('W42N59', 'W43N58');
+    m.status = 'retiring';
+    m.createdAt = Game.time - 400;
+    m.courierIds = ['dead_courier_1', 'dead_courier_2']; // no Game.creeps entries
+
+    garbageCollectMissions();
+
+    expect(getTransportMission(m.id)).toBeUndefined();
   });
 });
 
@@ -715,10 +744,12 @@ describe('transport missions', () => {
     m.status = 'retiring';
     m.createdAt = (Game as any).time - 400; // older than the 300-tick GC age
     m.courierIds = ['c1'];
+    (Game.creeps as any)['c1'] = { name: 'c1' };
     garbageCollectMissions();
     expect(getTransportMission(m.id)).toBeDefined(); // live courier → kept
 
     m.courierIds = [];
+    delete (Game.creeps as any)['c1'];
     garbageCollectMissions();
     expect(getTransportMission(m.id)).toBeUndefined(); // drained + aged → reclaimed
   });
