@@ -425,6 +425,65 @@ End-game military capability. Requires full structure set and compound stockpile
 - [ ] **Dismantler role** — `[WORK×N, MOVE×N]` body. Targets hostile walls/ramparts with `creep.dismantle()` (50 HP per WORK per tick, ignores rampart protection). Used after nukes soften walls. Needs healer support to survive tower fire.
 - [ ] **Attack squad manager** — Coordinates multi-creep attacks on hostile rooms. Phases: (1) scout target, (2) nuke walls, (3) send dismantler+healer pairs to breach, (4) send attackers to destroy spawn/storage. Requires formation movement, heal coordination, and retreat logic. Complex — defer until other systems are mature.
 
+#### Raid mission — loot an abandoned / inactive base
+
+A repeatable **plunder** operation against a derelict enemy room: neutralise its
+defences, then drain its storage (energy never decays, so a full storage is a
+standing prize). Distinct from the attack-squad work above — the goal is *loot
+and leave*, not destroy or claim. **Undertake only with a mature economy** to
+fund the force and absorb the CPU of a 4th-room op (hard constraint — not while
+W43N58 storage is funding the wall backlog or 3 rooms already ~max 20 CPU).
+
+First identified target: **W44N59** (owner `Tacotheon`, a *player* — PvP, not an
+Invader job; ~999k storage, single tower, no creeps, controller present and not
+yet downgraded; 2 rooms N of W44N57 across our remote W44N58). **Likely resolves
+itself:** an inactive owner's controller should degrade to neutral before we're
+ready, at which point the tower goes unowned and stops firing and we loot with
+**zero combat** (the patient path below). So treat W44N59 as the validation case,
+not a reason to rush-build the military role.
+
+**The looting half already exists** — `courier` COLLECT reads `room.storage`
+owner-agnostically and `deliverEnergy(source, dest)` drives a transport mission
+(just used to drain W42N59). The genuinely net-new work is (a) neutralising one
+tower and (b) proving we can withdraw from a base we don't own.
+
+- [ ] **Two hard gates (blockers — verify before committing any force):**
+  1. **Safe-mode confirmation.** If the owner still runs code and holds a
+     safe-mode charge, the raid is wasted (they're neutered for ~20k ticks, we
+     ate the spawn cost). Only raid a *confirmed-abandoned* account: falling
+     `ticksToDowngrade`, a low/empty unrefilled tower, `controller.safeMode == null`,
+     no construction. An abandoned account runs no code and **cannot** safe-mode.
+  2. **Foreign-withdraw mechanic.** Confirm a creep can `withdraw()` from an
+     enemy storage in a room we **don't** own (Screeps allows it iff no hostile
+     rampart sits on the store and the room isn't safe-moded — ownership of the
+     *target* store doesn't gate withdraw). This is the exact load-bearing
+     assumption that produced the deleted `looter` role; **live-validate cheaply
+     before building force.** (Lesson: validate the core mechanic first.)
+- [ ] **Phase 1 — recon.** Re-scout for fresh tactical data: tower energy,
+      storage position + **any ramparts on/around it**, controller level +
+      `ticksToDowngrade` + `safeMode`, full source/structure layout. This decides
+      1-creep job vs. real fight (or "just wait for downgrade").
+- [ ] **Phase 2 — neutralise the tower. Drainer approach STRONGLY PREFERRED**
+      over dismantle: a tank+heal creep parked at the room edge (tower does ~150
+      dmg at range ≥20 vs 600 at ≤5; ~13 HEAL out-heals it) outlasts the tower's
+      energy (10 e/shot, ≤1000 cap ⇒ ≤~100 shots), and an abandoned room never
+      refills it. Reuses the existing **Drain attack** item above; dismantle/the
+      **Dismantler role** is the fallback and is only needed to clear a rampart
+      found protecting the storage. Boosts (TOUGH/HEAL) likely unnecessary if
+      recon shows the tower already near-empty.
+- [ ] **Phase 3 — loot.** `deliverEnergy('W44N59','W44N57')` → couriers drain
+      storage home. Mostly reuse; confirm the non-owned-source path in Phase 2
+      first, then scale courier count.
+- [ ] **Patient alternative (preferred for W44N59 specifically).** If recon shows
+      the controller dropping, just **wait for it to go neutral** — unowned tower
+      stops firing, storage energy doesn't decay, loot with zero force. Whether
+      this beats a drain depends on the controller level/timer (could be 100k+
+      ticks from RCL7).
+- [ ] **Net-new code (only if we go the combat route):** a `drainer`
+      (TOUGH/HEAL tank) role + manual console trigger (à la `claim`/`deliverEnergy`);
+      optional attack/heal/tough boost wiring. Hunter can't be reused (Invader-only).
+      Courier/transport already exist.
+
 ---
 
 ### Phase 6: Scale & Navigation (2+ colonies)
