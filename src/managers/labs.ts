@@ -242,6 +242,10 @@ export function getChainBuyNeeds(room: Room): ResourceConstant[] {
 export function runLabs(): void {
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
+    // Full-feeder model: only the hub runs reactions. Feeder colonies mine and
+    // ship their mineral to the hub (see terminal.ts sendMineralsToHub); their
+    // labs stay idle rather than churning small tier-1 batches nobody consumes.
+    if (!isLabHub(room)) continue;
     const mem = Memory.rooms[room.name];
     if (!mem?.inputLabIds || !mem.labIds || mem.labIds.length < 3) continue;
 

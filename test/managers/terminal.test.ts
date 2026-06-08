@@ -1354,13 +1354,13 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     consoleSpy.mockRestore();
   });
 
-  it('does NOT send a stack below MIN_MINERAL_SHIP (1000)', () => {
+  it('does NOT send a stack below MIN_MINERAL_SHIP (500)', () => {
     (Game as any).time = SHIP_TICK;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // O: 500 — below MIN_MINERAL_SHIP (1000)
+    // O: 400 — below MIN_MINERAL_SHIP (500)
     const feederTerminal: any = {
-      store: makeFullTerminalStore({ O: 500, energy: 50_000 }),
+      store: makeFullTerminalStore({ O: 400, energy: 50_000 }),
       cooldown: 0,
       send: vi.fn(() => OK),
     };
@@ -1504,7 +1504,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       terminal: feederTerminal,
     });
 
-    // Hub terminal has only 500 free — below MIN_MINERAL_SHIP (1000)
+    // Hub terminal has only 400 free — below MIN_MINERAL_SHIP (500)
     const hubTerminalStore: any = {};
     Object.defineProperty(hubTerminalStore, 'getUsedCapacity', {
       enumerable: false,
@@ -1512,7 +1512,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     });
     Object.defineProperty(hubTerminalStore, 'getFreeCapacity', {
       enumerable: false,
-      value: vi.fn((_r?: string) => 500),
+      value: vi.fn((_r?: string) => 400),
     });
     const hubTerminal: any = { store: hubTerminalStore, cooldown: 0 };
     const hub = mockRoom({

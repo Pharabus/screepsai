@@ -22,11 +22,13 @@ const MARKET_INTERVAL = 10;
 const MINERAL_SHIP_INTERVAL = 10;
 /**
  * Minimum stack size to ship in one terminal send. Minerals don't decay so we
- * batch rather than burning a cooldown on a trickle. Must exceed the
- * per-tick reaction consumption (LAB_REACTION_AMOUNT × output-lab count) by
- * a wide margin so the hub doesn't stall waiting for drip deliveries.
+ * batch rather than burning a cooldown on a trickle. Kept modest (500) because
+ * the feeder's storage→terminal drain is the lowest-priority hauler task: a high
+ * bar parks minerals in the terminal indefinitely (observed live — 862 Z stuck
+ * under a 1000 bar with no fresh mining). 500 still batches sensibly while
+ * keeping consolidation responsive.
  */
-const MIN_MINERAL_SHIP = 1000;
+const MIN_MINERAL_SHIP = 500;
 const MIN_SELL_PRICE = 0.01;
 // Ignore orders with < 100 remaining and never deal < 100 units. Shard3 is
 // full of 1-unit honeypot orders at 500cr designed to waste terminal cooldowns.

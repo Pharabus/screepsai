@@ -164,6 +164,34 @@ describe('runLabs', () => {
     expect(outputLab.runReaction).toHaveBeenCalledWith(inputLab1, inputLab2);
   });
 
+  it('does NOT run reactions in a non-hub (feeder) room', () => {
+    // Full-feeder model: only the hub runs reactions. W1N1 has a complete lab
+    // config but W3N3 has more labs, so W1N1 is a feeder and must stay idle.
+    const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
+    const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
+    const outputLab = mockLab({ id: 'lab3', capacity: { OH: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    setupRoom(6, {
+      labIds: ['lab1', 'lab2', 'lab3'],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+    });
+    // Add a hub room with more labs so W1N1 is NOT the hub.
+    (Game as any).rooms.W3N3 = mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } });
+    (Memory as any).rooms.W3N3 = { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] };
+
+    runLabs();
+
+    expect(outputLab.runReaction).not.toHaveBeenCalled();
+  });
+
   it('skips output labs on cooldown', () => {
     const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
     const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
