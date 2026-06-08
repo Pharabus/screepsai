@@ -166,7 +166,8 @@ describe('hauler terminal logistics', () => {
     expect(creep.withdraw).toHaveBeenCalledWith(storage, 'H', 300);
   });
 
-  it('withdraws only the surplus above the floor, never dropping storage below it (no pull/redeposit loop)', () => {
+  it('hub room: withdraws only the surplus above the 5k floor, never dropping storage below it (no pull/redeposit loop)', () => {
+    // Hub room: lab buffer floor = MINERAL_STORAGE_FLOOR (5000).
     // Storage mineral sits just above the floor (5000+200). A full-capacity
     // withdraw would drop storage below the floor, and the delivery would then
     // route straight back to storage — a futile loop. The hauler must take only
@@ -189,7 +190,12 @@ describe('hauler terminal logistics', () => {
       find: vi.fn(() => []),
     });
 
-    (Memory as any).rooms = { W1N1: {} };
+    // W1N1 is the hub (has the most labs) — floor = MINERAL_STORAGE_FLOOR (5000)
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    // Must be in Game.rooms so getLabHubName() can find the hub
+    (Game as any).rooms = { W1N1: room };
 
     const creep = mockCreep({
       room,
@@ -200,11 +206,57 @@ describe('hauler terminal logistics', () => {
 
     hauler.run(creep);
 
-    // Only the 200-unit surplus — not a full 300 load that would breach the floor.
+    // Only the 200-unit surplus above the 5k floor — not a full 300 load that
+    // would breach the floor and trigger a pull/redeposit loop.
     expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', 200);
   });
 
-  it('fills storage buffer before overflowing to terminal when storage mineral is below floor', () => {
+  it('feeder room: withdraws ALL mineral (floor=0) since no lab buffer is needed', () => {
+    // Feeder room: mineralStorageFloor = 0 — all stock flows to terminal for hub shipment.
+    // Same setup as the hub test above, but W1N1 is NOT the hub.
+    const storageStore = mockStore({ energy: 100, GH2O: 5200 }, 1000000);
+    const storage = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: storageStore,
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(28, 28, 'W1N1'),
+      store: mockStore({}, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    // W3N3 is the hub (more labs); W1N1 is a feeder — floor = 0
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    (Game as any).rooms = {
+      W1N1: room,
+      W3N3: mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } }),
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}), // 300 free capacity
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Floor=0 for feeder → withdraw the full carry capacity (min(5200, 300)=300)
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', 300);
+  });
+
+  it('hub room: fills storage buffer before overflowing to terminal when storage mineral is below floor', () => {
+    // Hub room: lab buffer floor = MINERAL_STORAGE_FLOOR (5000).
     const storage = {
       my: true,
       pos: new RoomPosition(26, 26, 'W1N1'),
@@ -222,7 +274,12 @@ describe('hauler terminal logistics', () => {
       find: vi.fn(() => []),
     });
 
-    (Memory as any).rooms = { W1N1: {} };
+    // W1N1 is the hub — floor = MINERAL_STORAGE_FLOOR (5000)
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    // Must be in Game.rooms so getLabHubName() can find the hub
+    (Game as any).rooms = { W1N1: room };
 
     const creep = mockCreep({
       room,
@@ -238,7 +295,52 @@ describe('hauler terminal logistics', () => {
     expect(creep.transfer).not.toHaveBeenCalledWith(terminal, 'H');
   });
 
-  it('does not move minerals to terminal when storage is below floor', () => {
+  it('feeder room: delivers mineral directly to terminal (floor=0, no storage buffer needed)', () => {
+    // Feeder room: mineralStorageFloor = 0 — mineral goes straight to terminal.
+    const storage = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, H: 0 }, 1000000), // 0 H in storage
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(28, 28, 'W1N1'),
+      store: mockStore({}, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    // W3N3 is the hub; W1N1 is a feeder — floor = 0
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    (Game as any).rooms = {
+      W1N1: room,
+      W3N3: mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } }),
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ H: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Floor=0 → storage already "above" floor → deliver straight to terminal
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, 'H');
+    expect(creep.transfer).not.toHaveBeenCalledWith(storage, 'H');
+  });
+
+  it('hub room: does not move minerals to terminal when storage is below the 5k floor', () => {
+    // Hub room: mineralStorageFloor = MINERAL_STORAGE_FLOOR (5000).
+    // Storage holds 3000 H — below the 5k lab-buffer floor — so no terminal pickup.
     const storageStore = mockStore({ energy: 100, H: 3000 });
     const storage = {
       my: true,
@@ -257,7 +359,12 @@ describe('hauler terminal logistics', () => {
       find: vi.fn(() => []),
     });
 
-    (Memory as any).rooms = { W1N1: {} };
+    // W1N1 is the hub — floor = MINERAL_STORAGE_FLOOR (5000)
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    // Must be in Game.rooms so getLabHubName() can find the hub
+    (Game as any).rooms = { W1N1: room };
 
     const creep = mockCreep({
       room,
@@ -268,7 +375,7 @@ describe('hauler terminal logistics', () => {
 
     hauler.run(creep);
 
-    // Should NOT withdraw H from storage — 3000 is below the 5000 floor
+    // Should NOT withdraw H from storage — 3000 is below the 5000 hub floor
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'H');
   });
 });

@@ -7,13 +7,26 @@ import {
   BUY_INTERVAL,
   MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
-import { getChainBuyNeeds, isLabHub } from './labs';
+import { getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 
 // Matches the 10-tick terminal cooldown so we capture every available sell
 // window. Running every tick would do the same but cost more CPU on no-op
 // store-scans; every 10 ticks is the sweet spot.
 const MARKET_INTERVAL = 10;
+/**
+ * Interval for feeder → hub mineral shipments. Matches the terminal cooldown
+ * window; sending every 10 ticks is sufficient since the terminal can only
+ * fire once per cooldown anyway.
+ */
+const MINERAL_SHIP_INTERVAL = 10;
+/**
+ * Minimum stack size to ship in one terminal send. Minerals don't decay so we
+ * batch rather than burning a cooldown on a trickle. Must exceed the
+ * per-tick reaction consumption (LAB_REACTION_AMOUNT × output-lab count) by
+ * a wide margin so the hub doesn't stall waiting for drip deliveries.
+ */
+const MIN_MINERAL_SHIP = 1000;
 const MIN_SELL_PRICE = 0.01;
 // Ignore orders with < 100 remaining and never deal < 100 units. Shard3 is
 // full of 1-unit honeypot orders at 500cr designed to waste terminal cooldowns.
@@ -330,6 +343,85 @@ export function resetColonySendCache(): void {
   _lastColonySend.clear();
 }
 
+// ---------------------------------------------------------------------------
+// Full-feeder mineral consolidation: feeder colonies → lab hub
+// ---------------------------------------------------------------------------
+// Under the full-feeder model the lab hub is the single room that runs all
+// reactions and sells surplus compounds for credits. Other owned rooms are
+// pure feeders: they mine their mineral and ship it raw to the hub.
+//
+// `sendMineralsToHub` is the structural MIRROR of `sendEnergyToColonies`:
+// instead of home→colony energy support it routes colony→hub mineral
+// consolidation. A feeder room calls this once per MINERAL_SHIP_INTERVAL
+// (matching the 10-tick terminal cooldown) to ship its largest mineral stack.
+//
+// One send per call — the terminal cooldown is already 10 ticks, so multiple
+// sends in one call would just fail with ERR_BUSY anyway. Pick the largest
+// stack to minimise cooldowns spent on trickle loads.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ships a feeder room's accumulated minerals to the lab hub's terminal.
+ *
+ * Skips when:
+ * - No hub is detected, or this room IS the hub (hub ships nothing to itself).
+ * - The hub terminal is missing (hub is always visible when owned, so this is
+ *   a transient RCL < 6 situation).
+ * - No mineral stack exceeds MIN_MINERAL_SHIP (batch to avoid wasting a cooldown
+ *   on a trickle; minerals don't decay so batching is safe).
+ * - The hub terminal has insufficient free capacity for the chosen resource
+ *   (hub is full — it will sell/consume to make room; retry next interval).
+ * - The feeder terminal doesn't hold enough energy to cover the transaction
+ *   cost plus ENERGY_TERMINAL_BUFFER (mirror of sendEnergyToColonies guard).
+ */
+function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
+  const hubName = getLabHubName();
+  if (!hubName || hubName === room.name) return;
+
+  const hub = Game.rooms[hubName];
+  const hubTerminal = hub?.terminal;
+  if (!hubTerminal) return;
+
+  // Pick the LARGEST non-energy stack from this terminal — most efficient use
+  // of the one-send-per-tick cooldown. A single large batch clears more stock
+  // per cooldown than many small sends of different resources.
+  let bestResource: ResourceConstant | undefined;
+  let bestAmount = 0;
+
+  for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
+    if (resource === RESOURCE_ENERGY) continue;
+    const amount = terminal.store.getUsedCapacity(resource);
+    if (amount > bestAmount) {
+      bestAmount = amount;
+      bestResource = resource;
+    }
+  }
+
+  if (!bestResource || bestAmount < MIN_MINERAL_SHIP) return;
+
+  // Clamp to hub terminal's free capacity for this resource.
+  const hubFree = hubTerminal.store.getFreeCapacity(bestResource);
+  if (hubFree < MIN_MINERAL_SHIP) return; // hub is full for this resource
+
+  const amount = Math.min(bestAmount, hubFree);
+
+  // Energy guard: mirror of sendEnergyToColonies. Only send if the feeder
+  // terminal can cover the transaction cost plus the standing energy buffer.
+  const cost = Game.market.calcTransactionCost(amount, room.name, hubName);
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < cost + ENERGY_TERMINAL_BUFFER) return;
+
+  const result = terminal.send(bestResource, amount, hubName, 'mineral consolidation');
+  if (result === OK) {
+    console.log(
+      `[terminal] ${room.name}: sent ${amount} ${bestResource} to hub ${hubName} (cost ${cost} energy)`,
+    );
+  } else {
+    console.log(
+      `[terminal] ${room.name}: mineral send to hub ${hubName} failed for ${bestResource}, error=${result}`,
+    );
+  }
+}
+
 /** Clears the per-tick receiver set — call in tests' beforeEach to prevent cross-test contamination. */
 export function resetReceiversThisTick(): void {
   _receiversThisTick.clear();
@@ -344,20 +436,44 @@ export function runTerminal(): void {
     const terminal = room.terminal;
     if (!terminal || terminal.cooldown > 0) continue;
 
+    const hub = getLabHubName();
+    const amHub = isLabHub(room);
+
     // Buy runs first so it isn't blocked when both intervals coincide
     // (every 500 ticks). If buy deals, the cooldown re-check below skips sell.
     // Only the lab hub buys inputs (full-feeder model): a colony's small lab
     // cluster can't chain to the boosts that get consumed, so buying inputs
     // there just burns credits on stranded tier-1 compounds.
-    if (Game.time % BUY_INTERVAL === 0 && isLabHub(room)) {
+    if (Game.time % BUY_INTERVAL === 0 && amHub) {
       buyForLabs(room, terminal);
+    }
+
+    // Feeder mineral consolidation: ship accumulated minerals to the hub so it
+    // has raw stock for reactions. Only runs for non-hub rooms when a hub
+    // exists — the hub ships nothing to itself.
+    if (
+      !amHub &&
+      hub !== undefined &&
+      terminal.cooldown === 0 &&
+      Game.time % MINERAL_SHIP_INTERVAL === 0
+    ) {
+      sendMineralsToHub(room, terminal);
     }
 
     if (terminal.cooldown === 0 && Game.time % COLONY_SEND_INTERVAL === 0) {
       sendEnergyToColonies(room, terminal);
     }
 
-    if (terminal.cooldown === 0 && Game.time % MARKET_INTERVAL === 0) {
+    // Only sell when this room IS the hub, or when no hub exists yet (fallback
+    // so rooms can still move surplus before any room reaches multi-lab status).
+    // Feeder rooms ship their minerals to the hub instead of selling locally —
+    // the hub is the single point for market operations (credit efficiency,
+    // avoiding selling at colony and re-buying at hub).
+    if (
+      terminal.cooldown === 0 &&
+      Game.time % MARKET_INTERVAL === 0 &&
+      (amHub || hub === undefined)
+    ) {
       sellSurplus(room, terminal);
     }
   }

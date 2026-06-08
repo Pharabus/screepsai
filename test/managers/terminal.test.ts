@@ -1184,3 +1184,443 @@ describe('runTerminal — per-tick receiver dedupe', () => {
     expect(terminal.send).toHaveBeenCalledTimes(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feeder-to-hub mineral consolidation
+// ---------------------------------------------------------------------------
+
+describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
+  /**
+   * Tick that satisfies MINERAL_SHIP_INTERVAL (10) without coinciding with
+   * BUY_INTERVAL (500) or COLONY_SEND_INTERVAL (100).
+   */
+  const SHIP_TICK = 10;
+
+  /**
+   * A terminal store factory with both getUsedCapacity and getFreeCapacity so
+   * it works for both source (feeder) and destination (hub) checks.
+   */
+  function makeFullTerminalStore(resources: Record<string, number>, totalCapacity = 300_000): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        if (r) return resources[r] ?? 0;
+        return Object.values(resources).reduce((a, b) => a + b, 0);
+      }),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => {
+        const used = Object.values(resources).reduce((a, b) => a + b, 0);
+        return Math.max(0, totalCapacity - used);
+      }),
+    });
+    return store;
+  }
+
+  function makeSetup() {
+    // Feeder: W1N1 — no labs (not the hub), has O: 6000 and energy: 50000 in terminal
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+
+    // Hub: W3N3 — more labs, terminal with plenty of free capacity
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }), // plenty of free capacity
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {}, // no labs → not the hub
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] }, // most labs → the hub
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100), // affordable cost
+      deal: vi.fn(() => OK),
+    };
+
+    return { feeder, feederTerminal, hub, hubTerminal };
+  }
+
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonySendCache();
+  });
+
+  it('sends the largest mineral stack from feeder to hub', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { feederTerminal } = makeSetup();
+
+    runTerminal();
+
+    // O is the only non-energy mineral (6000 > MIN_MINERAL_SHIP=1000)
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
+    consoleSpy.mockRestore();
+  });
+
+  it('picks the LARGEST stack when feeder holds multiple minerals', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Feeder holds H: 2000 and O: 6000 — O is largest
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ H: 2000, O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    // O (6000) is larger than H (2000) — should ship O
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
+    expect(feederTerminal.send).not.toHaveBeenCalledWith(
+      'H',
+      expect.any(Number),
+      'W3N3',
+      expect.any(String),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('does NOT send when this room IS the hub', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // W3N3 is the hub — it must not ship to itself
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W3N3: hub };
+    (Memory as any).rooms = {
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(hubTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('does NOT send a stack below MIN_MINERAL_SHIP (1000)', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // O: 500 — below MIN_MINERAL_SHIP (1000)
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 500, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('skips when the energy guard fails (terminal energy < cost + ENERGY_TERMINAL_BUFFER)', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // energy: 4000 — calcTransactionCost returns 1000, buffer is 5000 → 4000 < 1000+5000
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 4_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    // calcTransactionCost returns 1000 → 4000 < 1000 + 5000 (ENERGY_TERMINAL_BUFFER) → skip
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 1_000),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('clamps send amount to hub terminal free capacity', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+
+    // Hub terminal has only 3000 free capacity for O
+    const hubStoreResources = { energy: 20_000 };
+    const hubTerminalStore: any = {
+      ...hubStoreResources,
+    };
+    Object.defineProperty(hubTerminalStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? ((hubStoreResources as any)[r] ?? 0) : 20_000)),
+    });
+    Object.defineProperty(hubTerminalStore, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => 3_000), // only 3k free
+    });
+    const hubTerminal: any = { store: hubTerminalStore, cooldown: 0 };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    // 6000 feeder stock, hub only has 3000 free → clamped to 3000
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 3000, 'W3N3', 'mineral consolidation');
+    consoleSpy.mockRestore();
+  });
+
+  it('skips when hub terminal free capacity is below MIN_MINERAL_SHIP', () => {
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+
+    // Hub terminal has only 500 free — below MIN_MINERAL_SHIP (1000)
+    const hubTerminalStore: any = {};
+    Object.defineProperty(hubTerminalStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn(() => 0),
+    });
+    Object.defineProperty(hubTerminalStore, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => 500),
+    });
+    const hubTerminal: any = { store: hubTerminalStore, cooldown: 0 };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('hub room sells surplus; feeder room with a hub does NOT sell', () => {
+    // Two rooms: W3N3 (hub, 6 labs) and W1N1 (feeder, no labs).
+    // Both have H: 15000 in their terminals. On a MARKET_INTERVAL tick,
+    // only the hub should call market.deal; the feeder must not.
+    (Game as any).time = SHIP_TICK; // 10 = MARKET_INTERVAL AND MINERAL_SHIP_INTERVAL
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ H: 15_000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ H: 15_000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => [
+        { id: 'order1', price: 1.0, remainingAmount: 10_000, roomName: 'W9N9' },
+      ]),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    // Hub should sell its surplus H
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', expect.any(Number), 'W3N3');
+    // Feeder should NOT sell — it ships to the hub instead
+    expect(Game.market.deal).not.toHaveBeenCalledWith('order1', expect.any(Number), 'W1N1');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('feeder WITH no hub present falls back to selling surplus (hub=undefined path)', () => {
+    // Single room (no hub exists): hub === undefined → feeder should still sell surplus.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const terminal: any = {
+      store: makeFullTerminalStore({ H: 15_000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal,
+    });
+
+    // No labIds anywhere → getLabHubName() returns undefined
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => [
+        { id: 'order1', price: 1.0, remainingAmount: 10_000, roomName: 'W9N9' },
+      ]),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    // No hub → fallback to selling surplus locally
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', expect.any(Number), 'W1N1');
+    consoleSpy.mockRestore();
+  });
+});

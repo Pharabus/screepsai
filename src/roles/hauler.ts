@@ -14,6 +14,24 @@ import {
   BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
+import { isLabHub } from '../managers/labs';
+
+/**
+ * Storage buffer floor for minerals, keyed by whether this room is the lab hub.
+ *
+ * The hub keeps MINERAL_STORAGE_FLOOR (5000) in storage as a lab-input buffer
+ * so pickupLabInput can load input labs directly without touching the terminal.
+ * Feeder rooms keep none (floor = 0): all mined minerals should flow through
+ * to the terminal so sendMineralsToHub can ship them to the hub. This also
+ * drains any pre-existing stranded mineral stock from colony storage.
+ *
+ * The RESOURCE_BATTERY ? 0 : … guard in callers is preserved — batteries are
+ * factory products for sale and always bypass the mineral buffer regardless of
+ * room type.
+ */
+export function mineralStorageFloor(room: Room): number {
+  return isLabHub(room) ? MINERAL_STORAGE_FLOOR : 0;
+}
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
 // Only dispatch a hauler for lab minerals when the lab genuinely needs a
@@ -684,8 +702,10 @@ function pickupForTerminal(creep: Creep): boolean {
 
   for (const resource of Object.keys(storage.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
-    // Batteries are factory products meant to be sold, not lab stockpile — always flow to terminal
-    const floor = resource === RESOURCE_BATTERY ? 0 : MINERAL_STORAGE_FLOOR;
+    // Batteries are factory products meant to be sold, not lab stockpile — always flow to terminal.
+    // Non-hub rooms use a floor of 0 (mineralStorageFloor) so all minerals flow to the terminal
+    // for shipment to the hub; the hub keeps MINERAL_STORAGE_FLOOR as a lab-input buffer.
+    const floor = resource === RESOURCE_BATTERY ? 0 : mineralStorageFloor(creep.room);
     const available = storage.store.getUsedCapacity(resource);
     if (available > floor) {
       creep.memory.targetId = storage.id;
@@ -928,7 +948,9 @@ function deliverToTerminalOrStorage(creep: Creep): boolean {
   // Keep a working buffer in storage so pickupLabInput can load labs without
   // touching the terminal (which requires an extra trip across the room).
   // Batteries are factory products for sale — no lab buffer needed, skip to terminal.
-  const deliverFloor = mineralType === RESOURCE_BATTERY ? 0 : MINERAL_STORAGE_FLOOR;
+  // Non-hub rooms use floor 0 (mineralStorageFloor) so minerals flow directly to the
+  // terminal for hub shipment; the hub keeps MINERAL_STORAGE_FLOOR as its lab buffer.
+  const deliverFloor = mineralType === RESOURCE_BATTERY ? 0 : mineralStorageFloor(creep.room);
   if (storage && storage.store.getUsedCapacity(mineralType) < deliverFloor) {
     if (creep.transfer(storage, mineralType) === ERR_NOT_IN_RANGE) {
       moveTo(creep, storage, {
