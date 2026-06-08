@@ -1,5 +1,7 @@
 import {
   getChainBuyNeeds,
+  getLabHubName,
+  isLabHub,
   resetReactionGoalCache,
   runLabs,
   selectReaction,
@@ -64,6 +66,48 @@ function setupRoom(
   (Game as any).rooms = { W1N1: room };
   return room;
 }
+
+describe('getLabHubName / isLabHub', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('picks the owned room with the most labs', () => {
+    (Game as any).rooms = {
+      W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 7 } }),
+      W2N2: mockRoom({ name: 'W2N2', controller: { my: true, level: 6 } }),
+    };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] }, // 6 labs
+      W2N2: { labIds: ['a', 'b', 'c'] }, // 3 labs
+    };
+    expect(getLabHubName()).toBe('W1N1');
+    expect(isLabHub((Game as any).rooms.W1N1)).toBe(true);
+    expect(isLabHub((Game as any).rooms.W2N2)).toBe(false);
+  });
+
+  it('breaks ties on RCL then room name, and ignores rooms with no labs', () => {
+    (Game as any).rooms = {
+      W2N2: mockRoom({ name: 'W2N2', controller: { my: true, level: 6 } }),
+      W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 7 } }),
+      W9N9: mockRoom({ name: 'W9N9', controller: { my: true, level: 8 } }), // no labs
+    };
+    (Memory as any).rooms = {
+      W2N2: { labIds: ['a', 'b', 'c'] },
+      W1N1: { labIds: ['a', 'b', 'c'] }, // same lab count, higher RCL → wins
+      W9N9: {}, // no labIds → ignored despite highest RCL
+    };
+    expect(getLabHubName()).toBe('W1N1');
+  });
+
+  it('returns undefined when no owned room has labs', () => {
+    (Game as any).rooms = {
+      W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 4 } }),
+    };
+    (Memory as any).rooms = { W1N1: {} };
+    expect(getLabHubName()).toBeUndefined();
+  });
+});
 
 describe('runLabs', () => {
   beforeEach(() => {

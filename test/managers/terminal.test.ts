@@ -453,6 +453,47 @@ describe('runTerminal — lab buying', () => {
     consoleSpy.mockRestore();
   });
 
+  it('does NOT buy lab inputs for a non-hub colony (full-feeder model)', () => {
+    (Game as any).time = 500; // BUY_INTERVAL tick
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // W1N1 is a 3-lab colony WITH a terminal; W3N3 is the hub with more labs.
+    const colony = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
+        },
+      },
+    });
+    const hub = mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } }); // 6 labs, no terminal
+    (Game as any).rooms = { W1N1: colony, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] }, // most labs → the hub
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 0.1, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    // W1N1 is not the hub → it must not buy; W3N3 is the hub but has no terminal.
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it('respects the shard-tuned max buy price (shard3 accepts higher prices)', () => {
     (Game as any).time = 500;
     (Game as any).shard = { name: 'shard3' };

@@ -7,7 +7,7 @@ import {
   BUY_INTERVAL,
   MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
-import { getChainBuyNeeds } from './labs';
+import { getChainBuyNeeds, isLabHub } from './labs';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 
 // Matches the 10-tick terminal cooldown so we capture every available sell
@@ -346,7 +346,10 @@ export function runTerminal(): void {
 
     // Buy runs first so it isn't blocked when both intervals coincide
     // (every 500 ticks). If buy deals, the cooldown re-check below skips sell.
-    if (Game.time % BUY_INTERVAL === 0) {
+    // Only the lab hub buys inputs (full-feeder model): a colony's small lab
+    // cluster can't chain to the boosts that get consumed, so buying inputs
+    // there just burns credits on stranded tier-1 compounds.
+    if (Game.time % BUY_INTERVAL === 0 && isLabHub(room)) {
       buyForLabs(room, terminal);
     }
 

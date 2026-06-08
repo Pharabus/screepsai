@@ -7,6 +7,7 @@ import {
   REACTION_GOALS,
 } from '../utils/reactions';
 import { isOperational } from '../utils/structures';
+import { cached } from '../utils/tickCache';
 import type { ReactionStep } from '../utils/reactions';
 
 const REACTION_CHECK_INTERVAL = 500;
@@ -27,6 +28,40 @@ const _reactionGoalSatisfied = new Map<string, boolean>();
 /** Call in tests' beforeEach to prevent stale satisfied state leaking between cases. */
 export function resetReactionGoalCache(): void {
   _reactionGoalSatisfied.clear();
+}
+
+/**
+ * The lab "hub" is the single owned room where all reactions and lab-input
+ * market buys concentrate. Under the full-feeder model, colonies mine their
+ * mineral and ship it raw to the hub, which runs the boost chains — so only the
+ * hub should spend credits buying lab inputs. A 3-lab colony buying H at ~100cr
+ * to make tier-1 compounds it can't chain and nobody consumes is pure waste.
+ *
+ * Auto-detected as the owned room with the most built labs (`labIds`), ties
+ * broken by higher RCL then room name for determinism. Cached per tick — lab
+ * counts change rarely, so this is effectively free on the hot path.
+ */
+export function getLabHubName(): string | undefined {
+  return cached('labs:hubName', () => {
+    let best: { name: string; labs: number; rcl: number } | undefined;
+    for (const room of Object.values(Game.rooms)) {
+      if (!room.controller?.my) continue;
+      const labs = Memory.rooms[room.name]?.labIds?.length ?? 0;
+      if (labs === 0) continue;
+      const rcl = room.controller.level;
+      const better =
+        !best ||
+        labs > best.labs ||
+        (labs === best.labs && (rcl > best.rcl || (rcl === best.rcl && room.name < best.name)));
+      if (better) best = { name: room.name, labs, rcl };
+    }
+    return best?.name;
+  });
+}
+
+/** True when `room` is the lab hub (the owned room reactions/buys concentrate in). */
+export function isLabHub(room: Room): boolean {
+  return getLabHubName() === room.name;
 }
 
 /**
