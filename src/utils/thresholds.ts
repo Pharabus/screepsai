@@ -4,7 +4,15 @@ export const MINERAL_STORAGE_FLOOR = 5000;
 export const BOOST_LAB_MINERAL_TARGET = 1500;
 /** Target energy to maintain in the reserved boost lab (under LAB_ENERGY_CAPACITY=2000). */
 export const BOOST_LAB_ENERGY_TARGET = 1000;
-export const FACTORY_ENERGY_FLOOR = 50_000;
+/**
+ * Factory only compresses energy into batteries when storage exceeds this
+ * threshold. Deliberately set ABOVE the upgrader-expansion band (50k→1 upgrader,
+ * 150k→2, 400k→3) so the factory never skims the surplus that should be
+ * unlocking upgraders and RCL progress. At 50k the old floor competed directly
+ * with the upgrader ramp; raising it to 120k means batteries are produced only
+ * from genuine surplus, after extra upgraders are already funded.
+ */
+export const FACTORY_ENERGY_FLOOR = 120_000;
 export const FACTORY_BATTERY_CAP = 400;
 
 /**

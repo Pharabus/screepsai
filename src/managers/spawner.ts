@@ -246,9 +246,13 @@ export function haulersNeeded(room: Room): number {
  *       below 20k, cap at 1 so builders also get spawn time. Upgrading alone
  *       won't level the room if the RCL-5 links / RCL-6 structures aren't built.
  *
- * MATURE COLONY (RCL 6+): existing conservative logic — W43N58 behavior
- *   unchanged. Deliberately 1 upgrader below 100k so storage rebuilds before
- *   adding upgrade drain (Phase 17 stabilisation).
+ * MATURE COLONY (RCL 6+): ramp starts at 50k now that FACTORY_ENERGY_FLOOR
+ *   has been raised to 120k. Previously the factory consumed everything above
+ *   50k into batteries, so storage never climbed to the old 100k threshold and
+ *   W43N58 was permanently stuck at 1 upgrader. With the factory floor raised
+ *   above the upgrader band, the surplus that should fund extra upgraders is no
+ *   longer intercepted, so we can lower the ramp thresholds and favour RCL8
+ *   progress over battery credit income.
  */
 export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
@@ -281,10 +285,11 @@ export function upgradersNeeded(room: Room): number {
     return 4;
   }
 
-  // MATURE COLONY (RCL 6+): conservative — preserve W43N58 stabilisation
-  if (stored < 100_000) return 1;
-  if (stored < 200_000) return 2;
-  if (stored < 500_000) return 3;
+  // MATURE COLONY (RCL 6+): ramp starts at 50k; factory floor (120k) sits above
+  // this band so batteries only form from genuine surplus.
+  if (stored < 50_000) return 1;
+  if (stored < 150_000) return 2;
+  if (stored < 400_000) return 3;
   return 4;
 }
 
