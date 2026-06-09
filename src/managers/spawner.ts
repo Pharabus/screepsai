@@ -343,7 +343,7 @@ export function repairersNeeded(room: Room): number {
   return 1;
 }
 
-function mineralMinersNeeded(room: Room): number {
+export function mineralMinersNeeded(room: Room): number {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return 0;
   // Check if extractor is built
@@ -355,7 +355,11 @@ function mineralMinersNeeded(room: Room): number {
   // RCL 7+ has a mature enough economy to support the ~1.7 energy/tick overhead
   // of mineral mining at a lower reserve threshold; credits from mineral sales
   // fuel lab buying before 100k storage is reached.
-  const floor = rcl >= 7 ? 70_000 : 100_000;
+  // RCL 6 floor lowered from 100k → 50k: W44N57 storage oscillates ~43k–60k,
+  // so 100k was never crossed, leaving 35k O unmined. At 50k, surplus windows
+  // trigger a spawn (long TTL miner persists through dips), so O gets mined even
+  // intermittently crossing the threshold.
+  const floor = rcl >= 7 ? 70_000 : 50_000;
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   if (stored < floor) return 0;
   return needsMineralMiner(room.name) ? 1 : 0;

@@ -12,6 +12,7 @@ import {
   remoteHaulersWanted,
   upgraderBoostWanted,
   reserveBoostLab,
+  mineralMinersNeeded,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -2244,5 +2245,100 @@ describe('buildSpawnQueue — transport missions', () => {
     const queue = buildSpawnQueue(room);
 
     expect(queue.find((r) => r.role === 'courier')).toBeUndefined();
+  });
+});
+
+describe('mineralMinersNeeded', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  /** Build a room that passes all gates: RCL given, extractor present, storage above floor,
+   *  mineralId + mineralContainerId set, mineral has stock, no live miner. */
+  function makeMineralRoom(rcl: number, storedEnergy: number): any {
+    const mineral = { mineralAmount: 10000 };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'min1') return mineral;
+      return null;
+    });
+    const extractor = { structureType: STRUCTURE_EXTRACTOR };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: rcl },
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? storedEnergy : 0),
+        },
+      },
+      find: vi.fn((_type: number, opts?: any) => {
+        // FIND_MY_STRUCTURES used by mineralMinersNeeded extractor check
+        const structs = [extractor];
+        return opts?.filter ? structs.filter(opts.filter) : structs;
+      }),
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+      },
+    };
+    (Game as any).creeps = {};
+    return room;
+  }
+
+  it('returns 1 at RCL 6 when storage energy is exactly at the 50k floor', () => {
+    const room = makeMineralRoom(6, 50_000);
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 at RCL 6 when storage energy is just below the 50k floor', () => {
+    const room = makeMineralRoom(6, 49_999);
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 at RCL 6 when storage energy is well above the 50k floor', () => {
+    const room = makeMineralRoom(6, 80_000);
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 at RCL 6 when storage energy is below old 100k floor but above new 50k floor (regression)', () => {
+    // The old floor was 100k; with the new 50k floor a room at 60k must return 1.
+    const room = makeMineralRoom(6, 60_000);
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('returns 1 at RCL 7 when storage energy meets the 70k floor', () => {
+    const room = makeMineralRoom(7, 70_000);
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 at RCL 7 when storage energy is below the 70k floor', () => {
+    const room = makeMineralRoom(7, 69_999);
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when extractor is missing', () => {
+    const mineral = { mineralAmount: 10000 };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'min1') return mineral;
+      return null;
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 80_000 : 0) } },
+      find: vi.fn(() => []), // no extractor
+    });
+    (Memory as any).rooms = {
+      W1N1: { mineralId: 'min1' as any, mineralContainerId: 'mcnt1' as any },
+    };
+    (Game as any).creeps = {};
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 below RCL 6', () => {
+    const room = makeMineralRoom(5, 200_000);
+    expect(mineralMinersNeeded(room)).toBe(0);
   });
 });

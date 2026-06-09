@@ -245,7 +245,20 @@ export function runLabs(): void {
     // Full-feeder model: only the hub runs reactions. Feeder colonies mine and
     // ship their mineral to the hub (see terminal.ts sendMineralsToHub); their
     // labs stay idle rather than churning small tier-1 batches nobody consumes.
-    if (!isLabHub(room)) continue;
+    if (!isLabHub(room)) {
+      // Clear any stale reaction state left over from when this room ran its
+      // own reactions (e.g. before it became a feeder). Without this,
+      // deliverToLabInput (hauler.ts) is gated on mem.activeReaction and would
+      // carry a just-drained mineral straight back into the input lab, creating
+      // an infinite lab↔hauler loop. Clearing here ensures the deliver path
+      // falls through to storage/terminal and sendMineralsToHub can ship it.
+      const feederMem = Memory.rooms[room.name];
+      if (feederMem) {
+        delete feederMem.activeReaction;
+        delete feederMem.labFlushing;
+      }
+      continue;
+    }
     const mem = Memory.rooms[room.name];
     if (!mem?.inputLabIds || !mem.labIds || mem.labIds.length < 3) continue;
 

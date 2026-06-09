@@ -582,6 +582,94 @@ describe('runLabs', () => {
     expect(mem?.activeReaction).toBeDefined();
     expect(mem?.activeReaction?.output).toBe('OH');
   });
+
+  it('clears activeReaction and labFlushing on a feeder room that previously ran reactions', () => {
+    // W1N1 is the feeder (fewer labs), W3N3 is the hub. W1N1 had activeReaction
+    // and labFlushing set from when it ran its own reactions. runLabs must clear
+    // them so deliverToLabInput (gated on activeReaction) does not re-deposit a
+    // just-drained mineral back into the input lab.
+    const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
+    const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
+    const outputLab = mockLab({ id: 'lab3', capacity: { OH: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    setupRoom(6, {
+      labIds: ['lab1', 'lab2', 'lab3'],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+    });
+    (Memory.rooms['W1N1'] as any).labFlushing = true;
+
+    // Add a hub room with more labs so W1N1 is the feeder.
+    (Game as any).rooms.W3N3 = mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } });
+    (Memory as any).rooms.W3N3 = { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] };
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    expect(mem?.activeReaction).toBeUndefined();
+    expect(mem?.labFlushing).toBeUndefined();
+    // Reactions must still not run (feeder room)
+    expect(outputLab.runReaction).not.toHaveBeenCalled();
+  });
+
+  it('does not clear activeReaction or labFlushing on the hub room', () => {
+    // The hub (W1N1 with 6 labs, feeder W3N3 with 3 labs) must retain its
+    // activeReaction and labFlushing so its own reaction loop continues.
+    const inputLab1 = mockLab({ id: 'lab1', stored: { H: 100 } });
+    const inputLab2 = mockLab({ id: 'lab2', stored: { O: 100 } });
+    const outputLab = mockLab({ id: 'lab3', capacity: { OH: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    // W1N1 has 6 labs → it's the hub
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn(() => 10000),
+          [Symbol.iterator]: function* () {
+            yield ['H', 5000];
+            yield ['O', 5000];
+          },
+        },
+      },
+      terminal: {
+        store: {
+          getUsedCapacity: vi.fn(() => 0),
+          getFreeCapacity: vi.fn(() => 100000),
+          [Symbol.iterator]: function* () {},
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3', 'x1', 'x2', 'x3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        labFlushing: false,
+      },
+    };
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    // Hub retains (or refreshes) activeReaction — must still be defined
+    expect(mem?.activeReaction).toBeDefined();
+  });
 });
 
 describe('selectReaction', () => {

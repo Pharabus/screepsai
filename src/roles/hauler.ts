@@ -14,7 +14,7 @@ import {
   BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
-import { isLabHub } from '../managers/labs';
+import { isLabHub, getLabHubName } from '../managers/labs';
 
 /**
  * Storage buffer floor for minerals, keyed by whether this room is the lab hub.
@@ -459,6 +459,17 @@ function pickup(creep: Creep): boolean {
   // Battery pickup from factory — deliver to terminal (preferred) or storage
   if (pickupFromFactory(creep)) return true;
 
+  // Feeder lab evacuation: drain stale minerals from a feeder room's labs (all
+  // labs, including input labs) so they can flow to storage → terminal →
+  // sendMineralsToHub. Ranks LOW deliberately — same tier as pickupForTerminal
+  // because feeder labs are a non-decaying reserve (no reactions running), so
+  // they can wait until all energy logistics and decay-sensitive pickups clear.
+  // Hub rooms are excluded (managed by their own flush/input/output paths).
+  // Gated behind isLabWorkClaimedByOther so only one hauler drains at a time.
+  if (!isLabWorkClaimedByOther(creep, mem)) {
+    if (pickupFeederLabs(creep, mem)) return true;
+  }
+
   // Terminal: move excess minerals from storage to terminal
   if (pickupForTerminal(creep)) return true;
 
@@ -691,6 +702,41 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
     }
   }
 
+  return false;
+}
+
+/**
+ * Drain stale minerals from a feeder room's labs (all labs, including input
+ * labs). A feeder room does not run reactions; runLabs clears activeReaction on
+ * it so deliverToLabInput will not re-deposit the withdrawn mineral. The
+ * drained mineral falls through to deliverToTerminalOrStorage and is eventually
+ * shipped to the hub by sendMineralsToHub.
+ *
+ * Only fires in non-hub rooms that have a hub elsewhere (i.e. this is genuinely
+ * a feeder). Hub rooms manage their own labs via the flush/input/output paths.
+ * Returns false fast when: this is the hub, no hub exists (single-room empire),
+ * or labIds is absent.
+ */
+function pickupFeederLabs(creep: Creep, mem: RoomMemory | undefined): boolean {
+  // Only drain when a hub exists somewhere and this room is NOT it.
+  if (!getLabHubName()) return false;
+  if (isLabHub(creep.room)) return false;
+  if (!mem?.labIds) return false;
+
+  for (const labId of mem.labIds) {
+    const lab = Game.getObjectById(labId as Id<StructureLab>);
+    if (!lab) continue;
+    const mineralType = lab.mineralType;
+    if (!mineralType || (lab.store.getUsedCapacity(mineralType) ?? 0) === 0) continue;
+    creep.memory.targetId = lab.id as Id<StructureLab>;
+    if (creep.withdraw(lab, mineralType) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, lab, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#cc66ff' },
+      });
+    }
+    return true;
+  }
   return false;
 }
 

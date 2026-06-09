@@ -2400,3 +2400,168 @@ describe('hauler pickupForeignStore', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(foreignStorage, RESOURCE_ENERGY);
   });
 });
+
+describe('pickupFeederLabs', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  /**
+   * Set up a two-room world where W3N3 is the hub (6 labs) and W1N1 is the
+   * feeder (3 labs). Returns the feeder room object.
+   */
+  function setupFeederWorld(feederLabIds: string[]): any {
+    const hubRoom = mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } });
+    const feederRoom = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    (Game as any).rooms = { W1N1: feederRoom, W3N3: hubRoom };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: feederLabIds,
+        inputLabIds: feederLabIds.slice(0, 2),
+        // stale reaction from before W1N1 became a feeder — runLabs would have
+        // cleared this, but we explicitly clear it here to simulate post-runLabs state
+        // (pickupFeederLabs must not rely on runLabs having already run in the same tick)
+        activeReaction: undefined,
+      },
+      W3N3: { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] },
+    };
+    return feederRoom;
+  }
+
+  it('withdraws mineral from a feeder input lab that holds stale mineral', () => {
+    const inputLab = mockLab('lab1', {
+      mineralType: 'Z',
+      store: mockLabStore({ Z: 2445 }),
+    });
+    const emptyLab2 = mockLab('lab2');
+    const emptyLab3 = mockLab('lab3');
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab;
+      if (id === 'lab2') return emptyLab2;
+      if (id === 'lab3') return emptyLab3;
+      return null;
+    });
+
+    const feederRoom = setupFeederWorld(['lab1', 'lab2', 'lab3']);
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room: feederRoom,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(inputLab, 'Z');
+  });
+
+  it('returns false and does nothing in a hub room', () => {
+    // W1N1 has 6 labs → it IS the hub; pickupFeederLabs must not fire there.
+    const lab = mockLab('lab1', {
+      mineralType: 'H',
+      store: mockLabStore({ H: 500 }),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return lab;
+      return null;
+    });
+
+    const hubRoom = mockRoom({ name: 'W1N1', controller: { my: true, level: 7 } });
+    const feederRoom = mockRoom({ name: 'W3N3', controller: { my: true, level: 6 } });
+    (Game as any).rooms = { W1N1: hubRoom, W3N3: feederRoom };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'x2', 'x3', 'x4', 'x5', 'x6'], inputLabIds: ['lab1', 'x2'] },
+      W3N3: { labIds: ['lab1', 'x2', 'x3'] },
+    };
+
+    // Hauler is in the HUB room (W1N1)
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room: hubRoom,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Hub hauler must not use pickupFeederLabs (hub manages its own labs differently)
+    expect(creep.withdraw).not.toHaveBeenCalledWith(lab, 'H');
+  });
+
+  it('returns false when all feeder labs are empty', () => {
+    const emptyLab1 = mockLab('lab1');
+    const emptyLab2 = mockLab('lab2');
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return emptyLab1;
+      if (id === 'lab2') return emptyLab2;
+      return null;
+    });
+
+    const feederRoom = setupFeederWorld(['lab1', 'lab2']);
+
+    const storage = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 10000 }, 1000000),
+    };
+    (feederRoom as any).storage = storage;
+    // Hauler with energy goes to deliver normally (no lab task)
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room: feederRoom,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Neither empty lab should be withdrawn from
+    expect(creep.withdraw).not.toHaveBeenCalledWith(emptyLab1, expect.anything());
+    expect(creep.withdraw).not.toHaveBeenCalledWith(emptyLab2, expect.anything());
+  });
+
+  it('does not fire when there is no hub (single-room empire)', () => {
+    // No hub room exists (Game.rooms has only one room, no labIds set) →
+    // getLabHubName returns undefined → pickupFeederLabs returns false.
+    const lab = mockLab('lab1', {
+      mineralType: 'H',
+      store: mockLabStore({ H: 500 }),
+    });
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return lab;
+      return null;
+    });
+
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 7 } });
+    // Only one room in Game.rooms, and no labIds set → no hub detected
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3'], inputLabIds: ['lab1', 'lab2'] },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // No hub → pickupFeederLabs is a no-op; lab should not be drained this way
+    expect(creep.withdraw).not.toHaveBeenCalledWith(lab, 'H');
+  });
+});
