@@ -3,6 +3,7 @@ import { cached, getStructuresByType } from '../utils/tickCache';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
 import { isOperational } from '../utils/structures';
 import { logCombat } from '../utils/combatLog';
+import { wallHpTarget as economyWallHpTarget } from '../utils/economy';
 
 const COMBAT_ENERGY_RESERVE = 0.5;
 
@@ -34,6 +35,12 @@ const WALL_FLOOR: Record<number, number> = {
 
 function wallRepairMax(room: Room): number {
   return cached('towers:wallMax:' + room.name, () => {
+    if (Memory.holisticEconomy) {
+      // Holistic path: wall target yields when lean, scales with genuine surplus.
+      // See src/utils/economy.ts wallHpTarget() for the formula and floor values.
+      return economyWallHpTarget(room);
+    }
+    // Flag-off: existing literal path (unchanged).
     const rcl = room.controller?.level ?? 0;
     const cap = WALL_CAPS[rcl] ?? 10_000;
     const floor = WALL_FLOOR[rcl] ?? 10_000;

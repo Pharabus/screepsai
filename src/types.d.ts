@@ -478,6 +478,18 @@ interface Memory {
    * from the console to activate, revert to disable with no other changes needed.
    */
   haulerPool?: boolean;
+  /**
+   * When true, the holistic energy-economy model (`src/utils/economy.ts`)
+   * governs all energy-spending decisions: a single colonyEnergy (storage +
+   * terminal) budget drives upgrader count (continuous formula, no cliffs),
+   * mineral mining eligibility (combined surplus above buffer + reserve
+   * margin), wall maintenance targets (moderate-middle floors that yield when
+   * lean), factory and energy-export gates. Off by default (dark-deploy safe);
+   * the flag-off path preserves exact pre-refactor behaviour. Flip from the
+   * console to activate, revert to disable with no rollback needed.
+   *   Memory.holisticEconomy = true
+   */
+  holisticEconomy?: boolean;
 }
 
 // Screeps provides a global require for loading modules

@@ -14,6 +14,7 @@ import {
   BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
+import { colonyEnergy } from '../utils/economy';
 import { isLabHub, getLabHubName } from '../managers/labs';
 
 /**
@@ -892,10 +893,17 @@ function deliverToFactory(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.factoryId || !mem.factoryRecipe) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
-  // Guard on OWN storage energy — a foreign storage's energy is not ours to account for.
-  const storage = myStorage(creep.room);
-  if (!storage || storage.store.getUsedCapacity(RESOURCE_ENERGY) <= FACTORY_ENERGY_FLOOR)
-    return false;
+  // Guard on OWN energy — a foreign storage's energy is not ours to account for.
+  // Under holisticEconomy, terminal energy counts toward the budget so a room
+  // with storage+terminal > 120k correctly delivers to the factory.
+  // Flag-off: existing myStorage-only check (unchanged).
+  const storageOk = Memory.holisticEconomy
+    ? colonyEnergy(creep.room) > FACTORY_ENERGY_FLOOR
+    : (() => {
+        const storage = myStorage(creep.room);
+        return !!storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > FACTORY_ENERGY_FLOOR;
+      })();
+  if (!storageOk) return false;
   const factory = Game.getObjectById(mem.factoryId);
   if (!factory) return false;
   if ((factory.store.getFreeCapacity(RESOURCE_ENERGY) ?? 0) === 0) return false;

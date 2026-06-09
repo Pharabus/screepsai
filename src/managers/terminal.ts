@@ -9,6 +9,7 @@ import {
 } from '../utils/thresholds';
 import { getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
+import { colonyEnergy } from '../utils/economy';
 
 // Matches the 10-tick terminal cooldown so we capture every available sell
 // window. Running every tick would do the same but cost more CPU on no-op
@@ -269,8 +270,13 @@ const _lastColonySend = new Map<string, number>();
 const _receiversThisTick = new Set<string>();
 
 function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
-  const homeStorage = home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  if (homeStorage < HOME_SURPLUS_FLOOR) return;
+  // Under holisticEconomy, count storage + terminal energy as the home budget
+  // so a room with 70k storage + 15k terminal correctly passes the 80k floor.
+  // Flag-off: existing storage-only check (unchanged).
+  const homeEnergy = Memory.holisticEconomy
+    ? colonyEnergy(home)
+    : (home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0);
+  if (homeEnergy < HOME_SURPLUS_FLOOR) return;
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER)
     return;
 

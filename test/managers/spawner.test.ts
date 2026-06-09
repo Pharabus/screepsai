@@ -792,6 +792,127 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// upgradersNeeded — holisticEconomy flag ON (continuous formula)
+// ---------------------------------------------------------------------------
+
+describe('upgradersNeeded — holisticEconomy ON (mature RCL6+)', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (Memory as any).holisticEconomy = true;
+  });
+
+  function makeRcl7Room(stored: number, terminalE = 0, energyCap = 2300): any {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    return mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      energyCapacityAvailable: energyCap,
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? stored : 0) },
+      },
+      terminal:
+        terminalE > 0
+          ? {
+              my: true,
+              store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? terminalE : 0) },
+            }
+          : undefined,
+    });
+  }
+
+  // Hard floor still applies (flag-on does not touch the hard floor block)
+  it('returns 1 when storage < 5k (hard floor — unchanged under flag)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      energyCapacityAvailable: 2300,
+      storage: { my: true, store: { getUsedCapacity: () => 3_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('returns 1 when colonyEnergy is at the buffer (surplus=0)', () => {
+    // RCL7 buffer=50k; stored=50k → surplus=0 → power=1 → n=ceil(1/15)=1
+    const room = makeRcl7Room(50_000);
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('anchor: colonyEnergy=100k → 1 upgrader (surplus=50k, power=11, wParts=15, n=1)', () => {
+    const room = makeRcl7Room(100_000);
+    // surplus=50k, power=1+10=11, workParts=15, n=ceil(11/15)=1
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('anchor: colonyEnergy=150k → 2 upgraders (surplus=100k, power=21, n=ceil(21/15)=2)', () => {
+    const room = makeRcl7Room(150_000);
+    expect(upgradersNeeded(room)).toBe(2);
+  });
+
+  it('anchor: colonyEnergy=250k → 3 upgraders (surplus=200k, power=41, n=ceil(41/15)=3)', () => {
+    const room = makeRcl7Room(250_000);
+    expect(upgradersNeeded(room)).toBe(3);
+  });
+
+  it('anchor: colonyEnergy=400k → 4 upgraders (clamped at MAX_UPGRADERS=4)', () => {
+    const room = makeRcl7Room(400_000);
+    // surplus=350k, power=71, n=ceil(71/15)=5→clamp→4
+    expect(upgradersNeeded(room)).toBe(4);
+  });
+
+  it('terminal energy counts toward colonyEnergy (storage=80k + terminal=80k = 160k → 2)', () => {
+    const room = makeRcl7Room(80_000, 80_000);
+    // colonyEnergy=160k, surplus=110k, power=23, workParts=15, n=ceil(23/15)=2
+    expect(upgradersNeeded(room)).toBe(2);
+  });
+
+  it('never exceeds MAX_UPGRADERS=4 regardless of energy', () => {
+    const room = makeRcl7Room(1_000_000);
+    expect(upgradersNeeded(room)).toBeLessThanOrEqual(4);
+  });
+
+  it('is monotonically non-decreasing as colonyEnergy increases (no cliffs)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    let prev = 0;
+    for (let stored = 0; stored <= 600_000; stored += 5_000) {
+      resetTickCache();
+      (Memory as any).holisticEconomy = true;
+      const room = mockRoom({
+        name: 'W1N1',
+        controller: { level: 7 },
+        energyCapacityAvailable: 2300,
+        storage: {
+          my: true,
+          store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? stored : 0) },
+        },
+      });
+      const n = upgradersNeeded(room);
+      expect(n).toBeGreaterThanOrEqual(prev);
+      prev = n;
+    }
+  });
+
+  // RCL6 room with smaller energyCap (1800 → workParts=min(17,15)=15 at stored≥50k)
+  it('RCL6 anchor: colonyEnergy=80k → 2 upgraders (surplus=55k, power=12, wParts=15, n=1)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      energyCapacityAvailable: 1800,
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 80_000 : 0) },
+      },
+    });
+    // surplus=55k, power=1+11=12, workParts=15 (stored≥50k, cap=1800, (1800-100)/100=17 → 15)
+    // n=ceil(12/15)=1
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+});
+
 describe('remoteBuilderNeeded', () => {
   it('returns false when room is not visible', () => {
     (Game as any).rooms = {};
@@ -2340,5 +2461,133 @@ describe('mineralMinersNeeded', () => {
   it('returns 0 below RCL 6', () => {
     const room = makeMineralRoom(5, 200_000);
     expect(mineralMinersNeeded(room)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mineralMinersNeeded — holisticEconomy flag ON
+// ---------------------------------------------------------------------------
+
+describe('mineralMinersNeeded — holisticEconomy ON', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (Memory as any).holisticEconomy = true;
+  });
+
+  /** Build a room that passes all gates (extractor present, mineral has stock, no live miner).
+   *  Under holisticEconomy the storage reads myStorage (requires my:true). */
+  function makeMineralRoomHolistic(
+    rcl: number,
+    storageE: number,
+    terminalE = 0,
+    minerEconomy = true,
+  ): any {
+    const mineral = { mineralAmount: 10_000 };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'min1') return mineral;
+      return null;
+    });
+    const extractor = { structureType: STRUCTURE_EXTRACTOR };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: rcl },
+      storage:
+        storageE >= 0
+          ? {
+              my: true,
+              store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? storageE : 0) },
+            }
+          : undefined,
+      terminal:
+        terminalE > 0
+          ? {
+              my: true,
+              store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? terminalE : 0) },
+            }
+          : undefined,
+      find: vi.fn((_type: number, opts?: any) => {
+        const structs = [extractor];
+        return opts?.filter ? structs.filter(opts.filter) : structs;
+      }),
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+        ...(minerEconomy ? { minerEconomy: true } : {}),
+      },
+    };
+    (Game as any).creeps = {};
+    return room;
+  }
+
+  it('returns 0 when total energy is at the gate (buffer + MINERAL_RESERVE_MARGIN, not >) at RCL6', () => {
+    // RCL6 buffer=25k, margin=15k, gate=40k; total=40k → not > gate → 0
+    const room = makeMineralRoomHolistic(6, 40_000);
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('returns 1 when total energy is just above the gate at RCL6', () => {
+    // total=40001 > 40k gate → allowed
+    const room = makeMineralRoomHolistic(6, 40_001);
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('combined storage+terminal energy unlocks mining: storage=30k + terminal=15k = 45k > 40k gate', () => {
+    const room = makeMineralRoomHolistic(6, 30_000, 15_000);
+    // colonyEnergy=45k > buffer(25k)+margin(15k)=40k → allowed
+    expect(mineralMinersNeeded(room)).toBe(1);
+  });
+
+  it('combined energy just at the gate (storage=25k+terminal=15k=40k) → does not mine', () => {
+    const room = makeMineralRoomHolistic(6, 25_000, 15_000);
+    // colonyEnergy=40k, not > 40k → disallowed
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('RCL7 gate: buffer=50k+margin=15k=65k; total=65k → 0, total=65001 → 1', () => {
+    const at65k = makeMineralRoomHolistic(7, 65_000);
+    expect(mineralMinersNeeded(at65k)).toBe(0);
+
+    resetTickCache();
+    (Memory as any).holisticEconomy = true;
+    const above65k = makeMineralRoomHolistic(7, 65_001);
+    expect(mineralMinersNeeded(above65k)).toBe(1);
+  });
+
+  it('still returns 0 when extractor is missing (holistic gate is checked after extractor)', () => {
+    (Game as any).getObjectById = vi.fn(() => null);
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 100_000 : 0) },
+      },
+      find: vi.fn(() => []), // no extractor
+    });
+    (Memory as any).rooms = {
+      W1N1: { mineralId: 'min1' as any, mineralContainerId: 'mcnt1' as any, minerEconomy: true },
+    };
+    (Game as any).creeps = {};
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  it('still returns 0 below RCL 6 even with huge energy', () => {
+    const room = makeMineralRoomHolistic(5, 500_000);
+    expect(mineralMinersNeeded(room)).toBe(0);
+  });
+
+  // Explicit collision regression: RCL6 at the old 50k step (where old 2nd upgrader
+  // threshold was equal to old mining floor) — under holisticEconomy the mining gate
+  // is 40k which is BELOW 50k, so mining is already allowed when stored=50k,
+  // regardless of upgrader count.
+  it('collision regression: at the old 50k collision point, mining is still allowed', () => {
+    // Old behavior: stored=50k at RCL6 → 2nd upgrader AND mining both fire (collision).
+    // New behavior: mining gate=40k < 50k, so mining opens earlier, no collision.
+    const room = makeMineralRoomHolistic(6, 50_000);
+    // At stored=50k, colonyEnergy=50k > gate=40k → allowed
+    expect(mineralMinersNeeded(room)).toBe(1);
   });
 });

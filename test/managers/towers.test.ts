@@ -284,3 +284,165 @@ describe('wallRepairMax (via repair-target selection)', () => {
     expect(tower.repair).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// wallRepairMax — holisticEconomy flag ON (moderate-middle floors)
+// ---------------------------------------------------------------------------
+
+describe('wallRepairMax (holisticEconomy ON) — new moderate-middle floors', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    mockPick.mockReset();
+    mockPick.mockReturnValue(undefined);
+    mockLog.mockReset();
+    (Memory as any).holisticEconomy = true;
+  });
+
+  /**
+   * Like makeRoom but adds my:true to storage so myStorage() returns it.
+   * Required for the holistic path (colonyEnergy uses myStorage/myTerminal).
+   */
+  function makeRoomHolistic(opts: {
+    level: number;
+    storageEnergy?: number;
+    towers: any[];
+    allStructures?: any[];
+  }): any {
+    const name = 'W1N1';
+    const allStructures = opts.allStructures ?? opts.towers;
+    const storage =
+      opts.storageEnergy === undefined
+        ? undefined
+        : {
+            my: true,
+            store: { getUsedCapacity: (_r?: string) => opts.storageEnergy },
+          };
+    const room = mockRoom({
+      name,
+      controller: { my: true, level: opts.level },
+      storage,
+      find: (type: number, findOpts?: { filter?: (s: any) => boolean }) => {
+        let arr: any[];
+        if (type === FIND_STRUCTURES) arr = allStructures;
+        else if (type === FIND_MY_CREEPS) arr = [];
+        else arr = [];
+        if (findOpts?.filter) arr = arr.filter(findOpts.filter);
+        return arr;
+      },
+    });
+    Game.rooms[name] = room;
+    Memory.rooms[name] = Memory.rooms[name] ?? {};
+    return room;
+  }
+
+  // RCL6 lean: hard floor is 150k (down from old 300k).
+  it('RCL6 lean (surplus=0) → WALL_HARD_FLOOR[6]=150k; wall below 150k is repaired', () => {
+    const tower = makeTower({ energy: 900 });
+    // stored=25k (= RCL6 buffer); surplus=0 → target=150k floor
+    const belowFloor = makeStruct(STRUCTURE_WALL, { hits: 100_000 }); // < 150k
+    makeRoomHolistic({
+      level: 6,
+      storageEnergy: 25_000,
+      towers: [tower],
+      allStructures: [tower, belowFloor],
+    });
+
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledWith(belowFloor);
+  });
+
+  it('RCL6 lean: wall at 150k is NOT repaired (already at floor)', () => {
+    const tower = makeTower({ energy: 900 });
+    const atFloor = makeStruct(STRUCTURE_WALL, { hits: 150_000 }); // == floor
+    makeRoomHolistic({
+      level: 6,
+      storageEnergy: 25_000,
+      towers: [tower],
+      allStructures: [tower, atFloor],
+    });
+
+    runTowers();
+    expect(tower.repair).not.toHaveBeenCalled();
+  });
+
+  // RCL7 lean: hard floor is 400k (down from old 1M).
+  it('RCL7 lean (stored=50k=buffer, surplus=0) → WALL_HARD_FLOOR[7]=400k; wall at 300k is repaired', () => {
+    const tower = makeTower({ energy: 900 });
+    const belowFloor = makeStruct(STRUCTURE_WALL, { hits: 300_000 }); // < 400k
+    makeRoomHolistic({
+      level: 7,
+      storageEnergy: 50_000,
+      towers: [tower],
+      allStructures: [tower, belowFloor],
+    });
+
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledWith(belowFloor);
+  });
+
+  it('RCL7 lean: wall at 400k is NOT repaired', () => {
+    const tower = makeTower({ energy: 900 });
+    const atFloor = makeStruct(STRUCTURE_WALL, { hits: 400_000 });
+    makeRoomHolistic({
+      level: 7,
+      storageEnergy: 50_000,
+      towers: [tower],
+      allStructures: [tower, atFloor],
+    });
+
+    runTowers();
+    expect(tower.repair).not.toHaveBeenCalled();
+  });
+
+  // RCL6 with surplus: target = 150k + floor(surplus * 0.5)
+  // stored=325k → colonyEnergy=325k, buffer=25k, surplus=300k → target=150k+150k=300k
+  it('RCL6 with surplus: target scales above floor (stored=325k → target=300k)', () => {
+    const tower = makeTower({ energy: 900 });
+    const belowScaled = makeStruct(STRUCTURE_WALL, { hits: 200_000 }); // < 300k
+    const aboveScaled = makeStruct(STRUCTURE_WALL, { hits: 350_000 }); // > 300k
+    makeRoomHolistic({
+      level: 6,
+      storageEnergy: 325_000,
+      towers: [tower],
+      allStructures: [tower, aboveScaled, belowScaled],
+    });
+
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledWith(belowScaled);
+    expect(tower.repair).not.toHaveBeenCalledWith(aboveScaled);
+  });
+
+  // RCL6 cap: WALL_CAPS[6]=1M — huge surplus still clamps.
+  it('RCL6 huge storage → still clamps to WALL_CAPS[6]=1M', () => {
+    const tower = makeTower({ energy: 900 });
+    const aboveCap = makeStruct(STRUCTURE_WALL, { hits: 1_100_000 }); // > 1M cap
+    makeRoomHolistic({
+      level: 6,
+      storageEnergy: 3_000_000,
+      towers: [tower],
+      allStructures: [tower, aboveCap],
+    });
+
+    runTowers();
+    expect(tower.repair).not.toHaveBeenCalled();
+  });
+
+  // Flag-off path is unchanged: existing suite above covers it.
+  it('flag OFF still uses the old floors (RCL6 lean with flag off → old 300k floor)', () => {
+    (Memory as any).holisticEconomy = false;
+    resetTickCache();
+    const tower = makeTower({ energy: 900 });
+    // hits=200k < old WALL_FLOOR[6]=300k → repaired under flag-off
+    const wall = makeStruct(STRUCTURE_WALL, { hits: 200_000 });
+    makeRoom({
+      level: 6,
+      storageEnergy: 0,
+      towers: [tower],
+      allStructures: [tower, wall],
+    });
+
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledWith(wall);
+  });
+});

@@ -29,6 +29,7 @@ import {
   syncTransportMission,
 } from '../utils/missions';
 import { getNeighbor } from '../utils/neighbors';
+import { energyBudget, colonyEnergy, upgradePower, upgraderWorkParts } from '../utils/economy';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
 const RESOURCE_KHO2 = 'KHO2' as ResourceConstant;
@@ -285,8 +286,23 @@ export function upgradersNeeded(room: Room): number {
     return 4;
   }
 
-  // MATURE COLONY (RCL 6+): ramp starts at 50k; factory floor (120k) sits above
-  // this band so batteries only form from genuine surplus.
+  // MATURE COLONY (RCL 6+):
+  if (Memory.holisticEconomy) {
+    // Continuous formula: ceil(upgradePower / upgraderWorkParts), clamped [1, 4].
+    // upgradePower scales monotonically with colonyEnergy (storage + terminal)
+    // above the RCL buffer, so there are no step-function cliffs and the count
+    // never drops as energy increases. The hard floor min of 1 is preserved for
+    // all non-RCL8 rooms (RCL8 is handled by the hard-floor block above when
+    // stored < 5k; above that, min=1 is benign — controller can still accept input).
+    // See src/utils/economy.ts for formula, constants, and calibration examples.
+    const wParts = Math.max(1, upgraderWorkParts(room));
+    const power = upgradePower(room);
+    const n = Math.ceil(power / wParts);
+    return Math.min(Math.max(1, n), 4);
+  }
+  // Flag-off: existing literal step ramp (unchanged).
+  // ramp starts at 50k; factory floor (120k) sits above this band so batteries
+  // only form from genuine surplus.
   if (stored < 50_000) return 1;
   if (stored < 150_000) return 2;
   if (stored < 400_000) return 3;
@@ -307,12 +323,21 @@ export function buildersNeeded(room: Room): number {
   const sources = mem?.sources;
   const allSourcesLinked =
     sources !== undefined && sources.length > 0 && sources.every((s) => s.linkId);
-  if (
-    storage &&
-    allSourcesLinked &&
-    storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR
-  )
-    return 0;
+  // Energy gate: suppress builders when storage is too low.
+  // Under holisticEconomy, count storage + terminal energy so a room with
+  // combined energy above the floor still spawns builders.
+  // Flag-off: existing storage-only check (unchanged).
+  // The sites===0 early return below is preserved regardless of flag.
+  if (Memory.holisticEconomy) {
+    if (storage && allSourcesLinked && colonyEnergy(room) < STORAGE_ENERGY_FLOOR) return 0;
+  } else {
+    if (
+      storage &&
+      allSourcesLinked &&
+      storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR
+    )
+      return 0;
+  }
 
   const sites = cached(
     'spawner:sites:' + room.name,
@@ -352,16 +377,26 @@ export function mineralMinersNeeded(room: Room): number {
       filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
     }).length > 0;
   if (!hasExtractor) return 0;
-  // RCL 7+ has a mature enough economy to support the ~1.7 energy/tick overhead
-  // of mineral mining at a lower reserve threshold; credits from mineral sales
-  // fuel lab buying before 100k storage is reached.
-  // RCL 6 floor lowered from 100k → 50k: W44N57 storage oscillates ~43k–60k,
-  // so 100k was never crossed, leaving 35k O unmined. At 50k, surplus windows
-  // trigger a spawn (long TTL miner persists through dips), so O gets mined even
-  // intermittently crossing the threshold.
-  const floor = rcl >= 7 ? 70_000 : 50_000;
-  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  if (stored < floor) return 0;
+  if (Memory.holisticEconomy) {
+    // Holistic path: mine only when surplus exceeds buffer + reserve margin.
+    // The MINERAL_RESERVE_MARGIN (15k) is deliberately != any upgrader threshold
+    // — this structurally prevents the collision where mining and upgrader gates
+    // coincide at the same energy level, starving the miner of a stable window.
+    // See src/utils/economy.ts allowMineralMining for gate formula.
+    if (!energyBudget(room).allowMineralMining) return 0;
+  } else {
+    // Flag-off: existing literal storage-only thresholds (unchanged).
+    // RCL 7+ has a mature enough economy to support the ~1.7 energy/tick overhead
+    // of mineral mining at a lower reserve threshold; credits from mineral sales
+    // fuel lab buying before 100k storage is reached.
+    // RCL 6 floor lowered from 100k → 50k: W44N57 storage oscillates ~43k–60k,
+    // so 100k was never crossed, leaving 35k O unmined. At 50k, surplus windows
+    // trigger a spawn (long TTL miner persists through dips), so O gets mined even
+    // intermittently crossing the threshold.
+    const floor = rcl >= 7 ? 70_000 : 50_000;
+    const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    if (stored < floor) return 0;
+  }
   return needsMineralMiner(room.name) ? 1 : 0;
 }
 
