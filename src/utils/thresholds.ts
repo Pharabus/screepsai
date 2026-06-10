@@ -25,6 +25,12 @@ export const MINERAL_TERMINAL_CEILING = 20_000;
 export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;
 export const ENERGY_TERMINAL_BUFFER = 5_000;
 export const TERMINAL_ENERGY_FLOOR = 15_000;
+/**
+ * Minimum terminal energy surplus above TERMINAL_ENERGY_FLOOR before a hauler
+ * will restock storage from the terminal. Avoids micro-trips for trivial amounts.
+ * Only active under Memory.holisticEconomy.
+ */
+export const TERMINAL_RESTOCK_MIN_BATCH = 2_000;
 
 // Market buying thresholds.
 // Base mineral prices vary wildly by shard: shard0 trades at ~0.05-0.5cr,

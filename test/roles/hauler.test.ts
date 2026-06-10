@@ -2565,3 +2565,187 @@ describe('pickupFeederLabs', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(lab, 'H');
   });
 });
+
+describe('pickupTerminalEnergyToStorage', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (Memory as any).holisticEconomy = true;
+  });
+
+  afterEach(() => {
+    delete (Memory as any).holisticEconomy;
+  });
+
+  function makeStorage(energy: number): any {
+    return {
+      id: 'storage1' as any,
+      my: true,
+      store: mockStore({ energy }),
+    };
+  }
+
+  function makeTerminal(energy: number): any {
+    return {
+      id: 'terminal1' as any,
+      my: true,
+      store: mockStore({ energy }),
+      cooldown: 0,
+    };
+  }
+
+  it('withdraws from terminal when storage is below upgradeBuffer and terminal has surplus', () => {
+    // RCL6 upgradeBuffer = 25_000; storage 10k < 25k → deficit
+    // terminal 30k > 15k (floor) + 2k (min batch) → surplus
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(10_000);
+    const terminal = makeTerminal(30_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+
+  it('does not withdraw when flag is off', () => {
+    delete (Memory as any).holisticEconomy;
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(5_000);
+    const terminal = makeTerminal(30_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+
+  it('does not withdraw when storage is healthy (at or above upgradeBuffer)', () => {
+    // RCL6 upgradeBuffer = 25_000; storage 25k → healthy, no restock needed
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(25_000);
+    const terminal = makeTerminal(40_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+
+  it('does not withdraw when terminal surplus is below the minimum batch threshold', () => {
+    // terminal 16k — only 1k above the 15k floor, below TERMINAL_RESTOCK_MIN_BATCH (2k)
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(5_000);
+    const terminal = makeTerminal(16_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+
+  it('never drains terminal below the energy floor', () => {
+    // terminal 20k: surplus = 20k - 15k (floor) = 5k available. Creep carry 800.
+    // withdraw amount should be min(800, 5000) = 800, not the full 20k.
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(5_000);
+    const terminal = makeTerminal(20_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    // The amount passed to withdraw must be ≤ terminal surplus above floor (5000)
+    const withdrawCall = (creep.withdraw as any).mock.calls.find(
+      (args: any[]) => args[0] === terminal && args[1] === RESOURCE_ENERGY,
+    );
+    expect(withdrawCall).toBeDefined();
+    const amount = withdrawCall[2] as number;
+    expect(amount).toBeLessThanOrEqual(5_000);
+    expect(amount).toBeGreaterThan(0);
+  });
+
+  it('does not withdraw when no own terminal exists', () => {
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(5_000);
+    room.storage = storage;
+    room.terminal = undefined;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(
+      expect.anything(),
+      RESOURCE_ENERGY,
+      expect.any(Number),
+    );
+  });
+});

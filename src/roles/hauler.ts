@@ -9,12 +9,13 @@ import { assignHaulers } from '../managers/haulerPool';
 import {
   MINERAL_STORAGE_FLOOR,
   TERMINAL_ENERGY_FLOOR,
+  TERMINAL_RESTOCK_MIN_BATCH,
   FACTORY_ENERGY_FLOOR,
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_ENERGY_TARGET,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
-import { colonyEnergy } from '../utils/economy';
+import { colonyEnergy, upgradeBuffer } from '../utils/economy';
 import { isLabHub, getLabHubName } from '../managers/labs';
 
 /**
@@ -291,6 +292,12 @@ function pickup(creep: Creep): boolean {
       return true;
     }
   }
+
+  // Terminal → storage restock: when storage is in the deficit zone (below the
+  // RCL upgrade buffer) and the terminal holds surplus above its standing floor,
+  // pull energy back into storage so spawning and role logic can use it.
+  // Only under holisticEconomy — flag-off leaves this path unreachable.
+  if (pickupTerminalEnergyToStorage(creep)) return true;
 
   // Boost lab service — top up compound and energy in the reserved boost lab.
   // Runs after link drain so it doesn't starve the link pipeline, and before
@@ -881,6 +888,39 @@ function deliverToTerminalEnergy(creep: Creep): boolean {
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= TERMINAL_ENERGY_FLOOR) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
   if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, terminal, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ffff00' },
+    });
+  }
+  return true;
+}
+
+/**
+ * Holistic economy path (Memory.holisticEconomy only): restock storage from
+ * terminal when storage is below the RCL upgrade buffer.
+ *
+ * Energy arriving via sendEnergyToColonies lands in the terminal, where it is
+ * economically visible (colonyEnergy counts it) but operationally inert —
+ * spawning, body-sizing, and role-logic gates all read storage. When storage
+ * drops below upgradeBuffer(room) but the terminal has surplus, haulers pull
+ * energy terminal → storage so the room can actually spend its budget.
+ *
+ * Never drains terminal below TERMINAL_ENERGY_FLOOR (needed for market ops).
+ * No single-hauler rate-limit: storage is large and parallel restock is fine.
+ */
+function pickupTerminalEnergyToStorage(creep: Creep): boolean {
+  if (!Memory.holisticEconomy) return false;
+  const storage = myStorage(creep.room);
+  const terminal = myTerminal(creep.room);
+  if (!storage || !terminal) return false;
+  if (storage.store.getUsedCapacity(RESOURCE_ENERGY) >= upgradeBuffer(creep.room)) return false;
+  const terminalE = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+  if (terminalE <= TERMINAL_ENERGY_FLOOR + TERMINAL_RESTOCK_MIN_BATCH) return false;
+  const amount = Math.min(creep.store.getFreeCapacity(), terminalE - TERMINAL_ENERGY_FLOOR);
+  if (amount <= 0) return false;
+  creep.memory.targetId = terminal.id;
+  if (creep.withdraw(terminal, RESOURCE_ENERGY, amount) === ERR_NOT_IN_RANGE) {
     moveTo(creep, terminal, {
       priority: PRIORITY_HAULER,
       visualizePathStyle: { stroke: '#ffff00' },
