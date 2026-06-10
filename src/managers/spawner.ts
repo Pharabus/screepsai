@@ -36,6 +36,29 @@ const RESOURCE_KHO2 = 'KHO2' as ResourceConstant;
 const RESOURCE_LHO2 = 'LHO2' as ResourceConstant;
 
 /**
+ * How many ticks to reuse a cached spawn queue when nothing needs spawning.
+ *
+ * buildSpawnQueue iterates Game.creeps for every *Needed() call (~12 checks × 3
+ * rooms × ~46 creeps each) which accounts for ~2ms/tick of the spawner's 2ms
+ * average. When all roles are at quota there is nothing to do for several ticks,
+ * so we skip the rebuild and return the stale queue (which the spawn loop will
+ * immediately skip because minCounts are still met). The cache is always bypassed
+ * when emergency mode is detected or a defense mission is active.
+ *
+ * Heap-only: a global reset forces a full rebuild on the next tick (correct).
+ * Value of 5 means a dead creep is detected within 5 ticks — well within the
+ * pre-spawn TTL window so no coverage gap occurs.
+ */
+const QUEUE_CACHE_TICKS = 5;
+const _queueCache = new Map<string, { tick: number; queue: SpawnRequest[] }>();
+
+/** Reset the spawn queue cache — call in tests' beforeEach to prevent stale
+ *  cached queues leaking between test cases that exercise runSpawner. */
+export function resetSpawnQueueCache(): void {
+  _queueCache.clear();
+}
+
+/**
  * Minimum colony score below which a young colony (RCL < 6) falls back to
  * the conservative single-upgrader path. A score of 0 means the room has no
  * active miners and no income to sustain extra drain; any positive income with
@@ -1127,8 +1150,6 @@ export function runSpawner(): void {
     // Reserve or release the boost lab every tick so the hauler keeps it topped.
     reserveBoostLab(room);
 
-    const queue = buildSpawnQueue(room);
-
     // Emergency recovery: build bodies from energyAvailable instead of capacity
     // when the spawn cannot accumulate to capacity on its own.
     // Case 1 — no distributors: haulers/harvesters fill extensions; without them
@@ -1137,11 +1158,31 @@ export function runSpawner(): void {
     //   the only miner is still travelling to its container), so the spawn itself
     //   will never fill. Harvesters count as both distributor and producer; a miner
     //   in POSITION state counts as neither.
+    // Computed before the queue so the cache can be bypassed in emergency.
     const hasDistributor =
       countCreepsByRole('hauler', room.name) > 0 || countCreepsByRole('harvester', room.name) > 0;
     const hasActiveProducer =
       countCreepsByRole('harvester', room.name) > 0 || hasActiveLocalMiner(room);
     const emergency = !hasDistributor || !hasActiveProducer;
+
+    // Cache the spawn queue for QUEUE_CACHE_TICKS when the room is fully staffed.
+    // Bypassed when emergency (need immediate response) or a defense mission is
+    // active (threat composition changes every tick). The cache is heap-only so a
+    // global reset forces a full rebuild — which is the correct behaviour.
+    const hasActiveThreat = Memory.missions?.defense?.[room.name]?.status === 'active';
+    let queue: SpawnRequest[];
+    const cached_q = _queueCache.get(room.name);
+    if (
+      !emergency &&
+      !hasActiveThreat &&
+      cached_q &&
+      Game.time - cached_q.tick < QUEUE_CACHE_TICKS
+    ) {
+      queue = cached_q.queue;
+    } else {
+      queue = buildSpawnQueue(room);
+      _queueCache.set(room.name, { tick: Game.time, queue });
+    }
 
     for (const request of queue) {
       if (countCreepsByRole(request.role, room.name) >= request.minCount) continue;
