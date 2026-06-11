@@ -35,14 +35,12 @@ const states: StateMachineDefinition = {
       if (!targetRoom) return 'RETREAT';
 
       if (creep.room.name === targetRoom) {
-        // Safety: if the room is still owned by another player back out immediately
-        // to avoid tower fire. dismantleTarget() should only be called after RCL 0.
         const ctrl = creep.room.controller;
         if (ctrl?.owner && !ctrl.my) {
-          moveTo(creep, new RoomPosition(25, 25, creep.memory.homeRoom ?? targetRoom), {
-            range: 20,
-            priority: PRIORITY_WORKER,
-          });
+          // Room still owned — wait in place. The tower is confirmed inactive so
+          // this is safe. Backing out causes rubber-banding because TRAVEL
+          // immediately re-routes back in. Once ctrl.owner clears at RCL 0,
+          // the next tick proceeds to DISMANTLE.
           return undefined;
         }
         if (isInRoomInterior(creep)) return 'DISMANTLE';
@@ -79,7 +77,11 @@ const states: StateMachineDefinition = {
         return 'RETREAT';
       }
 
-      const target = obstacles[0];
+      // Prioritise towers first — that's the structure blocking the controller.
+      // If no tower, fall back to the nearest other obstacle by Chebyshev distance.
+      const tower = obstacles.find((s) => s.structureType === STRUCTURE_TOWER);
+      const target =
+        tower ?? obstacles.sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b))[0];
       if (!target) return undefined;
       const result = creep.dismantle(target as Structure);
       if (result === ERR_NOT_IN_RANGE) {
