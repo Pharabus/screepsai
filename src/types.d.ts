@@ -17,7 +17,8 @@ type CreepRoleName =
   | 'colonyBuilder'
   | 'hunter'
   | 'keeperKiller'
-  | 'courier';
+  | 'courier'
+  | 'dismantler';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -490,6 +491,16 @@ interface Memory {
    *   Memory.holisticEconomy = true
    */
   holisticEconomy?: boolean;
+  /**
+   * When set, a dismantler creep is spawned from homeRoom to clear obstacle
+   * structures (towers) in the target room before claiming. The creep waits
+   * until the room is unowned (RCL 0) then dismantles. Clear to cancel:
+   *   delete Memory.dismantleTarget
+   */
+  dismantleTarget?: {
+    room: string;
+    homeRoom: string;
+  };
 }
 
 // Screeps provides a global require for loading modules

@@ -1476,7 +1476,7 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
  * Roads and containers are intentionally excluded: they are reusable by anyone
  * (not ownership-locked) and don't block construction site placement.
  */
-const FOREIGN_OBSTACLE_TYPES: Set<StructureConstant> = new Set([
+export const FOREIGN_OBSTACLE_TYPES: Set<StructureConstant> = new Set([
   STRUCTURE_SPAWN,
   STRUCTURE_EXTENSION,
   STRUCTURE_TOWER,

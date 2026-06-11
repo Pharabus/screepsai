@@ -18,6 +18,7 @@ import { colonyBuilder } from './colonyBuilder';
 import { hunter } from './hunter';
 import { keeperKiller } from './keeperKiller';
 import { courier } from './courier';
+import { dismantler } from './dismantler';
 
 export type { Role };
 
@@ -41,4 +42,5 @@ export const roles: Record<CreepRoleName, Role> = {
   hunter,
   keeperKiller,
   courier,
+  dismantler,
 };

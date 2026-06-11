@@ -737,6 +737,24 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     });
   }
 
+  // Priority 0.5: Dismantler — one-off structure removal for pre-claim obstacle
+  // clearing (e.g. a tower blocking the room controller). Spawned once when
+  // Memory.dismantleTarget names this room as the home. Clears itself on completion.
+  if (Memory.dismantleTarget?.homeRoom === room.name) {
+    if (countCreepsByRole('dismantler', room.name) === 0) {
+      queue.push({
+        role: 'dismantler',
+        body: [WORK, WORK, WORK, WORK, WORK, MOVE, MOVE, MOVE, MOVE, MOVE],
+        minCount: 1,
+        memory: {
+          role: 'dismantler' as CreepRoleName,
+          homeRoom: room.name,
+          targetRoom: Memory.dismantleTarget.room,
+        },
+      });
+    }
+  }
+
   // Priority 1: Hunters for NPC invaders in remote/transit rooms — queued before
   // local economy roles so an invader camping a remote doesn't block indefinitely.
   // huntersNeeded() uses the same getInvaderTargetRooms() internally; iterate the

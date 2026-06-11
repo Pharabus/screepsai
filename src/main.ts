@@ -228,6 +228,29 @@ export const deliverEnergy = (source: string, dest: string, amount?: number): st
   return `transport ${source}->${dest} started: ${capStr} ${m.resource} (couriers spawn from ${dest})`;
 };
 
+/**
+ * Queue a dismantler to clear obstacle structures (towers) blocking the room
+ * controller in an unowned target room, enabling a claimer to follow. The creep
+ * pre-positions in the target room and waits until it is fully unowned (RCL 0)
+ * before dismantling. homeRoom defaults to the nearest owned room.
+ *
+ * Cancel with: delete Memory.dismantleTarget
+ */
+export const dismantleTarget = (room: string, homeRoom?: string): string => {
+  const home =
+    homeRoom ??
+    Object.values(Game.rooms)
+      .filter((r) => r.controller?.my)
+      .sort(
+        (a, b) =>
+          Game.map.getRoomLinearDistance(a.name, room) -
+          Game.map.getRoomLinearDistance(b.name, room),
+      )[0]?.name;
+  if (!home) return 'No owned rooms found to spawn dismantler from';
+  Memory.dismantleTarget = { room, homeRoom: home };
+  return `Dismantler queued: ${home} → ${room}. Creep will pre-position and wait for RCL 0 before clearing towers.`;
+};
+
 /** List transport missions with delivered/target progress and live courier count. */
 export const transports = (): string => {
   const missions = getTransportMissions();
@@ -258,6 +281,7 @@ global.evaluateClaim = evaluateClaim;
 global.claimCandidates = claimCandidates;
 global.deliverEnergy = deliverEnergy;
 global.transports = transports;
+global.dismantleTarget = dismantleTarget;
 global.roles = roles;
 
 export const loop = ErrorMapper.wrapLoop(() => {
