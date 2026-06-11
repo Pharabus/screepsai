@@ -47,3 +47,39 @@ export function getStructuresByType(room: Room): Partial<Record<StructureConstan
     return m;
   });
 }
+
+/**
+ * Returns all MY construction sites in the room grouped by structureType,
+ * cached for the current tick. Mirrors getStructuresByType's shape.
+ * Callers use `result[STRUCTURE_X] ?? []` instead of a per-call
+ * `room.find(FIND_MY_CONSTRUCTION_SITES, { filter: s => s.structureType === X })`.
+ */
+export function getMySitesByType(
+  room: Room,
+): Partial<Record<BuildableStructureConstant, ConstructionSite[]>> {
+  return cached(`${room.name}:mySitesByType`, () => {
+    const m: Partial<Record<BuildableStructureConstant, ConstructionSite[]>> = {};
+    for (const s of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+      (m[s.structureType] ??= []).push(s);
+    }
+    return m;
+  });
+}
+
+/**
+ * Returns MY (owned) structures in the room grouped by structureType, cached
+ * for the current tick. Unlike getStructuresByType (FIND_STRUCTURES), this uses
+ * FIND_MY_STRUCTURES so it naturally excludes foreign-owned structures in
+ * reclaimed rooms (previous owner's spawns, extensions, towers, etc.).
+ * Callers use `result[STRUCTURE_X] ?? []` instead of a per-call
+ * `room.find(FIND_MY_STRUCTURES, { filter: s => s.structureType === X })`.
+ */
+export function getMyStructuresByType(room: Room): Partial<Record<StructureConstant, Structure[]>> {
+  return cached(`${room.name}:myStructsByType`, () => {
+    const m: Partial<Record<StructureConstant, Structure[]>> = {};
+    for (const s of room.find(FIND_MY_STRUCTURES)) {
+      (m[s.structureType] ??= []).push(s);
+    }
+    return m;
+  });
+}

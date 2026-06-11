@@ -1,4 +1,11 @@
-import { cached, invalidate, resetTickCache, getStructuresByType } from '../../src/utils/tickCache';
+import {
+  cached,
+  invalidate,
+  resetTickCache,
+  getStructuresByType,
+  getMySitesByType,
+  getMyStructuresByType,
+} from '../../src/utils/tickCache';
 
 describe('tickCache', () => {
   beforeEach(() => {
@@ -66,6 +73,98 @@ describe('tickCache', () => {
       resetTickCache();
       getStructuresByType(room);
       expect(room.find).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getMySitesByType', () => {
+    it('groups my construction sites by structureType', () => {
+      const ext = { structureType: STRUCTURE_EXTENSION };
+      const tower = { structureType: STRUCTURE_TOWER };
+      const ext2 = { structureType: STRUCTURE_EXTENSION };
+      const room = {
+        name: 'W5N5',
+        find: vi.fn((type: number) =>
+          type === FIND_MY_CONSTRUCTION_SITES ? [ext, tower, ext2] : [],
+        ),
+      } as any;
+      const result = getMySitesByType(room);
+      expect(result[STRUCTURE_EXTENSION]).toHaveLength(2);
+      expect(result[STRUCTURE_TOWER]).toHaveLength(1);
+    });
+
+    it('caches the result within the same tick (find called once)', () => {
+      const room = {
+        name: 'W6N6',
+        find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [] : [])),
+      } as any;
+      getMySitesByType(room);
+      getMySitesByType(room);
+      // find() should only have been called once (for FIND_MY_CONSTRUCTION_SITES)
+      const sitesCalls = room.find.mock.calls.filter(
+        (c: number[]) => c[0] === FIND_MY_CONSTRUCTION_SITES,
+      );
+      expect(sitesCalls).toHaveLength(1);
+    });
+
+    it('returns empty partial record when room has no sites', () => {
+      const room = {
+        name: 'W7N7',
+        find: vi.fn(() => []),
+      } as any;
+      const result = getMySitesByType(room);
+      expect(Object.keys(result)).toHaveLength(0);
+    });
+
+    it('recomputes after resetTickCache', () => {
+      const room = {
+        name: 'W8N8',
+        find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [] : [])),
+      } as any;
+      getMySitesByType(room);
+      resetTickCache();
+      getMySitesByType(room);
+      const sitesCalls = room.find.mock.calls.filter(
+        (c: number[]) => c[0] === FIND_MY_CONSTRUCTION_SITES,
+      );
+      expect(sitesCalls).toHaveLength(2);
+    });
+  });
+
+  describe('getMyStructuresByType', () => {
+    it('groups my structures by structureType', () => {
+      const ext = { structureType: STRUCTURE_EXTENSION };
+      const tower = { structureType: STRUCTURE_TOWER };
+      const ext2 = { structureType: STRUCTURE_EXTENSION };
+      const room = {
+        name: 'W9N9',
+        find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [ext, tower, ext2] : [])),
+      } as any;
+      const result = getMyStructuresByType(room);
+      expect(result[STRUCTURE_EXTENSION]).toHaveLength(2);
+      expect(result[STRUCTURE_TOWER]).toHaveLength(1);
+    });
+
+    it('caches the result within the same tick (find called once)', () => {
+      const room = {
+        name: 'W10N10',
+        find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [] : [])),
+      } as any;
+      getMyStructuresByType(room);
+      getMyStructuresByType(room);
+      const myCalls = room.find.mock.calls.filter((c: number[]) => c[0] === FIND_MY_STRUCTURES);
+      expect(myCalls).toHaveLength(1);
+    });
+
+    it('recomputes after resetTickCache', () => {
+      const room = {
+        name: 'W11N11',
+        find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [] : [])),
+      } as any;
+      getMyStructuresByType(room);
+      resetTickCache();
+      getMyStructuresByType(room);
+      const myCalls = room.find.mock.calls.filter((c: number[]) => c[0] === FIND_MY_STRUCTURES);
+      expect(myCalls).toHaveLength(2);
     });
   });
 

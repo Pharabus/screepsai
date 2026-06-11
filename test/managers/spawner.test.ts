@@ -685,7 +685,10 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
     return mockRoom({
       name: 'W1N1',
       controller: { level: rcl, ticksToDowngrade: 50_000 },
-      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? stored : 0) } },
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? stored : 0) },
+      },
       find: vi.fn(() => []),
     });
   }
@@ -754,7 +757,10 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
       name: 'W1N1',
       controller: { level: 4, ticksToDowngrade: 50_000 },
       // stored=25k — above the 20k builder-guard threshold
-      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 25_000 : 0) } },
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 25_000 : 0) },
+      },
       find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [{}] : [])),
     });
     expect(upgradersNeeded(room)).toBe(3);

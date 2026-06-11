@@ -25,6 +25,7 @@
 import { hostilesSeen, getNeighbor } from './neighbors';
 import { getMyUsername } from './identity';
 import { getMissionsOfType } from './missions';
+import { myStorage } from './ownership';
 
 // ---------------------------------------------------------------------------
 // Colony priority scoring
@@ -76,6 +77,8 @@ const SCORE_INCOME_REFERENCE = 20_000;
  *                   Collapses the score when storage is near-empty — an
  *                   income-starved room cannot absorb more upgrade drain and
  *                   should not rank highly regardless of its RCL gap.
+ *                   Reads OWN storage via myStorage() — a reclaimed room's
+ *                   foreign hoard (my:false) must not inflate the score.
  */
 export function getColonyScore(room: Room): number {
   const entry = _colonyScoreCache.get(room.name);
@@ -99,7 +102,10 @@ function _computeColonyScore(room: Room): number {
   const sourceCount = activeSources > 0 ? activeSources : (mem?.sources?.length ?? 0);
   const incomeRate = sourceCount * SCORE_SOURCE_RATE;
 
-  const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  // Use myStorage (ownership-aware) — room.storage is owner-agnostic and returns a
+  // previous owner's structure in a reclaimed room; a 999k foreign hoard must not
+  // inflate storageFactor to max and misrank a bootstrapping husk as our richest room.
+  const stored = myStorage(room)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   const storageFactor = Math.max(Math.min(stored / SCORE_INCOME_REFERENCE, 1.0), 0.1);
 
   // rclFactor: never below 1 so even a maxed RCL-8 room gets a non-zero score

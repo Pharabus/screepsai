@@ -5,6 +5,7 @@ import {
   TUNNEL_WALL_COST,
 } from '../utils/trafficManager';
 import { myStorage } from '../utils/ownership';
+import { getMyStructuresByType, getMySitesByType } from '../utils/tickCache';
 
 // Max extensions per RCL level (from Screeps CONTROLLER_STRUCTURES).
 // At RCL 7 each extension holds 100 energy (up from 50), at RCL 8 it's 200,
@@ -57,13 +58,21 @@ const MAX_SPAWNS: Record<number, number> = {
   8: 3,
 };
 
-function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
-  const built = room.find(FIND_MY_STRUCTURES, {
-    filter: (s) => s.structureType === type,
-  }).length;
-  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
-    filter: (s) => s.structureType === type,
-  }).length;
+/**
+ * Counts built structures + in-progress construction sites of the given type.
+ * Routes through the per-tick cached lookups (getMyStructuresByType /
+ * getMySitesByType) so the two room.find scans happen at most once per tick
+ * regardless of how many placement functions call this.
+ *
+ * CRITICAL: uses FIND_MY_STRUCTURES (via getMyStructuresByType) — NOT
+ * FIND_STRUCTURES — so foreign-owned structures in a reclaimed room (e.g.
+ * W44N59's previous-owner spawns/extensions/towers) are never counted against
+ * our RCL placement caps. Counting them would cause ERR_RCL_NOT_ENOUGH on our
+ * own placement calls and silently stall the colony build pipeline.
+ */
+export function countStructuresAndSites(room: Room, type: BuildableStructureConstant): number {
+  const built = (getMyStructuresByType(room)[type as StructureConstant] ?? []).length;
+  const sites = (getMySitesByType(room)[type] ?? []).length;
   return built + sites;
 }
 

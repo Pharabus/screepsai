@@ -20,6 +20,7 @@ import {
   clearLabBlockers,
   getPlannedReserved,
   applyRoadSiteOverlay,
+  countStructuresAndSites,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -653,13 +654,15 @@ describe('construction RCL gating', () => {
     it('does not place if already at max for RCL 6 (3 labs)', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
+      const labStructs = Array(3).fill({ structureType: STRUCTURE_LAB });
       const room = roomAt(6, {
         storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
-            if (opts?.filter) return Array(3).fill({}); // 3 labs = RCL 6 max
-            return [];
+            // Return labs regardless of filter — getMyStructuresByType calls without opts
+            const structs = labStructs;
+            return opts?.filter ? structs.filter(opts.filter) : structs;
           }
           if (type === FIND_MY_CONSTRUCTION_SITES) return [];
           return [];
@@ -694,13 +697,14 @@ describe('construction RCL gating', () => {
     it('does not place at RCL 7 when already at 9 labs', () => {
       const storagePos = new RoomPosition(25, 25, 'W1N1');
       (storagePos as any).lookFor = vi.fn(() => []);
+      const labStructs = Array(9).fill({ structureType: STRUCTURE_LAB });
       const room = roomAt(7, {
         storage: { my: true, pos: storagePos },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
           if (type === FIND_MY_STRUCTURES) {
-            if (opts?.filter) return Array(9).fill({}); // 9 labs = RCL 7 max
-            return [];
+            // Return labs regardless of filter — getMyStructuresByType calls without opts
+            return opts?.filter ? labStructs.filter(opts.filter) : labStructs;
           }
           if (type === FIND_MY_CONSTRUCTION_SITES) return [];
           return [];
@@ -1010,7 +1014,8 @@ describe('construction RCL gating', () => {
         storage: { my: true, pos: new RoomPosition(5, 5, 'W1N1') },
         find: vi.fn((type: number, opts?: any) => {
           if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(5, 6, 'W1N1') }];
-          if (type === FIND_MY_STRUCTURES) return opts?.filter ? labs : [];
+          // Return labs regardless of filter — getMyStructuresByType calls without opts
+          if (type === FIND_MY_STRUCTURES) return opts?.filter ? labs.filter(opts.filter) : labs;
           if (type === FIND_MY_CONSTRUCTION_SITES) return [];
           return [];
         }),
@@ -1714,5 +1719,51 @@ describe('placeStorage ownership', () => {
     placeStorage(room);
 
     expect(room.createConstructionSite).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countStructuresAndSites — foreign-structure exclusion
+// ---------------------------------------------------------------------------
+
+describe('countStructuresAndSites — reclaimed room foreign structure exclusion', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('counts only own extensions and ignores foreign ones in a reclaimed room', () => {
+    // In a reclaimed room (e.g. W44N59) the previous owner's extensions are
+    // present in FIND_ALL_STRUCTURES but FIND_MY_STRUCTURES returns only ours.
+    // countStructuresAndSites must use FIND_MY_STRUCTURES so foreign extensions
+    // do NOT count against our RCL cap and block our own placement.
+    //
+    // Setup: FIND_MY_STRUCTURES returns 1 own extension;
+    //        FIND_MY_CONSTRUCTION_SITES returns 0 sites.
+    // Expected count: 1 (not 3 if foreign ones were included).
+    const foreignExt1 = { structureType: STRUCTURE_EXTENSION };
+    const foreignExt2 = { structureType: STRUCTURE_EXTENSION };
+    const ownExt = { structureType: STRUCTURE_EXTENSION };
+
+    const room = roomAt(4, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+        if (type === FIND_MY_STRUCTURES) {
+          // Only the single own extension is returned by FIND_MY_STRUCTURES.
+          const structs = [ownExt];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        // FIND_STRUCTURES (used by getStructuresByType) would return all 3, but
+        // countStructuresAndSites must NOT call it — it uses getMyStructuresByType.
+        if (type === FIND_STRUCTURES) return [foreignExt1, foreignExt2, ownExt];
+        return [];
+      }),
+    });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const count = countStructuresAndSites(room, STRUCTURE_EXTENSION);
+
+    // Must count 1 (own only), not 3 (including foreign).
+    expect(count).toBe(1);
   });
 });

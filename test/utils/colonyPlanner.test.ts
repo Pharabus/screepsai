@@ -426,11 +426,13 @@ describe('getColonyScore', () => {
     rcl: number,
     storedEnergy: number,
     sources: { containerId?: string; minerName?: string }[] = [],
+    storageMy = true,
   ): any {
     const room: any = {
       name,
       controller: { my: true, level: rcl },
       storage: {
+        my: storageMy,
         store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? storedEnergy : 0) },
       },
     };
@@ -538,6 +540,60 @@ describe('getColonyScore', () => {
     const second = getColonyScore(room);
 
     expect(second).toBeGreaterThan(first);
+  });
+
+  it('foreign storage (my:false) scores at storageFactor floor, same as no storage', () => {
+    // A reclaimed room whose storage belongs to the previous owner must not
+    // inflate storageFactor. Both rooms must score identically at the floor (0.1).
+    // Give both rooms a source so incomeRate > 0 (otherwise both scores are 0 regardless).
+    const foreignRoom = makeRoom(
+      'W44N59',
+      4,
+      999_000,
+      [{ containerId: 'c1', minerName: 'mf1' }],
+      /* storageMy= */ false,
+    );
+    const noStorageRoom: any = {
+      name: 'W44N59B',
+      controller: { my: true, level: 4 },
+      storage: undefined,
+    };
+    Memory.rooms['W44N59B'] = {
+      sources: [{ id: 'sB' as any, x: 10, y: 10, containerId: 'cB', minerName: 'mf2' }],
+    } as any;
+    (Game as any).rooms['W44N59B'] = noStorageRoom;
+    (Game as any).creeps['mf2'] = { name: 'mf2', memory: { role: 'miner' } };
+
+    const foreignScore = getColonyScore(foreignRoom);
+    const noStorageScore = getColonyScore(noStorageRoom);
+
+    // Both must use storageFactor 0.1 (floor): foreign hoard is invisible.
+    expect(foreignScore).toBe(noStorageScore);
+  });
+
+  it('own storage (my:true) scores higher than a foreign hoard of the same size', () => {
+    // Same room setup, same energy — only the my flag differs.
+    // Must include a source so incomeRate > 0 (otherwise both scores are 0).
+    const ownRoom = makeRoom(
+      'W44N60',
+      4,
+      20_000,
+      [{ containerId: 'c1', minerName: 'mo1' }],
+      /* storageMy= */ true,
+    );
+    const foreignRoom = makeRoom(
+      'W44N61',
+      4,
+      20_000,
+      [{ containerId: 'c2', minerName: 'mo2' }],
+      /* storageMy= */ false,
+    );
+
+    const ownScore = getColonyScore(ownRoom);
+    const foreignScore = getColonyScore(foreignRoom);
+
+    // Own storage uses storageFactor 1.0 (20k/20k reference); foreign uses 0.1 floor.
+    expect(ownScore).toBeGreaterThan(foreignScore);
   });
 });
 

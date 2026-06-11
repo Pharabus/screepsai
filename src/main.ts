@@ -34,6 +34,7 @@ import {
   getTransportMissions,
   TRANSPORT_DRAIN_ALL,
 } from './utils/missions';
+import { myStorage } from './utils/ownership';
 import { roles } from './roles';
 
 // Console-callable exports.
@@ -129,7 +130,7 @@ export const colonies = (): string => {
     for (const [room, score] of sorted) {
       const r = Game.rooms[room];
       const rcl = r?.controller?.level ?? '?';
-      const stored = r?.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+      const stored = (r ? myStorage(r) : undefined)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
       lines.push(`  ${room}: RCL=${rcl} storage=${stored} score=${score.toFixed(1)}`);
     }
   }
