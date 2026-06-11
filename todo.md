@@ -319,6 +319,10 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
   - **Step 3 done** — `upgraderBoostWanted(room)` gates on RCL 7+, ≥2 output labs, GH2O stock ≥ 1500 (storage+terminal+reserved boost lab — counting the lab prevents a gate flip-flop found in live validation), storage energy > floor. `reserveBoostLab(room)` runs each tick in `runSpawner` to set/clear `boostLabId`/`boostCompound`. Upgrader spawn request carries `memory.boosts = [{part: WORK, compound: 'GH2O'}]` when gate open. `hauler.ts` `pickupBoostLab` has a wrong-mineral flush guard. `upgrader.ts` opts in with `ensureBoosted`. Closes the Phase 2 "Upgrader boost dispatch wiring" item.
   - **Step 4 (Phase 3)** — reuse the gate for defenders with TOUGH/ATTACK boosts.
 
+#### Hub-to-colony boost distribution
+
+- [ ] **`sendBoostsToColonies` in `terminal.ts`** — Hub (W43N58) accumulates all T2/T3 compounds but feeders have no way to boost their own defenders or upgraders. Add a reverse-direction send: after reactions produce a compound above its cap, ship a small stash (e.g. 500–1000 units) to each colony's terminal so local boost labs can serve locally-spawned creeps. Mirror the `sendMineralsToHub` pattern in reverse — score by compound priority (defensive first: KHO2, LHO2; then GH2O for upgraders) and gate on hub surplus above `GOAL_CAPS[compound] × 0.75` so the hub never strips its own reserve. Prerequisite: T3 compound production running and colonies at RCL 6+ (terminal available). Blocked until X (catalyst) is mined from W44N59 and T3 chain is active.
+
 #### Factory pipeline
 
 - [x] **Place Factory** — `placeFactory(room)` at RCL ≥ 7, within 3 tiles of storage; position reserved in `layoutPlan`; gated behind link completion. `factoryId` cached in `RoomMemory` by `ensureRoomPlan()`.
@@ -427,62 +431,9 @@ End-game military capability. Requires full structure set and compound stockpile
 
 #### Raid mission — loot an abandoned / inactive base
 
-A repeatable **plunder** operation against a derelict enemy room: neutralise its
-defences, then drain its storage (energy never decays, so a full storage is a
-standing prize). Distinct from the attack-squad work above — the goal is *loot
-and leave*, not destroy or claim. **Undertake only with a mature economy** to
-fund the force and absorb the CPU of a 4th-room op (hard constraint — not while
-W43N58 storage is funding the wall backlog or 3 rooms already ~max 20 CPU).
+**W44N59 resolved (2026-06-11)** — Controller degraded to RCL 0, tower dismantled by the new `dismantler` role (v1.0.249–251), room claimed via `claim('W44N59')`. Foreign storage will drain via `pickupForeignStore` / loot path post-claim as it did for W42N59. No raid mechanics were needed — the patient path won cleanly. The `dismantler` role added for this is now general-purpose infrastructure for future pre-claim obstacle clearing.
 
-First identified target: **W44N59** (owner `Tacotheon`, a *player* — PvP, not an
-Invader job; ~999k storage, single tower, no creeps, controller present and not
-yet downgraded; 2 rooms N of W44N57 across our remote W44N58). **Likely resolves
-itself:** an inactive owner's controller should degrade to neutral before we're
-ready, at which point the tower goes unowned and stops firing and we loot with
-**zero combat** (the patient path below). So treat W44N59 as the validation case,
-not a reason to rush-build the military role.
-
-**The looting half already exists** — `courier` COLLECT reads `room.storage`
-owner-agnostically and `deliverEnergy(source, dest)` drives a transport mission
-(just used to drain W42N59). The genuinely net-new work is (a) neutralising one
-tower and (b) proving we can withdraw from a base we don't own.
-
-- [ ] **Two hard gates (blockers — verify before committing any force):**
-  1. **Safe-mode confirmation.** If the owner still runs code and holds a
-     safe-mode charge, the raid is wasted (they're neutered for ~20k ticks, we
-     ate the spawn cost). Only raid a *confirmed-abandoned* account: falling
-     `ticksToDowngrade`, a low/empty unrefilled tower, `controller.safeMode == null`,
-     no construction. An abandoned account runs no code and **cannot** safe-mode.
-  2. **Foreign-withdraw mechanic.** Confirm a creep can `withdraw()` from an
-     enemy storage in a room we **don't** own (Screeps allows it iff no hostile
-     rampart sits on the store and the room isn't safe-moded — ownership of the
-     *target* store doesn't gate withdraw). This is the exact load-bearing
-     assumption that produced the deleted `looter` role; **live-validate cheaply
-     before building force.** (Lesson: validate the core mechanic first.)
-- [ ] **Phase 1 — recon.** Re-scout for fresh tactical data: tower energy,
-      storage position + **any ramparts on/around it**, controller level +
-      `ticksToDowngrade` + `safeMode`, full source/structure layout. This decides
-      1-creep job vs. real fight (or "just wait for downgrade").
-- [ ] **Phase 2 — neutralise the tower. Drainer approach STRONGLY PREFERRED**
-      over dismantle: a tank+heal creep parked at the room edge (tower does ~150
-      dmg at range ≥20 vs 600 at ≤5; ~13 HEAL out-heals it) outlasts the tower's
-      energy (10 e/shot, ≤1000 cap ⇒ ≤~100 shots), and an abandoned room never
-      refills it. Reuses the existing **Drain attack** item above; dismantle/the
-      **Dismantler role** is the fallback and is only needed to clear a rampart
-      found protecting the storage. Boosts (TOUGH/HEAL) likely unnecessary if
-      recon shows the tower already near-empty.
-- [ ] **Phase 3 — loot.** `deliverEnergy('W44N59','W44N57')` → couriers drain
-      storage home. Mostly reuse; confirm the non-owned-source path in Phase 2
-      first, then scale courier count.
-- [ ] **Patient alternative (preferred for W44N59 specifically).** If recon shows
-      the controller dropping, just **wait for it to go neutral** — unowned tower
-      stops firing, storage energy doesn't decay, loot with zero force. Whether
-      this beats a drain depends on the controller level/timer (could be 100k+
-      ticks from RCL7).
-- [ ] **Net-new code (only if we go the combat route):** a `drainer`
-      (TOUGH/HEAL tank) role + manual console trigger (à la `claim`/`deliverEnergy`);
-      optional attack/heal/tough boost wiring. Hunter can't be reused (Invader-only).
-      Courier/transport already exist.
+Future repeat of this pattern: wait for controller degradation → `dismantleTarget(room)` → `claim(room)` → loot pipeline handles storage automatically. No combat required for inactive accounts.
 
 ---
 
