@@ -33,9 +33,21 @@ const states: StateMachineDefinition = {
     run(creep: Creep) {
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom) return 'RETREAT';
-      if (creep.room.name === targetRoom && isInRoomInterior(creep)) {
-        return 'DISMANTLE';
+
+      if (creep.room.name === targetRoom) {
+        // Safety: if the room is still owned by another player back out immediately
+        // to avoid tower fire. dismantleTarget() should only be called after RCL 0.
+        const ctrl = creep.room.controller;
+        if (ctrl?.owner && !ctrl.my) {
+          moveTo(creep, new RoomPosition(25, 25, creep.memory.homeRoom ?? targetRoom), {
+            range: 20,
+            priority: PRIORITY_WORKER,
+          });
+          return undefined;
+        }
+        if (isInRoomInterior(creep)) return 'DISMANTLE';
       }
+
       moveTo(creep, new RoomPosition(25, 25, targetRoom), {
         range: 20,
         priority: PRIORITY_WORKER,
