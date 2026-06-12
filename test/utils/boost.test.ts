@@ -214,7 +214,12 @@ describe('ensureBoosted', () => {
         role: 'upgrader',
         boosts: [{ part: WORK, compound: 'UH' }],
       },
-      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+      // Storage holds the compound — simulates hauler still en-route to the lab.
+      room: mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => []),
+        storage: { store: { getUsedCapacity: (r: string) => (r === 'UH' ? 5000 : 0) } },
+      }),
     });
 
     // boostCompound must match the creep's requested compound so the reserved-lab
@@ -228,6 +233,41 @@ describe('ensureBoosted', () => {
     // Must NOT have deleted boosts — we are waiting, not failing open
     expect(creep.memory.boosts).toBeDefined();
     expect(creep.memory.boosts).toHaveLength(1);
+  });
+
+  it('fails open when reserved lab is understocked and compound is exhausted empire-wide', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');
+
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'UH',
+      mineralType: null,
+      pos: labPos,
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: {
+        role: 'upgrader',
+        boosts: [{ part: WORK, compound: 'UH' }],
+      },
+      // No storage and no terminal — compound completely exhausted empire-wide
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+    });
+
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'UH' } as any;
+
+    const result = ensureBoosted(creep);
+
+    // Must fail-open: there is no supply to deliver, waiting forever is wrong
+    expect(result).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
   });
 
   it('fails open when no boostLabId and no stocked lab exists', () => {
@@ -401,7 +441,12 @@ describe('ensureBoosted', () => {
         role: 'upgrader',
         boosts: [{ part: WORK, compound: 'GH2O' }],
       },
-      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+      // Storage holds GH2O — simulates hauler still en-route to the boost lab.
+      room: mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => []),
+        storage: { store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 5000 : 0) } },
+      }),
     });
 
     Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;

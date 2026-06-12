@@ -105,7 +105,17 @@ export function ensureBoosted(creep: Creep): boolean {
     }
 
     if (result === ERR_NOT_ENOUGH_RESOURCES) {
-      // Wait for the hauler to refill the lab
+      // Wait only if there's a realistic chance of refill — if neither storage
+      // nor terminal holds the compound, no hauler can deliver it; fail-open so
+      // the creep doesn't stall permanently when the compound is exhausted empire-wide.
+      const room = creep.room;
+      const hasSupply =
+        (room.storage?.store.getUsedCapacity(compound) ?? 0) > 0 ||
+        (room.terminal?.store.getUsedCapacity(compound) ?? 0) > 0;
+      if (!hasSupply) {
+        delete creep.memory.boosts;
+        return true;
+      }
       return false;
     }
 
