@@ -1419,6 +1419,15 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
   // Only pre-storage claimed rooms — main rooms already handled by placeRoads().
   if (!room.controller?.my || room.storage) return false;
 
+  const mem = Memory.rooms[room.name];
+
+  // Once all bootstrap roads are confirmed complete, re-check only every 50 ticks
+  // (same guard as placeRemoteRoads). PathFinder calls here are the same cost as
+  // placeRoads but have no throttle, so without this they run every 5 ticks until
+  // storage is built (RCL4), adding 2 extra PathFinder calls per construction tick.
+  if (mem?.bootstrapRoadsComplete && Game.time % 50 !== 0) return false;
+  if (mem?.bootstrapRoadsComplete) delete mem.bootstrapRoadsComplete;
+
   const spawns = room.find(FIND_MY_SPAWNS);
   const anchor = spawns[0];
   if (!anchor) return false;
@@ -1477,6 +1486,8 @@ export function placeColonyBootstrapRoads(room: Room): boolean {
     }
   }
 
+  // All source paths fully roaded — skip PathFinder until next 50-tick re-check.
+  (Memory.rooms[room.name] ??= {}).bootstrapRoadsComplete = true;
   return false;
 }
 

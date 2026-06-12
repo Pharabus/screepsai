@@ -167,6 +167,12 @@ interface RoomMemory {
    * Re-checked every 50 ticks instead of every 5 when true.
    */
   remoteRoadsComplete?: boolean;
+  /**
+   * Set when placeColonyBootstrapRoads() confirms all source paths are fully roaded.
+   * Re-checked every 50 ticks instead of every 5 when true — avoids 2 extra
+   * PathFinder calls per construction tick throughout the RCL2–3 bootstrap phase.
+   */
+  bootstrapRoadsComplete?: boolean;
   // Remote mining
   remoteRooms?: string[];
   /** Cached round-trip travel ticks (path × 2 × fatigue) keyed by remote room name */
