@@ -39,7 +39,10 @@ export function runLinks(): void {
       } else if (
         storageLink &&
         isOperational(storageLink) &&
-        storageLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        // Require meaningful free capacity — sending 1 energy wastes a 5-tick
+        // cooldown when the storage link is nearly full. Only send when there
+        // is enough space to make the transfer worthwhile.
+        storageLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100
       ) {
         sourceLink.transferEnergy(storageLink);
       } else if (

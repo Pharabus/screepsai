@@ -258,24 +258,13 @@ function pickup(creep: Creep): boolean {
 
   // --- Priority chain for selecting a NEW pickup target ---
 
-  // Decay-critical: a large dropped pile means the link pipeline can't keep
-  // up. Preempt link drain and lab work to clear it before more decays.
-  if (pickupLargeDrop(creep)) return true;
-
-  // Lab work first: flushing/loading is otherwise starved when the storage
-  // link keeps refilling above the drain threshold. Each branch returns
-  // false fast when there's nothing to do (full lab or no active reaction),
-  // so this only kicks in when labs actually need attention. Cap at one
-  // hauler at a time: lab loads/flushes are small (≤800) and a single
-  // round-trip drains them — two haulers piling onto the same task starved
-  // energy logistics in small rooms.
-  if (!isLabWorkClaimedByOther(creep, mem)) {
-    if (pickupLabFlush(creep, mem)) return true;
-    if (pickupLabInput(creep, mem)) return true;
-    if (pickupLabOutput(creep, mem)) return true;
-  }
-
-  // Drain storage link — bottleneck of the link pipeline
+  // Drain storage link first — this is the primary pipeline bottleneck.
+  // Large drops form BECAUSE the storage link is backed up (full source links →
+  // miners spill to floor). Picking up drops while leaving the storage link full
+  // creates a deadlock: the pipeline stays blocked, more drops form, and all
+  // haulers keep chasing drops while the source links never clear. Fix the root
+  // cause first; once the storage link drains, source links empty, miners can
+  // deposit, and no new drops form.
   if (mem?.storageLinkId) {
     const storageLink = Game.getObjectById(mem.storageLinkId);
     if (
@@ -291,6 +280,19 @@ function pickup(creep: Creep): boolean {
       }
       return true;
     }
+  }
+
+  // Large dropped pile: only reached when the storage link is empty or
+  // below threshold (pipeline is flowing), so picking up the drop is safe.
+  if (pickupLargeDrop(creep)) return true;
+
+  // Lab work: flushing/loading is otherwise starved when the storage link
+  // keeps refilling above the drain threshold. Each branch returns false fast
+  // when there's nothing to do. Cap at one hauler at a time.
+  if (!isLabWorkClaimedByOther(creep, mem)) {
+    if (pickupLabFlush(creep, mem)) return true;
+    if (pickupLabInput(creep, mem)) return true;
+    if (pickupLabOutput(creep, mem)) return true;
   }
 
   // Terminal → storage restock: when storage is in the deficit zone (below the
