@@ -388,7 +388,10 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 
   const hub = Game.rooms[hubName];
   const hubTerminal = hub?.terminal;
-  if (!hubTerminal) return;
+  if (!hubTerminal) {
+    console.log(`[terminal] ${room.name}: sendMineralsToHub skip — hub ${hubName} has no terminal`);
+    return;
+  }
 
   // Pick the LARGEST non-energy stack from this terminal — most efficient use
   // of the one-send-per-tick cooldown. A single large batch clears more stock
@@ -409,14 +412,25 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 
   // Clamp to hub terminal's free capacity for this resource.
   const hubFree = hubTerminal.store.getFreeCapacity(bestResource);
-  if (hubFree < MIN_MINERAL_SHIP) return; // hub is full for this resource
+  if (hubFree < MIN_MINERAL_SHIP) {
+    console.log(
+      `[terminal] ${room.name}: sendMineralsToHub skip — hub full for ${bestResource} (free=${hubFree})`,
+    );
+    return;
+  }
 
   const amount = Math.min(bestAmount, hubFree);
 
   // Energy guard: mirror of sendEnergyToColonies. Only send if the feeder
   // terminal can cover the transaction cost plus the standing energy buffer.
   const cost = Game.market.calcTransactionCost(amount, room.name, hubName);
-  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < cost + ENERGY_TERMINAL_BUFFER) return;
+  const termEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+  if (termEnergy < cost + ENERGY_TERMINAL_BUFFER) {
+    console.log(
+      `[terminal] ${room.name}: sendMineralsToHub skip — insufficient energy (need ${cost + ENERGY_TERMINAL_BUFFER}, have ${termEnergy})`,
+    );
+    return;
+  }
 
   const result = terminal.send(bestResource, amount, hubName, 'mineral consolidation');
   if (result === OK) {
