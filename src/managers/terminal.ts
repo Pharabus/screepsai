@@ -4,23 +4,12 @@ import {
   MINERAL_TERMINAL_SELL_FLOOR,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
-  BUY_INTERVAL,
   MIN_BUY_ENERGY_BASE,
 } from '../utils/thresholds';
 import { getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 import { colonyEnergy } from '../utils/economy';
 
-// Matches the 10-tick terminal cooldown so we capture every available sell
-// window. Running every tick would do the same but cost more CPU on no-op
-// store-scans; every 10 ticks is the sweet spot.
-const MARKET_INTERVAL = 10;
-/**
- * Interval for feeder → hub mineral shipments. Matches the terminal cooldown
- * window; sending every 10 ticks is sufficient since the terminal can only
- * fire once per cooldown anyway.
- */
-const MINERAL_SHIP_INTERVAL = 10;
 /**
  * Minimum stack size to ship in one terminal send. Minerals don't decay so we
  * batch rather than burning a cooldown on a trickle. Kept modest (500) because
@@ -222,7 +211,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
     } else {
       console.log(`[terminal] ${room.name}: buy failed for ${mineral}, error=${result}`);
     }
-    return; // one purchase per interval
+    return; // one purchase per cooldown window — terminal.cooldown gates the next call
   }
 }
 
@@ -239,7 +228,6 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 // reaches RCL 6 and builds a terminal.
 // ---------------------------------------------------------------------------
 
-const COLONY_SEND_INTERVAL = 100;
 /** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
 const COLONY_SEND_AMOUNT = 10_000;
 /** Home storage must hold at least this much before we'll donate energy. */
@@ -469,28 +457,36 @@ export function runTerminal(): void {
     const hub = getLabHubName();
     const amHub = isLabHub(room);
 
-    // Buy runs first so it isn't blocked when both intervals coincide
-    // (every 500 ticks). If buy deals, the cooldown re-check below skips sell.
+    // Terminal cooldown (set by send()/deal()) is itself the rate limiter — at
+    // most one of these can fire per tick anyway since a successful send/deal
+    // immediately re-arms the cooldown. The former `Game.time % INTERVAL === 0`
+    // gates additionally required alignment between "cooldown just cleared" and
+    // "tick is a multiple of N": a deal's cooldown (ceil(sqrt(5*range)), often
+    // >10 for distant buyers) routinely outlasted the 10-tick gap to the next
+    // aligned tick, so the outer `cooldown > 0` check above skipped the room
+    // entirely on that aligned tick — and by the time cooldown cleared mid-cycle,
+    // the modulo check failed. Net effect observed live: auto-sell / mineral
+    // shipping went silent for 900+ ticks while manually-issued deals worked
+    // immediately. Dropping the modulo gates closes that gap — each check now
+    // fires the tick after cooldown clears, regardless of alignment.
+    //
+    // Buy runs first: if it deals, the cooldown set below means sell etc. are
+    // skipped this tick (re-checked via terminal.cooldown === 0 per-branch).
     // Only the lab hub buys inputs (full-feeder model): a colony's small lab
     // cluster can't chain to the boosts that get consumed, so buying inputs
     // there just burns credits on stranded tier-1 compounds.
-    if (Game.time % BUY_INTERVAL === 0 && amHub) {
+    if (amHub) {
       buyForLabs(room, terminal);
     }
 
     // Feeder mineral consolidation: ship accumulated minerals to the hub so it
     // has raw stock for reactions. Only runs for non-hub rooms when a hub
     // exists — the hub ships nothing to itself.
-    if (
-      !amHub &&
-      hub !== undefined &&
-      terminal.cooldown === 0 &&
-      Game.time % MINERAL_SHIP_INTERVAL === 0
-    ) {
+    if (!amHub && hub !== undefined && terminal.cooldown === 0) {
       sendMineralsToHub(room, terminal);
     }
 
-    if (terminal.cooldown === 0 && Game.time % COLONY_SEND_INTERVAL === 0) {
+    if (terminal.cooldown === 0) {
       sendEnergyToColonies(room, terminal);
     }
 
@@ -499,11 +495,7 @@ export function runTerminal(): void {
     // Feeder rooms ship their minerals to the hub instead of selling locally —
     // the hub is the single point for market operations (credit efficiency,
     // avoiding selling at colony and re-buying at hub).
-    if (
-      terminal.cooldown === 0 &&
-      Game.time % MARKET_INTERVAL === 0 &&
-      (amHub || hub === undefined)
-    ) {
+    if (terminal.cooldown === 0 && (amHub || hub === undefined)) {
       sellSurplus(room, terminal);
     }
   }

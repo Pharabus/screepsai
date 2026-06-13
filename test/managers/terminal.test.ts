@@ -28,12 +28,16 @@ describe('runTerminal', () => {
     };
   });
 
-  it('does nothing when not on the check interval', () => {
-    (Game as any).time = 55; // not a multiple of MARKET_INTERVAL (10) or BUY_INTERVAL (500)
+  it('does nothing while the terminal is on cooldown, regardless of tick', () => {
+    // No interval alignment required any more — cooldown alone gates terminal
+    // ops. A deal's cooldown (often >10 ticks for distant buyers) used to
+    // straddle past the next aligned tick and silently skip the room for
+    // hundreds of ticks; cooldown===0 fires the very next eligible tick.
+    (Game as any).time = 55;
     const room = mockRoom({
       name: 'W1N1',
       controller: { my: true, level: 6 },
-      terminal: { store: mockTerminalStore({ Z: 50000 }), cooldown: 0 },
+      terminal: { store: mockTerminalStore({ Z: 50000 }), cooldown: 3 },
     });
     (Game as any).rooms = { W1N1: room };
 
