@@ -1,5 +1,6 @@
 import { roles } from '../roles';
 import { profile } from '../utils/profiler';
+import { shouldThrottleCreep } from '../utils/creepThrottle';
 
 function cleanDeadCreepMemory(): void {
   for (const name in Memory.creeps) {
@@ -10,9 +11,13 @@ function cleanDeadCreepMemory(): void {
 }
 
 function runCreeps(): void {
+  let throttledThisTick = 0;
+  let totalCreeps = 0;
+
   for (const name in Game.creeps) {
     const creep = Game.creeps[name];
     if (!creep) continue;
+    totalCreeps++;
 
     // Backfill homeRoom for creeps spawned before per-room tracking was added.
     // Local creeps have no targetRoom — use their current room as home.
@@ -28,7 +33,19 @@ function runCreeps(): void {
       if (spawn) spawn.recycleCreep(creep);
       continue;
     }
+
+    if (shouldThrottleCreep(creep)) {
+      throttledThisTick++;
+      continue;
+    }
+
     profile(`role.${creep.memory.role}`, () => role.run(creep));
+  }
+
+  if (Memory.creepThrottle && Game.time % 100 === 0) {
+    console.log(
+      `[throttle] skipped ${throttledThisTick}/${totalCreeps} creeps, bucket=${Game.cpu.bucket}`,
+    );
   }
 }
 

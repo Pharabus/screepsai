@@ -498,6 +498,16 @@ interface Memory {
    */
   holisticEconomy?: boolean;
   /**
+   * When true, shouldThrottleCreep() (src/utils/creepThrottle.ts) probabilistically
+   * skips the per-tick role logic of discretionary creeps once the CPU bucket
+   * drops into a danger band — a graceful stability mechanism (not added
+   * capacity) that prevents the bucket from draining to a hard cutoff. Off by
+   * default (dark-deploy safe); flag-off preserves exact pre-change behaviour.
+   * Flip from the console to activate, revert to disable with no rollback:
+   *   Memory.creepThrottle = true
+   */
+  creepThrottle?: boolean;
+  /**
    * When set, a dismantler creep is spawned from homeRoom to clear obstacle
    * structures (towers) in the target room before claiming. The creep waits
    * until the room is unowned (RCL 0) then dismantles. Clear to cancel:

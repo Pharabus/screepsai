@@ -154,6 +154,17 @@ A room claimed from a previous owner is littered with their leftover structures.
 
 `src/utils/idle.ts` — `markIdle(creep)` registers idle state, parks creeps away from the spawn cluster (deterministic per-name offset), and recycles chronically idle creeps. Builders/repairers/upgraders never idle. Haulers **do not recycle** — the old recycle threshold churned haulers during normal idle gaps, costing more energy than it saved.
 
+### Per-creep CPU throttle (`src/utils/creepThrottle.ts`, behind `Memory.creepThrottle`)
+
+shard3 hard-caps every player at 20 CPU regardless of subscription/GCL — the only path to more rooms is per-creep efficiency, not more CPU. Live (2026-06-13): 53 creeps / 4 rooms, bucket idles ~5300-6500 and drains ~0.38/tick on average; left unchecked it eventually hits 0, where the engine hard-throttles mid-loop (corrupt half-ticks). `shouldThrottleCreep(creep)`, called in `runCreeps` (`src/managers/room.ts`) right before role dispatch, probabilistically skips a creep's per-tick role logic once the bucket drops into a danger band — a Hivemind-style Van der Corput even spread (`SPREAD`, ~256 entries) plus a per-creep heap offset (`creepOffset`, cleared on global reset) so skips decorrelate across creeps/ticks instead of all happening on the same tick. **This is a stability/floor-protector, not added capacity** — it trades a little upgrade/repair/build throughput for a bucket that self-stabilizes above 0.
+
+Role tiers (`Record<CreepRoleName, ThrottleTier | null>` — compiler-enforced exhaustive):
+- **NEVER** (`null`): `defender`, `rangedDefender`, `healer`, `hunter`, `keeperKiller` (combat acts every tick), `miner` (a skipped harvest is irreplaceable income), `claimer`, `colonyBuilder` (claim lifecycle is time-sensitive).
+- **TIER_LIGHT** (`throttleAt: 2500, stopAt: 500`): `hauler`, `remoteHauler`, `courier`, `reserver`, `mineralMiner`, `harvester` — income-adjacent logistics, only throttled when genuinely low.
+- **TIER_HEAVY** (`throttleAt: 4000, stopAt: 1500`): `upgrader`, `repairer`, `builder`, `remoteBuilder`, `scout`, `dismantler` — discretionary, shed first.
+
+Both tiers' `throttleAt` sit **below** our ~5500 idle bucket on purpose — at normal operation nothing throttles; the band only engages once a drain pushes the bucket below it. Decision order: flag off → false; NEVER role → false; border creep (`!isInRoomInterior`) → false (engine eviction risk); emergency brake `Game.cpu.getUsed() > tickLimit*0.85` → true; `bucket >= throttleAt` → false; `bucket <= stopAt` → true; otherwise probabilistic via `SPREAD`. Default off (dark-deploy); flip with `Memory.creepThrottle = true`. When on, logs `[throttle] skipped N/M creeps, bucket=B` every 100 ticks.
+
 ### Deployment
 
 `scripts/deploy.mjs` POSTs `dist/main.js` to Screeps API with `X-Token` auth. Config in `.env` (gitignored). `npm run deploy` auto-bumps patch version; build stamps a version banner on line 1 of the bundle.
