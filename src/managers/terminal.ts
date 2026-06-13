@@ -53,7 +53,15 @@ function sellDebug(msg: string): void {
 
 function sellSurplus(room: Room, terminal: StructureTerminal): void {
   let sold = false;
-  for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
+  // Sort so battery is processed first. Without this, raw minerals (H at 61cr)
+  // always win the revenue sort and consume the one-deal-per-cooldown-window slot,
+  // leaving factory batteries (400-floor, 30cr) permanently unsold.
+  const resources = (Object.keys(terminal.store) as ResourceConstant[]).sort((a, b) => {
+    if (a === RESOURCE_BATTERY) return -1;
+    if (b === RESOURCE_BATTERY) return 1;
+    return 0;
+  });
+  for (const resource of resources) {
     if (resource === RESOURCE_ENERGY) continue;
     // Batteries use a lower floor — they're factory products for sale, not lab stockpile
     const sellFloor =
