@@ -110,6 +110,7 @@ describe('writeHealthSnapshot', () => {
       },
     });
     (globalThis as any).Game.time = 80_860_027;
+    (globalThis as any).Memory.profiling = true;
     (globalThis as any).Memory.stats = { 'main.loop': { avg: 18.66, last: 0, max: 0, samples: 1 } };
     (globalThis as any).Game.rooms = {};
 
@@ -129,8 +130,25 @@ describe('writeHealthSnapshot', () => {
 
   it('loop is null when profiling stats are absent', () => {
     (globalThis as any).Game.rooms = {};
+    (globalThis as any).Memory.profiling = true;
     writeHealthSnapshot();
     expect((globalThis as any).Memory._health.sys.loop).toBeNull();
+  });
+
+  it('loop is null when profiling is OFF even if stale stats exist (not reported as live)', () => {
+    (globalThis as any).Game.rooms = {};
+    (globalThis as any).Memory.profiling = false;
+    (globalThis as any).Memory.stats = { 'main.loop': { avg: 18.66, last: 0, max: 0, samples: 1 } };
+    writeHealthSnapshot();
+    expect((globalThis as any).Memory._health.sys.loop).toBeNull();
+  });
+
+  it('loop reports the EMA when profiling is ON', () => {
+    (globalThis as any).Game.rooms = {};
+    (globalThis as any).Memory.profiling = true;
+    (globalThis as any).Memory.stats = { 'main.loop': { avg: 12.34, last: 0, max: 0, samples: 9 } };
+    writeHealthSnapshot();
+    expect((globalThis as any).Memory._health.sys.loop).toBe(12.34);
   });
 
   it('snapshot interval is a sane positive cadence', () => {

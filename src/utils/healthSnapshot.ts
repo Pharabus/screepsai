@@ -59,7 +59,11 @@ export function writeHealthSnapshot(): void {
     });
   }
 
-  const loopSample = Memory.stats?.['main.loop'];
+  // Only report the main-loop EMA when profiling is ON. Memory.stats is frozen
+  // (not cleared) when profiling is disabled, so a non-null avg would be STALE
+  // and read as a live figure. Null lets the HealthCheck skill correctly render
+  // it as "profiling off" instead of a bogus current value.
+  const loopSample = Memory.profiling ? Memory.stats?.['main.loop'] : undefined;
   const out = Game.market.outgoingTransactions ?? [];
   const inc = Game.market.incomingTransactions ?? [];
 
