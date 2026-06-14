@@ -1,5 +1,11 @@
 import { resetGameGlobals, mockCreep, mockRoom } from '../mocks/screeps';
-import { ensureBoosted } from '../../src/utils/boost';
+import {
+  ensureBoosted,
+  recordBoostOutcome,
+  formatBoostStats,
+  compoundInTransit,
+} from '../../src/utils/boost';
+import { resetTickCache } from '../../src/utils/tickCache';
 
 vi.mock('../../src/utils/movement', () => ({
   moveTo: vi.fn(),
@@ -587,5 +593,202 @@ describe('ensureBoosted', () => {
     expect(reservedLab.boostCreep).toHaveBeenCalledWith(creep);
     expect(result).toBe(false);
     expect(creep.memory.boosts).toBeDefined();
+  });
+});
+
+describe('recordBoostOutcome', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('lazily initialises Memory.boostStats and the per-room record', () => {
+    const creep = mockCreep({ room: mockRoom({ name: 'W1N1' }) });
+    expect(Memory.boostStats).toBeUndefined();
+    recordBoostOutcome(creep, 'success');
+    expect(Memory.boostStats!['W1N1']).toEqual({
+      failTimeout: 0,
+      failNoLab: 0,
+      failNoSupply: 0,
+      success: 1,
+    });
+  });
+
+  it('increments the matching counter and stamps lastFailTick on failures only', () => {
+    Game.time = 5000;
+    const creep = mockCreep({ room: mockRoom({ name: 'W1N1' }) });
+    recordBoostOutcome(creep, 'timeout');
+    recordBoostOutcome(creep, 'noLab');
+    recordBoostOutcome(creep, 'noSupply');
+    recordBoostOutcome(creep, 'success');
+    const s = Memory.boostStats!['W1N1']!;
+    expect(s.failTimeout).toBe(1);
+    expect(s.failNoLab).toBe(1);
+    expect(s.failNoSupply).toBe(1);
+    expect(s.success).toBe(1);
+    expect(s.lastFailTick).toBe(5000);
+  });
+
+  it('keeps separate counters per room', () => {
+    recordBoostOutcome(mockCreep({ room: mockRoom({ name: 'W1N1' }) }), 'success');
+    recordBoostOutcome(mockCreep({ room: mockRoom({ name: 'W2N2' }) }), 'timeout');
+    expect(Memory.boostStats!['W1N1']!.success).toBe(1);
+    expect(Memory.boostStats!['W2N2']!.failTimeout).toBe(1);
+  });
+});
+
+describe('ensureBoosted records outcomes', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('records a success when boostCreep returns OK', () => {
+    const lab = mockLab({
+      compound: 'UH',
+      mineralType: 'UH',
+      pos: new (globalThis as any).RoomPosition(26, 25, 'W1N1'),
+      store: {
+        getUsedCapacity: vi.fn((r: string) => {
+          if (r === 'UH') return 300;
+          if (r === RESOURCE_ENERGY) return 200;
+          return 0;
+        }),
+      },
+      boostCreep: vi.fn(() => OK),
+    });
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'UH' }] },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => [lab]) }),
+    });
+    ensureBoosted(creep);
+    expect(Memory.boostStats!['W1N1']!.success).toBe(1);
+  });
+
+  it('records a noLab failure when no lab can be resolved', () => {
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'UH' }] },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+    });
+    ensureBoosted(creep);
+    expect(Memory.boostStats!['W1N1']!.failNoLab).toBe(1);
+  });
+
+  it('records a noSupply failure when lab is empty and no storage/terminal supply exists', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'UH',
+      mineralType: null,
+      pos: new (globalThis as any).RoomPosition(26, 25, 'W1N1'),
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'UH' }] },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+    });
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'UH' } as any;
+    ensureBoosted(creep);
+    expect(Memory.boostStats!['W1N1']!.failNoSupply).toBe(1);
+  });
+
+  it('records a timeout failure when the budget expires unfilled', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: new (globalThis as any).RoomPosition(26, 25, 'W1N1'),
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      room: mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => []),
+        storage: { store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 5000 : 0) } },
+      }),
+    });
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+    Game.time = 1000;
+    ensureBoosted(creep); // starts the timer
+    Game.time = 1060;
+    ensureBoosted(creep); // budget expired → timeout
+    expect(Memory.boostStats!['W1N1']!.failTimeout).toBe(1);
+  });
+});
+
+describe('formatBoostStats', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('returns the empty-state string when nothing is recorded', () => {
+    expect(formatBoostStats()).toBe('no boost activity recorded');
+  });
+
+  it('renders a per-room line and flags rooms where failures dominate', () => {
+    Memory.boostStats = {
+      W1N1: { failTimeout: 0, failNoLab: 0, failNoSupply: 0, success: 12 },
+      W2N2: { failTimeout: 5, failNoLab: 0, failNoSupply: 1, success: 2, lastFailTick: 80844 },
+    };
+    const out = formatBoostStats();
+    expect(out).toContain('W1N1: ok=12 timeout=0 noLab=0 noSupply=0');
+    expect(out).not.toMatch(/W1N1.*FAILING/);
+    expect(out).toContain('W2N2: ok=2 timeout=5 noLab=0 noSupply=1 (lastFail @80844)');
+    expect(out).toMatch(/W2N2.*FAILING/);
+  });
+});
+
+describe('compoundInTransit', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('sums the compound carried by creeps in the room', () => {
+    const room = mockRoom({ name: 'W1N1' });
+    Game.creeps = {
+      a: {
+        room: { name: 'W1N1' },
+        store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 100 : 0) },
+      },
+      b: {
+        room: { name: 'W1N1' },
+        store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 50 : 0) },
+      },
+      c: { room: { name: 'W2N2' }, store: { getUsedCapacity: () => 999 } }, // other room — ignored
+    } as any;
+    expect(compoundInTransit(room as any, 'GH2O' as ResourceConstant)).toBe(150);
+  });
+
+  it('memoises within a tick and recomputes after resetTickCache', () => {
+    const room = mockRoom({ name: 'W1N1' });
+    Game.creeps = {
+      a: { room: { name: 'W1N1' }, store: { getUsedCapacity: () => 100 } },
+    } as any;
+    expect(compoundInTransit(room as any, 'GH2O' as ResourceConstant)).toBe(100);
+
+    // Mutate the world mid-tick: cached value must be returned unchanged.
+    Game.creeps = {
+      a: { room: { name: 'W1N1' }, store: { getUsedCapacity: () => 500 } },
+    } as any;
+    expect(compoundInTransit(room as any, 'GH2O' as ResourceConstant)).toBe(100);
+
+    // New tick: cache cleared → recompute reflects the new world.
+    resetTickCache();
+    expect(compoundInTransit(room as any, 'GH2O' as ResourceConstant)).toBe(500);
   });
 });

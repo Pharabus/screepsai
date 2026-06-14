@@ -21,6 +21,7 @@ import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
 import { replanPerimeterForRoom } from './utils/perimeterPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
 import { formatCombatLog } from './utils/combatLog';
+import { formatBoostStats } from './utils/boost';
 import {
   startClaim,
   canClaimAnotherRoom,
@@ -86,6 +87,7 @@ export const replanLayout = (roomName: string): string => {
 export const neighbors = () => summarizeNeighbors();
 
 export const combatLog = () => formatCombatLog();
+export const boostStatus = () => formatBoostStats();
 
 export const suggestSpawn = (roomName: string): string => {
   const result = findBestSpawnPosition(roomName);
@@ -275,6 +277,7 @@ global.replanLayout = replanLayout;
 global.replanPerimeter = replanPerimeter;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
+global.boostStatus = boostStatus;
 global.suggestSpawn = suggestSpawn;
 global.claim = claim;
 global.colonies = colonies;

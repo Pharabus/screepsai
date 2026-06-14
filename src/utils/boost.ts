@@ -1,4 +1,5 @@
 import { moveTo } from './movement';
+import { cached } from './tickCache';
 import { PRIORITY_WORKER } from './trafficManager';
 
 /**
@@ -59,13 +60,73 @@ const BOOST_WAIT_TIMEOUT = 60;
  * boosted because the act of filling the lab tripped the gate reserving it).
  */
 export function compoundInTransit(room: Room, compound: ResourceConstant): number {
-  let total = 0;
-  for (const name in Game.creeps) {
-    const c = Game.creeps[name];
-    if (!c || c.room?.name !== room.name) continue;
-    total += c.store?.getUsedCapacity(compound) ?? 0;
+  // Memoised per room+compound per tick: this is called once per owned room in
+  // upgraderBoostWanted and up to 2× per hauler in pickupBoostLab, and each call
+  // scans all Game.creeps. The value is identical within a tick (stores don't
+  // change mid-tick from a read's perspective), so cache it — CPU is the only
+  // scaling lever on the shard3 20-CPU cap.
+  return cached(`compoundInTransit:${room.name}:${compound}`, () => {
+    let total = 0;
+    for (const name in Game.creeps) {
+      const c = Game.creeps[name];
+      if (!c || c.room?.name !== room.name) continue;
+      total += c.store?.getUsedCapacity(compound) ?? 0;
+    }
+    return total;
+  });
+}
+
+/**
+ * Bump a per-room boost outcome counter. Always-on (unlike bdbg, which is gated
+ * behind Memory.boostDebug) because these counters ARE the production signal that
+ * surfaces a chronic boost failure — the failure mode the fail-open timeout
+ * otherwise hides. Cheap: one object init + one integer increment.
+ */
+export function recordBoostOutcome(
+  creep: Creep,
+  kind: 'timeout' | 'noLab' | 'noSupply' | 'success',
+): void {
+  const stats = (Memory.boostStats ??= {});
+  const room = creep.room.name;
+  const s = (stats[room] ??= {
+    failTimeout: 0,
+    failNoLab: 0,
+    failNoSupply: 0,
+    success: 0,
+  });
+  if (kind === 'success') {
+    s.success++;
+    return;
   }
-  return total;
+  if (kind === 'timeout') s.failTimeout++;
+  else if (kind === 'noLab') s.failNoLab++;
+  else s.failNoSupply++;
+  s.lastFailTick = Game.time;
+}
+
+/**
+ * Human-readable per-room boost outcome summary for the `boostStatus()` console
+ * command. Flags any room where failures outnumber successes — the signal that
+ * boosting is silently failing there.
+ */
+export function formatBoostStats(): string {
+  const stats = Memory.boostStats;
+  if (!stats || Object.keys(stats).length === 0) {
+    return 'no boost activity recorded';
+  }
+  const lines: string[] = [];
+  for (const room of Object.keys(stats).sort()) {
+    const s = stats[room];
+    if (!s) continue;
+    const fails = s.failTimeout + s.failNoLab + s.failNoSupply;
+    const flag = fails > s.success ? ' ⚠ FAILING' : '';
+    const last = s.lastFailTick !== undefined ? ` (lastFail @${s.lastFailTick})` : '';
+    lines.push(
+      `${room}: ok=${s.success} timeout=${s.failTimeout} noLab=${s.failNoLab} ` +
+        `noSupply=${s.failNoSupply}${last}${flag}`,
+    );
+  }
+  return lines.join('\n');
 }
 
 function bdbg(creep: Creep, msg: string): void {
@@ -107,6 +168,7 @@ export function ensureBoosted(creep: Creep): boolean {
       creep.memory.boostWaitStart = Game.time;
     } else if (Game.time - creep.memory.boostWaitStart >= BOOST_WAIT_TIMEOUT) {
       bdbg(creep, `FAIL-OPEN timeout (compound=${compound})`);
+      recordBoostOutcome(creep, 'timeout');
       delete creep.memory.boosts;
       delete creep.memory.boostWaitStart;
       return true;
@@ -146,6 +208,7 @@ export function ensureBoosted(creep: Creep): boolean {
     if (!lab) {
       // Fail-open: no lab resolved — proceed unboosted
       bdbg(creep, `FAIL-OPEN no-lab (compound=${compound})`);
+      recordBoostOutcome(creep, 'noLab');
       delete creep.memory.boosts;
       delete creep.memory.boostWaitStart;
       return true;
@@ -163,6 +226,7 @@ export function ensureBoosted(creep: Creep): boolean {
     bdbg(creep, `boostCreep -> ${result} (labGH2O=${lab.store.getUsedCapacity(compound)})`);
 
     if (result === OK) {
+      recordBoostOutcome(creep, 'success');
       delete creep.memory.boostWaitStart;
       creep.memory.boosts.shift();
       if (creep.memory.boosts.length === 0) {
@@ -182,6 +246,7 @@ export function ensureBoosted(creep: Creep): boolean {
         (room.terminal?.store.getUsedCapacity(compound) ?? 0) > 0;
       if (!hasSupply) {
         bdbg(creep, `FAIL-OPEN no-supply (compound=${compound})`);
+        recordBoostOutcome(creep, 'noSupply');
         delete creep.memory.boosts;
         delete creep.memory.boostWaitStart;
         return true;

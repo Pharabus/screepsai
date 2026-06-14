@@ -292,6 +292,26 @@ interface ProfilerSample {
   samples: number;
 }
 
+/**
+ * Per-room boost outcome counters (src/utils/boost.ts). Monotonic tallies that
+ * survive global resets so chronic boost starvation surfaces in production
+ * (read via the `boostStatus()` console command) without needing the verbose
+ * `Memory.boostDebug` log-tail. A room where failures dominate `success` means
+ * boosting is silently failing — the recurrence the timeout otherwise hides.
+ */
+interface BoostRoomStat {
+  /** ensureBoosted() spent its full travel+wait budget unfilled (BOOST_WAIT_TIMEOUT). */
+  failTimeout: number;
+  /** No lab could be resolved for the requested compound. */
+  failNoLab: number;
+  /** Lab empty and no storage/terminal supply exists to refill it. */
+  failNoSupply: number;
+  /** boostCreep() returned OK. */
+  success: number;
+  /** Game.time of the most recent failure of any kind. */
+  lastFailTick?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Mission records (src/utils/missions.ts)
 // ---------------------------------------------------------------------------
@@ -486,6 +506,12 @@ interface Memory {
    * off by default.
    */
   boostDebug?: boolean;
+  /**
+   * Per-room boost outcome counters (success / fail-open reasons), keyed by room
+   * name. Always-on production signal (unlike boostDebug) so chronic boost
+   * failures are visible via `boostStatus()`. See BoostRoomStat.
+   */
+  boostStats?: Record<string, BoostRoomStat>;
   /**
    * When true, the per-room hauler pool dispatcher (`src/managers/haulerPool.ts`)
    * governs the source-container pickup leg: haulers are pre-assigned to
