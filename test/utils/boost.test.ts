@@ -274,13 +274,50 @@ describe('ensureBoosted', () => {
     expect(creep.memory.boostWaitStart).toBe(1000);
 
     // Still within the timeout window — keeps waiting, timer unchanged.
-    Game.time = 1040;
+    Game.time = 1050;
     expect(ensureBoosted(creep)).toBe(false);
     expect(creep.memory.boosts).toBeDefined();
     expect(creep.memory.boostWaitStart).toBe(1000);
 
-    // Past the timeout (>= 50 ticks) — fails open and proceeds unboosted.
-    Game.time = 1050;
+    // Past the timeout (>= 60 ticks) — fails open and proceeds unboosted.
+    Game.time = 1060;
+    expect(ensureBoosted(creep)).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
+    expect(creep.memory.boostWaitStart).toBeUndefined();
+  });
+
+  it('fails open after the total-attempt timeout when the lab is never reached (travel deadlock)', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    // Lab is fully stocked, but the creep is far away and (mock moveTo is a no-op)
+    // never gets in range — the "stuck near labs" congestion case. The timer must
+    // start during travel, not only once in range, so the creep still fails open.
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: new (globalThis as any).RoomPosition(26, 25, 'W1N1'),
+      store: { getUsedCapacity: vi.fn(() => 5000) },
+      boostCreep: vi.fn(() => OK),
+    });
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      // Far from the lab — inRangeTo returns false, so we route (moveTo no-op) and wait.
+      pos: new (globalThis as any).RoomPosition(5, 5, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      room: mockRoom({ name: 'W1N1', find: vi.fn(() => []) }),
+    });
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    // First tick: starts the timer while travelling, returns false (not in range).
+    Game.time = 2000;
+    expect(ensureBoosted(creep)).toBe(false);
+    expect(creep.memory.boostWaitStart).toBe(2000);
+    expect(creep.memory.boosts).toBeDefined();
+
+    // Past the budget while still en route — fails open rather than parking forever.
+    Game.time = 2060;
     expect(ensureBoosted(creep)).toBe(true);
     expect(creep.memory.boosts).toBeUndefined();
     expect(creep.memory.boostWaitStart).toBeUndefined();

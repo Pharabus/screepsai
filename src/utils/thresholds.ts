@@ -2,6 +2,17 @@ export const MINERAL_STORAGE_FLOOR = 5000;
 
 /** Target amount of boost compound to maintain in the reserved boost lab (covers several creeps, well under LAB_MINERAL_CAPACITY=3000). */
 export const BOOST_LAB_MINERAL_TARGET = 1500;
+/**
+ * Hysteresis floor for KEEPING the boost lab reserved once it has been reserved.
+ * Reserving STARTS at BOOST_LAB_MINERAL_TARGET (1500) but is MAINTAINED down to
+ * this lower floor. Without hysteresis the reservation flip-flops: a single boost
+ * consumes ~450 compound (30/part × ~15 work parts) which would drop the total
+ * below the start threshold and unreserve the lab mid-cycle, stranding upgraders.
+ * Set above one boost's worth so a boost never trips the release. (The transient
+ * dip while haulers ferry compound into the lab is handled separately by counting
+ * in-transit compound — see compoundInTransit / upgraderBoostWanted.)
+ */
+export const BOOST_LAB_MINERAL_MAINTAIN = 500;
 /** Target energy to maintain in the reserved boost lab (under LAB_ENERGY_CAPACITY=2000). */
 export const BOOST_LAB_ENERGY_TARGET = 1000;
 /**

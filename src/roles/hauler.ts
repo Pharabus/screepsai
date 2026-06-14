@@ -17,6 +17,7 @@ import {
 import { myStorage, myTerminal } from '../utils/ownership';
 import { colonyEnergy, upgradeBuffer } from '../utils/economy';
 import { isLabHub, getLabHubName } from '../managers/labs';
+import { compoundInTransit } from '../utils/boost';
 
 /**
  * Storage buffer floor for minerals, keyed by whether this room is the lab hub.
@@ -263,13 +264,21 @@ function pickup(creep: Creep): boolean {
   // commitment — to service the lab. Bounded and self-limiting: pickupBoostLab
   // returns false once the lab is stocked, and the await check clears the moment
   // the creep is boosted, so normal link-first operation is untouched.
-  if (
-    mem?.boostLabId &&
-    mem.boostCompound &&
-    anyCreepAwaitingBoost(creep.room, mem.boostCompound) &&
-    pickupBoostLab(creep, mem)
-  ) {
-    return true;
+  if (mem?.boostLabId && mem.boostCompound) {
+    const awaiting = anyCreepAwaitingBoost(creep.room, mem.boostCompound);
+    if (Memory.boostDebug && awaiting) {
+      console.log(
+        `[boostDebug] hauler ${creep.name} @${Game.time} preempt: awaiting=${awaiting} empty=${creep.store.getUsedCapacity() === 0}`,
+      );
+    }
+    if (awaiting && pickupBoostLab(creep, mem)) {
+      if (Memory.boostDebug) {
+        console.log(
+          `[boostDebug] hauler ${creep.name} @${Game.time} preempt FIRED -> servicing boost lab`,
+        );
+      }
+      return true;
+    }
   }
 
   // Continue committed pickup task if still valid
@@ -706,9 +715,14 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
     return true;
   }
 
-  // Needs compound?
+  // Needs compound? Account for compound already in transit in OTHER haulers so
+  // multiple haulers don't all commit to fill the same lab — two each grabbing
+  // 800 would drain storage far below the boost-reservation threshold (the very
+  // race that unreserved the lab; see compoundInTransit / upgraderBoostWanted).
   const compoundStored = lab.store.getUsedCapacity(compound) ?? 0;
-  if (compoundStored < BOOST_LAB_MINERAL_TARGET) {
+  const inTransitOther =
+    compoundInTransit(creep.room, compound) - (creep.store.getUsedCapacity(compound) ?? 0);
+  if (compoundStored + inTransitOther < BOOST_LAB_MINERAL_TARGET) {
     const storage = creep.room.storage;
     const terminal = creep.room.terminal;
     const inStorage = storage?.store.getUsedCapacity(compound) ?? 0;
@@ -716,12 +730,23 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
     const source: StructureStorage | StructureTerminal | null =
       inStorage > 0 ? (storage ?? null) : inTerminal > 0 ? (terminal ?? null) : null;
     if (source) {
-      const needed = BOOST_LAB_MINERAL_TARGET - compoundStored;
+      const needed = BOOST_LAB_MINERAL_TARGET - compoundStored - inTransitOther;
       const available = inStorage > 0 ? inStorage : inTerminal;
       const toWithdraw = Math.min(needed, creep.store.getFreeCapacity(), available);
+      if (Memory.boostDebug) {
+        console.log(
+          `[boostDebug] pickupBoostLab ${creep.name} @${Game.time} compoundBranch labGH2O=${compoundStored} inTransitOther=${inTransitOther} needed=${needed} avail=${available} free=${creep.store.getFreeCapacity()} toWithdraw=${toWithdraw} carry=${creep.store.getUsedCapacity()}`,
+        );
+      }
       if (toWithdraw > 0) {
         creep.memory.targetId = source.id;
-        if (creep.withdraw(source, compound, toWithdraw) === ERR_NOT_IN_RANGE) {
+        const wr = creep.withdraw(source, compound, toWithdraw);
+        if (Memory.boostDebug) {
+          console.log(
+            `[boostDebug] pickupBoostLab ${creep.name} @${Game.time} withdraw(${compound},${toWithdraw}) -> ${wr} (range to source ${creep.pos.getRangeTo(source)})`,
+          );
+        }
+        if (wr === ERR_NOT_IN_RANGE) {
           moveTo(creep, source, {
             priority: PRIORITY_HAULER,
             visualizePathStyle: { stroke: '#ff88ff' },
@@ -730,6 +755,10 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
         return true;
       }
     }
+  } else if (Memory.boostDebug) {
+    console.log(
+      `[boostDebug] pickupBoostLab ${creep.name} @${Game.time} SKIP compoundBranch labGH2O=${compoundStored} inTransitOther=${inTransitOther} (>= target ${BOOST_LAB_MINERAL_TARGET})`,
+    );
   }
 
   // Needs energy?

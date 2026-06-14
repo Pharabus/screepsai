@@ -13,7 +13,12 @@ import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../util
 import { selectRemoteRooms, remoteRoomCap } from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
-import { REPAIR_THRESHOLD, BOOST_LAB_MINERAL_TARGET } from '../utils/thresholds';
+import {
+  REPAIR_THRESHOLD,
+  BOOST_LAB_MINERAL_TARGET,
+  BOOST_LAB_MINERAL_MAINTAIN,
+} from '../utils/thresholds';
+import { compoundInTransit } from '../utils/boost';
 import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
 import {
   ensureRemoteMiningMission,
@@ -563,13 +568,23 @@ export function keeperKillersNeeded(home: Room): number {
  * Returns true when all conditions for boosting upgraders with GH2O are met:
  *  1. RCL 7+ (at RCL 6, reserving the only output lab would halt reactions)
  *  2. At least 2 output labs available (inputLabIds has 2, labIds has ≥2 non-input labs)
- *  3. GH2O stock (storage + terminal + reserved boost lab) ≥ BOOST_LAB_MINERAL_TARGET (1500)
+ *  3. GH2O stock ≥ threshold. The stock sums storage + terminal + reserved boost
+ *     lab + in-transit (compound carried by haulers en route to the lab). The
+ *     threshold is HYSTERETIC: BOOST_LAB_MINERAL_TARGET (1500) to first reserve,
+ *     but only BOOST_LAB_MINERAL_MAINTAIN (500) to keep an existing reservation.
  *  4. Storage energy > STORAGE_ENERGY_FLOOR (10k) — don't boost while energy-starved
  *
- * The boost lab's own GH2O counts toward the threshold: reserving the lab moves up
- * to 1500 GH2O out of storage into it, so a storage-only sum would drop to the
- * threshold and flip-flop the gate (releasing the lab) the moment a boost is
- * consumed. Counting the lab keeps the sum invariant under that movement.
+ * Why both the in-transit term and the hysteresis matter — two distinct flip-flops:
+ *  - In-transit: filling the lab moves up to 1500 GH2O out of storage into haulers
+ *    then the lab. A storage-only sum dips below 1500 the instant a hauler grabs the
+ *    compound, unreserving the lab mid-fill so it can never be filled (observed live
+ *    W43N58: upgraders never boosted because filling the lab tripped its own gate).
+ *    Counting in-transit + lab keeps the sum invariant across the storage→lab move.
+ *  - Hysteresis: a single boost consumes ~450 GH2O from the lab (30/part × ~15 work),
+ *    which permanently reduces the total. Without a lower maintain floor that drop
+ *    would unreserve the lab after every boost, stranding the next upgrader. The 500
+ *    floor sits just above one boost's worth so boosting continues until stock is
+ *    genuinely depleted, then resumes once reactions/market rebuild it past 1500.
  */
 export function upgraderBoostWanted(room: Room): boolean {
   if (!room.controller || room.controller.level < 7) return false;
@@ -591,7 +606,12 @@ export function upgraderBoostWanted(room: Room): boolean {
       gh2oInBoostLab = boostLab.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
     }
   }
-  if (gh2oInStorage + gh2oInTerminal + gh2oInBoostLab < BOOST_LAB_MINERAL_TARGET) return false;
+  const gh2oInTransit = compoundInTransit(room, RESOURCE_GHODIUM_ACID);
+  const totalGh2o = gh2oInStorage + gh2oInTerminal + gh2oInBoostLab + gh2oInTransit;
+  // Hysteresis: keep an already-reserved lab down to the maintain floor; only
+  // require the full target to (re)reserve from scratch.
+  const threshold = mem.boostLabId ? BOOST_LAB_MINERAL_MAINTAIN : BOOST_LAB_MINERAL_TARGET;
+  if (totalGh2o < threshold) return false;
 
   const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
   if (storedEnergy <= STORAGE_ENERGY_FLOOR) return false;

@@ -2,16 +2,27 @@ import { moveTo } from './movement';
 import { PRIORITY_WORKER } from './trafficManager';
 
 /**
- * Max ticks a creep will wait in range of the boost lab for a compound that is
- * present in storage/terminal but has not yet been delivered to the lab. Past
- * this it fails open and proceeds unboosted. The compound delivery can be
- * starved indefinitely by higher-priority hauler work (e.g. the storage-link
- * drain monopolising every hauler), and an idle creep is strictly worse than an
- * unboosted working one. The hauler-side fix (boost-lab service preempts the
- * link drain when a creep is awaiting the compound, see hauler.ts) means this
- * bound is rarely reached — it is a safety net, not the primary mechanism.
+ * Max ticks a creep will spend trying to get a single boost applied — the TOTAL
+ * budget covering both travel to the lab AND waiting in range for the compound.
+ * The timer starts the first tick ensureBoosted processes a pending boost entry
+ * (set at the top of the loop) and is cleared on success or fail-open, so each
+ * boost entry gets its own fresh budget.
+ *
+ * Past this it fails open and proceeds unboosted. Two distinct stalls this bounds:
+ *  - In-range starvation: the compound sits in storage but a hauler never ferries
+ *    it into the lab (e.g. the storage-link drain monopolises every hauler). The
+ *    hauler-side preempt (see hauler.ts) makes this rare, but it's still bounded.
+ *  - Travel deadlock: the creep cannot physically reach the lab because the lab
+ *    cluster is congested (observed live W43N58: an upgrader oscillated for 40+
+ *    ticks trying to round the 3×2 lab block from the far side). A fresh upgrader
+ *    spawns adjacent to the labs and boosts in ~3 ticks, so the budget is generous
+ *    enough that normal operation never trips it — it only catches the pathological
+ *    "stuck near labs" case the timer exists to eliminate.
+ *
+ * An idle creep parked at the labs is strictly worse than an unboosted working one,
+ * so failing open is always the right call once the budget is spent.
  */
-const BOOST_WAIT_TIMEOUT = 50;
+const BOOST_WAIT_TIMEOUT = 60;
 
 /**
  * Gate function called at the top of a creep's role `run()` before any role
@@ -37,6 +48,32 @@ const BOOST_WAIT_TIMEOUT = 50;
  *    - ERR_NOT_ENOUGH_RESOURCES → return false (wait for refill).
  *    - any other code        → fail-open (delete boosts, return true).
  */
+/**
+ * Total amount of `compound` currently carried by creeps physically in `room`.
+ * This is compound "in transit" — e.g. a hauler that has withdrawn GH2O from
+ * storage to fill the boost lab but has not yet delivered it. Counting it keeps
+ * the boost-reservation gate (upgraderBoostWanted) stable: without it, storage
+ * dips below the threshold the instant a hauler grabs the compound, the lab is
+ * unreserved mid-fill, and ensureBoosted then finds no lab and fails open — so
+ * the lab can never actually be filled (observed live: W43N58 upgraders never
+ * boosted because the act of filling the lab tripped the gate reserving it).
+ */
+export function compoundInTransit(room: Room, compound: ResourceConstant): number {
+  let total = 0;
+  for (const name in Game.creeps) {
+    const c = Game.creeps[name];
+    if (!c || c.room?.name !== room.name) continue;
+    total += c.store?.getUsedCapacity(compound) ?? 0;
+  }
+  return total;
+}
+
+function bdbg(creep: Creep, msg: string): void {
+  if (Memory.boostDebug) {
+    console.log(`[boostDebug] ${creep.name} @${Game.time} ${msg}`);
+  }
+}
+
 export function ensureBoosted(creep: Creep): boolean {
   const boosts = creep.memory.boosts;
   if (!boosts || boosts.length === 0) {
@@ -59,6 +96,20 @@ export function ensureBoosted(creep: Creep): boolean {
       // All parts of this type already boosted — skip to next entry
       creep.memory.boosts.shift();
       continue;
+    }
+
+    // Start the total-attempt budget on the first tick we work this entry. It
+    // covers travel to the lab AND any in-range wait for the compound, so a creep
+    // can never be permanently stuck near the labs — whether the lab is congested
+    // and unreachable or the compound never gets ferried in, it fails open once
+    // the budget is spent and works unboosted instead.
+    if (creep.memory.boostWaitStart === undefined) {
+      creep.memory.boostWaitStart = Game.time;
+    } else if (Game.time - creep.memory.boostWaitStart >= BOOST_WAIT_TIMEOUT) {
+      bdbg(creep, `FAIL-OPEN timeout (compound=${compound})`);
+      delete creep.memory.boosts;
+      delete creep.memory.boostWaitStart;
+      return true;
     }
 
     // Resolve the boost lab
@@ -94,6 +145,7 @@ export function ensureBoosted(creep: Creep): boolean {
 
     if (!lab) {
       // Fail-open: no lab resolved — proceed unboosted
+      bdbg(creep, `FAIL-OPEN no-lab (compound=${compound})`);
       delete creep.memory.boosts;
       delete creep.memory.boostWaitStart;
       return true;
@@ -101,12 +153,14 @@ export function ensureBoosted(creep: Creep): boolean {
 
     // Move to lab if not in range
     if (!creep.pos.inRangeTo(lab, 1)) {
+      bdbg(creep, `moving to lab ${lab.pos.x},${lab.pos.y} from ${creep.pos.x},${creep.pos.y}`);
       moveTo(creep, lab, { range: 1, priority: PRIORITY_WORKER });
       return false;
     }
 
     // In range — attempt boost
     const result = lab.boostCreep(creep);
+    bdbg(creep, `boostCreep -> ${result} (labGH2O=${lab.store.getUsedCapacity(compound)})`);
 
     if (result === OK) {
       delete creep.memory.boostWaitStart;
@@ -127,27 +181,20 @@ export function ensureBoosted(creep: Creep): boolean {
         (room.storage?.store.getUsedCapacity(compound) ?? 0) > 0 ||
         (room.terminal?.store.getUsedCapacity(compound) ?? 0) > 0;
       if (!hasSupply) {
+        bdbg(creep, `FAIL-OPEN no-supply (compound=${compound})`);
         delete creep.memory.boosts;
         delete creep.memory.boostWaitStart;
         return true;
       }
-      // Supply exists somewhere, but a hauler must still ferry it into the lab —
-      // a delivery that can be starved indefinitely (observed live: the storage
-      // link drain monopolised every hauler and 2 upgraders idled ~500 ticks at
-      // the lab while 1.6k GH2O sat in storage). Bound the wait: after
-      // BOOST_WAIT_TIMEOUT ticks parked in range, fail open and work unboosted
-      // rather than idling forever. The compound is left for the next attempt.
-      if (creep.memory.boostWaitStart === undefined) {
-        creep.memory.boostWaitStart = Game.time;
-      } else if (Game.time - creep.memory.boostWaitStart >= BOOST_WAIT_TIMEOUT) {
-        delete creep.memory.boosts;
-        delete creep.memory.boostWaitStart;
-        return true;
-      }
+      bdbg(creep, `WAIT for compound (waitStart=${creep.memory.boostWaitStart ?? Game.time})`);
+      // Supply exists somewhere, but a hauler must still ferry it into the lab.
+      // The total-attempt timeout at the top of the loop bounds this wait, so we
+      // just hold here and let it expire if the delivery never lands.
       return false;
     }
 
     // Any other error code → fail-open
+    bdbg(creep, `FAIL-OPEN other-error result=${result}`);
     delete creep.memory.boosts;
     delete creep.memory.boostWaitStart;
     return true;

@@ -1767,9 +1767,10 @@ describe('upgraderBoostWanted', () => {
   });
 
   it('counts GH2O already loaded in the reserved boost lab toward the threshold (no flip-flop)', () => {
-    // Reserving the lab moves up to 1500 GH2O out of storage into it. A storage-only
-    // sum would drop to the threshold and close the gate the moment a boost is
-    // consumed, releasing the lab. The lab's GH2O must count so the sum is invariant.
+    // Reserving the lab moves up to 1500 GH2O out of storage into it. With the lab
+    // reserved the maintain floor (500) applies; the lab's GH2O must count so a
+    // storage that has been drained into the lab does not unreserve it. Storage
+    // alone (200) is below the maintain floor — only counting the lab keeps it open.
     (Memory as any).rooms = { W1N1: { ...baseRoomMem(), boostLabId: 'lab3' } };
     const boostLab = {
       id: 'lab3',
@@ -1780,30 +1781,65 @@ describe('upgraderBoostWanted', () => {
     const room = baseRoom({
       storage: {
         store: {
-          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 1000 : 0),
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 200 : 0),
         },
       },
     });
-    // storage 1000 + terminal 0 + boost lab 600 = 1600 >= 1500
+    // storage 200 + terminal 0 + boost lab 600 = 800 >= maintain floor 500 (reserved)
     expect(upgraderBoostWanted(room)).toBe(true);
   });
 
-  it('returns false when storage+terminal+boostLab GH2O is below threshold', () => {
+  it('returns false when not yet reserved and GH2O is below the start threshold (1500)', () => {
+    // No boostLabId => the full start threshold applies.
+    (Memory as any).rooms = { W1N1: { ...baseRoomMem() } };
+    const room = baseRoom({
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 1300 : 0),
+        },
+      },
+    });
+    // 1300 < 1500 start threshold, lab not reserved
+    expect(upgraderBoostWanted(room)).toBe(false);
+  });
+
+  it('keeps an already-reserved lab while GH2O stays above the maintain floor (hysteresis)', () => {
+    // boostLabId set => maintain floor (500), not the 1500 start threshold. A single
+    // boost consuming ~450 from the lab must not unreserve it mid-cycle.
     (Memory as any).rooms = { W1N1: { ...baseRoomMem(), boostLabId: 'lab3' } };
     const boostLab = {
       id: 'lab3',
       mineralType: 'GH2O',
-      store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 300 : 0) },
+      store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 700 : 0) },
     };
     (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab3' ? boostLab : null));
     const room = baseRoom({
       storage: {
         store: {
-          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 1000 : 0),
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 100 : 0),
         },
       },
     });
-    // 1000 + 0 + 300 = 1300 < 1500
+    // storage 100 + lab 700 = 800 >= maintain 500, below start 1500 — hysteresis keeps it
+    expect(upgraderBoostWanted(room)).toBe(true);
+  });
+
+  it('releases a reserved lab when GH2O falls below the maintain floor (500)', () => {
+    (Memory as any).rooms = { W1N1: { ...baseRoomMem(), boostLabId: 'lab3' } };
+    const boostLab = {
+      id: 'lab3',
+      mineralType: 'GH2O',
+      store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 200 : 0) },
+    };
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab3' ? boostLab : null));
+    const room = baseRoom({
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 100 : 0),
+        },
+      },
+    });
+    // storage 100 + lab 200 = 300 < maintain floor 500
     expect(upgraderBoostWanted(room)).toBe(false);
   });
 
@@ -1818,11 +1854,11 @@ describe('upgraderBoostWanted', () => {
     const room = baseRoom({
       storage: {
         store: {
-          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 1000 : 0),
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : r === 'GH2O' ? 300 : 0),
         },
       },
     });
-    // storage 1000 GH2O only; lab holds OH (ignored) => 1000 < 1500
+    // storage 300 GH2O only; lab holds OH (ignored) => 300 < maintain floor 500
     expect(upgraderBoostWanted(room)).toBe(false);
   });
 

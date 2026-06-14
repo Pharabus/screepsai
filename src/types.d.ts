@@ -480,6 +480,13 @@ interface Memory {
    */
   terminalDebug?: boolean;
   /**
+   * When true, ensureBoosted() (src/utils/boost.ts) and the hauler boost-lab
+   * preempt (src/roles/hauler.ts) log per-tick decisions ([boostDebug] ...) for
+   * diagnosing why a creep is/ isn't getting boosted. Temporary diagnostic flag;
+   * off by default.
+   */
+  boostDebug?: boolean;
+  /**
    * When true, the per-room hauler pool dispatcher (`src/managers/haulerPool.ts`)
    * governs the source-container pickup leg: haulers are pre-assigned to
    * containers based on fill level + proximity so they stop all converging on
