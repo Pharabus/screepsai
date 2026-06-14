@@ -179,7 +179,7 @@ Both tiers' `throttleAt` sit **below** our ~5500 idle bucket on purpose — at n
 
 Two read-only telemetry rings let the script replace MCP for almost everything (see [[feedback_prefer_query_script_over_mcp]]):
 - `Memory._health` — compact health snapshot written every `HEALTH_SNAPSHOT_INTERVAL` ticks (`src/utils/healthSnapshot.ts`, called from the loop). Makes the **HealthCheck skill** a single `mem _health` read instead of three MCP console probes. Uses `myStorage`/`myTerminal` so reclaimed rooms report our structures.
-- `Memory._errors` — ring of the last 20 source-mapped runtime errors (`ErrorMapper.wrapLoop` → `recordError`, capped, each truncated to 1000 chars). `mem _errors` replaces the MCP `check_for_errors` for post-deploy error checks. **The only thing left needing MCP is tailing the live `console.log` stream** (spawn/terminal chatter) — it's neither in Memory nor a return value.
+- `Memory._errors` — ring of the last 20 source-mapped errors caught by `ErrorMapper.wrapLoop` → `recordError` (capped, each truncated to 1000 chars). `mem _errors` is the check for **errors thrown during normal operation**. **It does NOT cover post-deploy "did the new bundle load?"**: a bundle that fails to parse/load throws at module-load time *outside* `wrapLoop`, so it never reaches `recordError` or the ring — that only surfaces in the live console stream. So **routine error check → `mem _errors`; post-deploy load verification → MCP `check_for_errors`** (the one legitimate remaining post-deploy MCP use, alongside tailing the live `console.log` stream of spawn/terminal chatter).
 
 ### Error mapping
 
