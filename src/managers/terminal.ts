@@ -31,12 +31,15 @@ const MAX_ENERGY_FEE_FRACTION = 0.5;
 const BUYABLE_MINERALS = new Set<string>(['H', 'O', 'U', 'L', 'K', 'Z', 'X', 'G']);
 
 /**
- * Verbose per-interval "why we didn't sell" diagnostics. Gated behind
- * Memory.terminalDebug — in steady state these fire every window (e.g. batteries
- * trickling in just above the sell floor with surplus < MIN_DEAL_SIZE) and spam
- * the console. Actual sells and deal failures always log unconditionally.
+ * Verbose "why we didn't trade" diagnostics (sell and buy). Gated behind
+ * Memory.terminalDebug — in steady state these fire every cooldown window and
+ * spam the console (e.g. batteries trickling in just above the sell floor with
+ * surplus < MIN_DEAL_SIZE; or the lab chain wanting G/ghodium, a manufactured
+ * compound with no sell order under our buy-price cap, so buyForLabs logs "need
+ * G for labs" every tick the terminal runs). Actual deals and deal failures
+ * always log unconditionally.
  */
-function sellDebug(msg: string): void {
+function verboseTerminalLog(msg: string): void {
   if (Memory.terminalDebug) console.log(msg);
 }
 
@@ -76,13 +79,15 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
     }
 
     if (!bestOrder) {
-      sellDebug(`[terminal] ${room.name}: ${resource} surplus=${surplus}, no viable buy orders`);
+      verboseTerminalLog(
+        `[terminal] ${room.name}: ${resource} surplus=${surplus}, no viable buy orders`,
+      );
       continue;
     }
     const bestPrice = bestOrder.price;
 
     if (sold) {
-      sellDebug(
+      verboseTerminalLog(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, bestBuy=${bestPrice.toFixed(3)} (queued)`,
       );
       continue;
@@ -90,7 +95,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 
     const dealAmount = Math.min(surplus, bestOrder.remainingAmount);
     if (dealAmount < MIN_DEAL_SIZE) {
-      sellDebug(
+      verboseTerminalLog(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, deal too small (${dealAmount})`,
       );
       continue;
@@ -100,7 +105,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
     // fix #3: energy-fee profitability guard (1 energy ≈ 1 credit approximation)
     const revenue = dealAmount * bestOrder.price;
     if (energyCost > revenue * MAX_ENERGY_FEE_FRACTION) {
-      sellDebug(
+      verboseTerminalLog(
         `[terminal] ${room.name}: ${resource} skipping (energy fee ${energyCost} > ${Math.round(revenue * MAX_ENERGY_FEE_FRACTION)} limit)`,
       );
       continue;
@@ -108,7 +113,7 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
 
     const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
     if (terminalEnergy < energyCost + ENERGY_TERMINAL_BUFFER) {
-      sellDebug(
+      verboseTerminalLog(
         `[terminal] ${room.name}: ${resource} surplus=${surplus}, skipping (need ${energyCost} energy, have ${terminalEnergy})`,
       );
       continue;
@@ -172,7 +177,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
     }
 
     if (!cheapestOrder) {
-      console.log(
+      verboseTerminalLog(
         `[terminal] ${room.name}: need ${mineral} for labs, no sell orders <= ${maxBuyPrice}`,
       );
       continue;
@@ -186,7 +191,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
     const buyAmount = Math.min(wantAmount, affordableAmount);
     if (buyAmount <= 0) {
       if (wantAmount > 0) {
-        console.log(
+        verboseTerminalLog(
           `[terminal] ${room.name}: insufficient credits for ${mineral} @ ${cheapestOrder.price.toFixed(3)} (have ${Game.market.credits.toFixed(0)})`,
         );
       }
@@ -199,7 +204,9 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
       cheapestOrder.roomName!,
     );
     if (terminalEnergy < energyCost + ENERGY_TERMINAL_BUFFER) {
-      console.log(`[terminal] ${room.name}: skipping buy ${mineral} (need ${energyCost} energy)`);
+      verboseTerminalLog(
+        `[terminal] ${room.name}: skipping buy ${mineral} (need ${energyCost} energy)`,
+      );
       continue;
     }
 
