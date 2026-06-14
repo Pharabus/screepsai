@@ -22,6 +22,11 @@
  *       transactions). The expression must be a single JS expression that returns
  *       the (already-filtered) payload — see scripts/probes/*.js.
  *
+ *   node scripts/screeps-query.mjs run "<expr>" [--shard shard3]
+ *       Same as probe but with an inline expression (quote it). Handy for console
+ *       functions whose result can be any size — the ~1KB cap is on the EXPRESSION
+ *       text only, not the result. E.g. run "combatLog()", run "colonies()".
+ *
  * Env: SCREEPS_TOKEN (required), SCREEPS_SHARD or --shard (default shard3),
  *      SCREEPS_API (default https://screeps.com) for private servers.
  */
@@ -126,19 +131,12 @@ async function runMem() {
   console.log(JSON.stringify(value, null, 2));
 }
 
-async function runProbe() {
-  const file = positional[0];
-  if (!file) fail('probe requires an expression file: probe <file.js>');
-  let raw;
-  try {
-    raw = readFileSync(resolve(process.cwd(), file), 'utf8');
-  } catch {
-    try {
-      raw = readFileSync(resolve(root, file), 'utf8');
-    } catch {
-      fail(`cannot read probe file: ${file}`);
-    }
-  }
+/**
+ * Run a JS expression in-game and print its (any-size) return value. The ~1KB
+ * console cap is on the EXPRESSION text only — the result is stashed in Memory
+ * and read back over HTTP, so it can be arbitrarily large (e.g. combatLog()).
+ */
+async function executeExpression(raw) {
   // The Screeps console caps expression size, so strip the authored whitespace:
   // drop full-line `//` comments, trim each line, join with a single space.
   // We deliberately do NOT collapse intra-line spacing — that would corrupt
@@ -152,6 +150,7 @@ async function runProbe() {
     .trim();
   // Strip a trailing semicolon so the expression nests cleanly.
   expr = expr.replace(/;\s*$/, '');
+  if (!expr) fail('empty expression');
 
   const baseline = await gameTime();
   // Capture the expression's value into a scratch key with a freshness stamp.
@@ -189,6 +188,29 @@ async function runProbe() {
   );
 }
 
+async function runProbe() {
+  const file = positional[0];
+  if (!file) fail('probe requires an expression file: probe <file.js>');
+  let raw;
+  try {
+    raw = readFileSync(resolve(process.cwd(), file), 'utf8');
+  } catch {
+    try {
+      raw = readFileSync(resolve(root, file), 'utf8');
+    } catch {
+      fail(`cannot read probe file: ${file}`);
+    }
+  }
+  await executeExpression(raw);
+}
+
+async function runRun() {
+  // Inline expression — quote it in the shell, e.g. run "combatLog()".
+  const expr = positional.join(' ');
+  if (!expr) fail('run requires an inline expression, e.g. run "combatLog()"');
+  await executeExpression(expr);
+}
+
 switch (verb) {
   case 'mem':
     await runMem();
@@ -196,6 +218,9 @@ switch (verb) {
   case 'probe':
     await runProbe();
     break;
+  case 'run':
+    await runRun();
+    break;
   default:
-    fail(`unknown verb "${verb ?? ''}". Use: mem <path> | probe <file.js>`);
+    fail(`unknown verb "${verb ?? ''}". Use: mem <path> | probe <file.js> | run "<expr>"`);
 }

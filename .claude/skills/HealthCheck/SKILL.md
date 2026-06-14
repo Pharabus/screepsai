@@ -87,18 +87,22 @@ Boosts
 
 - **Any Memory subtree:** `node scripts/screeps-query.mjs mem <path>` (dot path, e.g.
   `mem boostStats`, `mem missions.colony`, `mem rooms.W43N58`). One scoped GET, gzip-decoded.
-- **Live `Game.*` data not in Memory** (small queries only — the console caps expression size
-  at ~1KB): write a single-expression file and run
-  `node scripts/screeps-query.mjs probe <file.js>`. It captures the expression's return value
-  into `Memory._probe`, polls until fresh, and prints it. Note: the console command queue has
-  variable latency (~12–60s), so prefer `mem` for anything that lives in Memory.
-- **Larger console reports** (`status()`, `colonies()`, `combatLog()`, `transports()`) are
-  best run through the MCP server (below) — they exceed the probe size limit.
+- **Live `Game.*` data not in Memory, or any console-function report:** write a single-expression
+  file and run `node scripts/screeps-query.mjs probe <file.js>`. It captures the expression's
+  return value into `Memory._probe`, polls until fresh, and prints it. The ~1KB size cap is on
+  the **expression text only — the result can be any size** (it's stored in Memory and read back
+  gzipped), so the console reports `status()`, `colonies()`, `combatLog()`, `transports()`,
+  `boostStatus()` all work via probe (the call is a tiny expression). Note: the console command
+  queue has variable latency (~12–60s), so prefer `mem` for anything that already lives in Memory.
 
 ## Fallback — MCP server
 
-If the script path is unavailable (no `.env`, snapshot empty on a fresh reset, or a report
-that exceeds the probe size limit), gather the same data through `screeps-mcp`:
+Runtime errors are also script-readable: `node scripts/screeps-query.mjs mem _errors` returns
+the last 20 source-mapped errors (replaces the MCP `check_for_errors` for post-deploy checks).
+
+If the script path is unavailable (no `.env`, or the snapshot is empty on a fresh reset),
+gather the same data through `screeps-mcp` (still the only way to tail the live `console.log`
+stream of spawn/terminal chatter, which is not in Memory and so not reachable by the script):
 
 1. Fire each probe with `mcp__screeps-mcp__execute_command` (all `shard: "shard3"`), back-to-back.
 2. Read results next tick with `mcp__screeps-mcp__get_console` (`shard: "shard3"`). Parse the

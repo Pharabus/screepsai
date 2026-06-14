@@ -163,17 +163,39 @@ function sourceMapStackTrace(error: Error): string {
     .join('\n');
 }
 
+/** Ring-buffer bounds for Memory._errors — keep the telemetry small. */
+const ERROR_RING_MAX = 20;
+const ERROR_MSG_MAX = 1000;
+
+/**
+ * Append a (source-mapped) error to the Memory._errors ring so runtime errors
+ * can be inspected out-of-band with `scripts/screeps-query.mjs mem _errors`
+ * instead of tailing the live console through the MCP server. Wrapped in its own
+ * try/catch: telemetry must never throw inside the top-level error handler.
+ */
+function recordError(msg: string): void {
+  try {
+    const ring = (Memory._errors ??= []);
+    ring.push({
+      t: Game.time,
+      msg: msg.length > ERROR_MSG_MAX ? msg.slice(0, ERROR_MSG_MAX) : msg,
+    });
+    while (ring.length > ERROR_RING_MAX) ring.shift();
+  } catch {
+    // ignore — never let error telemetry mask the original error
+  }
+}
+
 export class ErrorMapper {
   public static wrapLoop(fn: () => void): () => void {
     return () => {
       try {
         fn();
       } catch (e: unknown) {
-        if (e instanceof Error) {
-          console.log(sourceMapStackTrace(e));
-        } else {
-          console.log(sourceMapStackTrace(new Error(String(e))));
-        }
+        const mapped =
+          e instanceof Error ? sourceMapStackTrace(e) : sourceMapStackTrace(new Error(String(e)));
+        console.log(mapped);
+        recordError(mapped);
       }
     };
   }

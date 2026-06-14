@@ -562,6 +562,13 @@ interface Memory {
    * consumes it.
    */
   _health?: HealthSnapshot;
+  /**
+   * Ring-buffer of the most recent source-mapped runtime errors caught by
+   * ErrorMapper.wrapLoop (capped at 20). Lets errors be inspected out-of-band
+   * with `scripts/screeps-query.mjs mem _errors` instead of tailing the live
+   * console through the MCP server. Each entry: tick + (truncated) stack.
+   */
+  _errors?: { t: number; msg: string }[];
 }
 
 /** One owned-room entry in the {@link HealthSnapshot}. Field names kept terse to keep the snapshot small. */
