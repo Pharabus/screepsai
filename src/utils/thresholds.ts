@@ -27,6 +27,19 @@ export const FACTORY_ENERGY_FLOOR = 120_000;
 export const FACTORY_BATTERY_CAP = 400;
 
 /**
+ * Terminal sell floor for batteries. Batteries are a pure for-sale product
+ * (compressed surplus energy → credits), so we hold none back — MIN_DEAL_SIZE
+ * is the only gate on when a sale fires. Previously the sell floor reused
+ * FACTORY_BATTERY_CAP (400, the factory's *production* cap), which deadlocked
+ * sales: ~450 in the terminal gave a surplus of only 50, below MIN_DEAL_SIZE
+ * (100), and the factory won't make more once colonyEnergy dips under
+ * FACTORY_ENERGY_FLOOR — so the terminal batteries sat permanently unsold
+ * (observed live W43N58: 450 batteries pinned with healthy 178cr/unit buy
+ * orders on the book).
+ */
+export const BATTERY_TERMINAL_SELL_FLOOR = 0;
+
+/**
  * Structure HP fraction below which repairs are triggered.
  * Used consistently by repairer role, spawner, and towers to avoid drift.
  */

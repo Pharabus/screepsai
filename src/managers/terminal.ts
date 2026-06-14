@@ -1,6 +1,6 @@
 import {
   ENERGY_TERMINAL_BUFFER,
-  FACTORY_BATTERY_CAP,
+  BATTERY_TERMINAL_SELL_FLOOR,
   MINERAL_TERMINAL_SELL_FLOOR,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
@@ -55,9 +55,11 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
   });
   for (const resource of resources) {
     if (resource === RESOURCE_ENERGY) continue;
-    // Batteries use a lower floor — they're factory products for sale, not lab stockpile
+    // Batteries are a for-sale product — sell all of them (floor 0); MIN_DEAL_SIZE
+    // is the only gate. (Reusing FACTORY_BATTERY_CAP here deadlocked sales — see
+    // BATTERY_TERMINAL_SELL_FLOOR.) Raw minerals keep the normal storage floor.
     const sellFloor =
-      resource === RESOURCE_BATTERY ? FACTORY_BATTERY_CAP : MINERAL_TERMINAL_SELL_FLOOR;
+      resource === RESOURCE_BATTERY ? BATTERY_TERMINAL_SELL_FLOOR : MINERAL_TERMINAL_SELL_FLOOR;
     const amount = terminal.store.getUsedCapacity(resource);
     if (amount <= sellFloor) continue;
 

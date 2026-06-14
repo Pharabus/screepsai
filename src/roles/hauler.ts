@@ -321,6 +321,16 @@ function pickup(creep: Creep): boolean {
     if (pickupLabFlush(creep, mem)) return true;
     if (pickupLabInput(creep, mem)) return true;
     if (pickupLabOutput(creep, mem)) return true;
+    // Feeder lab evacuation: a feeder room runs NO reaction (runLabs clears
+    // activeReaction on feeders), so the three lab branches above never service
+    // its labs — they hold only stale leftover minerals from before the room
+    // became a feeder. Drain them HERE, alongside lab work, rather than at the
+    // bottom of the pickup chain: the old low rank meant a permanently-busy
+    // feeder's haulers never fell through to it, so the stale mineral sat forever
+    // (observed live: W44N57 lab pinned at Z:1302 for hours). The drain is a
+    // one-time finite job (~2 trips for a full lab), so the elevated priority
+    // can't perpetually divert haulers — once empty it returns false for good.
+    if (!mem?.activeReaction && pickupFeederLabs(creep, mem)) return true;
   }
 
   // Terminal → storage restock: when storage is in the deficit zone (below the
@@ -497,16 +507,7 @@ function pickup(creep: Creep): boolean {
   // Battery pickup from factory — deliver to terminal (preferred) or storage
   if (pickupFromFactory(creep)) return true;
 
-  // Feeder lab evacuation: drain stale minerals from a feeder room's labs (all
-  // labs, including input labs) so they can flow to storage → terminal →
-  // sendMineralsToHub. Ranks LOW deliberately — same tier as pickupForTerminal
-  // because feeder labs are a non-decaying reserve (no reactions running), so
-  // they can wait until all energy logistics and decay-sensitive pickups clear.
-  // Hub rooms are excluded (managed by their own flush/input/output paths).
-  // Gated behind isLabWorkClaimedByOther so only one hauler drains at a time.
-  if (!isLabWorkClaimedByOther(creep, mem)) {
-    if (pickupFeederLabs(creep, mem)) return true;
-  }
+  // (Feeder-lab evacuation now runs in the lab-work block above — see there.)
 
   // Terminal: move excess minerals from storage to terminal
   if (pickupForTerminal(creep)) return true;
@@ -791,6 +792,12 @@ function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
  * a feeder). Hub rooms manage their own labs via the flush/input/output paths.
  * Returns false fast when: this is the hub, no hub exists (single-room empire),
  * or labIds is absent.
+ *
+ * Called from the lab-work block (gated on no activeReaction) so it drains
+ * promptly even in a busy feeder. It previously sat at the bottom of the pickup
+ * chain, where a permanently-busy room's haulers never reached it and the stale
+ * mineral sat indefinitely (live: W44N57 Z:1302). The job is finite (~2 trips
+ * per lab), so the higher priority self-limits — it returns false once drained.
  */
 function pickupFeederLabs(creep: Creep, mem: RoomMemory | undefined): boolean {
   // Only drain when a hub exists somewhere and this room is NOT it.

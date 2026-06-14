@@ -666,6 +666,94 @@ describe('hauler lab logistics', () => {
 
     expect(freeHauler.withdraw).not.toHaveBeenCalledWith(outputLab, 'OH');
   });
+
+  it('feeder room: drains a stale lab promptly via the elevated lab-block path', () => {
+    // W44N57 live repro: a room that ran reactions then became a feeder had a
+    // lab pinned with leftover Z that the old bottom-of-chain drain never
+    // reached in a busy room. The drain now runs in the lab-work block (gated
+    // on no active reaction) so it fires while haulers are still saturated.
+    const staleLab = mockLab('lab1', {
+      mineralType: 'Z',
+      store: mockLabStore({ Z: 1302 }),
+    });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab1' ? staleLab : null));
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    // W3N3 is the hub (more labs); W1N1 is a feeder with no active reaction.
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3'] },
+      W3N3: { labIds: ['lab1b', 'lab2b', 'lab3b', 'lab4b', 'lab5b', 'lab6b'] },
+    };
+    (Game as any).rooms = {
+      W1N1: room,
+      W3N3: mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } }),
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(staleLab, 'Z');
+  });
+
+  it('does not drain a feeder lab via this path while a reaction is active', () => {
+    // Defensive: the elevated drain is gated on no activeReaction so it can never
+    // race a real (hub) reaction's input/output lab handling.
+    const lab = mockLab('lab1', { mineralType: 'Z', store: mockLabStore({ Z: 1302 }) });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab1' ? lab : null));
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+      W3N3: { labIds: ['lab1b', 'lab2b', 'lab3b', 'lab4b', 'lab5b', 'lab6b'] },
+    };
+    (Game as any).rooms = {
+      W1N1: room,
+      W3N3: mockRoom({ name: 'W3N3', controller: { my: true, level: 7 } }),
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(lab, 'Z');
+  });
+
+  it('hub room: does NOT drain its own labs via the feeder path', () => {
+    const lab = mockLab('lab1', { mineralType: 'Z', store: mockLabStore({ Z: 1302 }) });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab1' ? lab : null));
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    // W1N1 is the hub (most labs, and the only room) — feeder drain excluded.
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] },
+    };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(lab, 'Z');
+  });
 });
 
 describe('hauler urgent responder', () => {

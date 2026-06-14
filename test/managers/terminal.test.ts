@@ -158,6 +158,39 @@ describe('runTerminal', () => {
     consoleSpy.mockRestore();
   });
 
+  it('sells terminal batteries down to floor 0 (not held back at FACTORY_BATTERY_CAP)', () => {
+    // Live repro (W43N58): 450 batteries sat unsold because the sell floor reused
+    // FACTORY_BATTERY_CAP (400), leaving surplus=50 < MIN_DEAL_SIZE (100), and the
+    // factory won't make more once colonyEnergy dips below FACTORY_ENERGY_FLOOR.
+    // With floor 0 the full 450 is sellable surplus and MIN_DEAL_SIZE is the gate.
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      terminal: {
+        store: mockTerminalStore({ battery: 450, energy: 100000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    (Game as any).market.getAllOrders = vi.fn((opts: any) =>
+      opts.resourceType === 'battery'
+        ? [{ id: 'bat1', price: 178.87, remainingAmount: 7950, roomName: 'E15S7' }]
+        : [],
+    );
+
+    runTerminal();
+
+    // Full 450 sold (min(surplus=450, order=7950)), well above MIN_DEAL_SIZE.
+    expect(Game.market.deal).toHaveBeenCalledWith('bat1', 450, 'W1N1');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 450 battery'));
+
+    consoleSpy.mockRestore();
+  });
+
   it('skips 1-unit decoy buy orders when a bulk order is also available', () => {
     (Game as any).time = 100;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
