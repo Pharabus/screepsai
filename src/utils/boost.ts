@@ -2,6 +2,18 @@ import { moveTo } from './movement';
 import { PRIORITY_WORKER } from './trafficManager';
 
 /**
+ * Max ticks a creep will wait in range of the boost lab for a compound that is
+ * present in storage/terminal but has not yet been delivered to the lab. Past
+ * this it fails open and proceeds unboosted. The compound delivery can be
+ * starved indefinitely by higher-priority hauler work (e.g. the storage-link
+ * drain monopolising every hauler), and an idle creep is strictly worse than an
+ * unboosted working one. The hauler-side fix (boost-lab service preempts the
+ * link drain when a creep is awaiting the compound, see hauler.ts) means this
+ * bound is rarely reached — it is a safety net, not the primary mechanism.
+ */
+const BOOST_WAIT_TIMEOUT = 50;
+
+/**
  * Gate function called at the top of a creep's role `run()` before any role
  * logic executes.
  *
@@ -83,6 +95,7 @@ export function ensureBoosted(creep: Creep): boolean {
     if (!lab) {
       // Fail-open: no lab resolved — proceed unboosted
       delete creep.memory.boosts;
+      delete creep.memory.boostWaitStart;
       return true;
     }
 
@@ -96,6 +109,7 @@ export function ensureBoosted(creep: Creep): boolean {
     const result = lab.boostCreep(creep);
 
     if (result === OK) {
+      delete creep.memory.boostWaitStart;
       creep.memory.boosts.shift();
       if (creep.memory.boosts.length === 0) {
         delete creep.memory.boosts;
@@ -114,6 +128,20 @@ export function ensureBoosted(creep: Creep): boolean {
         (room.terminal?.store.getUsedCapacity(compound) ?? 0) > 0;
       if (!hasSupply) {
         delete creep.memory.boosts;
+        delete creep.memory.boostWaitStart;
+        return true;
+      }
+      // Supply exists somewhere, but a hauler must still ferry it into the lab —
+      // a delivery that can be starved indefinitely (observed live: the storage
+      // link drain monopolised every hauler and 2 upgraders idled ~500 ticks at
+      // the lab while 1.6k GH2O sat in storage). Bound the wait: after
+      // BOOST_WAIT_TIMEOUT ticks parked in range, fail open and work unboosted
+      // rather than idling forever. The compound is left for the next attempt.
+      if (creep.memory.boostWaitStart === undefined) {
+        creep.memory.boostWaitStart = Game.time;
+      } else if (Game.time - creep.memory.boostWaitStart >= BOOST_WAIT_TIMEOUT) {
+        delete creep.memory.boosts;
+        delete creep.memory.boostWaitStart;
         return true;
       }
       return false;
@@ -121,10 +149,12 @@ export function ensureBoosted(creep: Creep): boolean {
 
     // Any other error code → fail-open
     delete creep.memory.boosts;
+    delete creep.memory.boostWaitStart;
     return true;
   }
 
   // All entries consumed (loop completed without returning false)
   delete creep.memory.boosts;
+  delete creep.memory.boostWaitStart;
   return true;
 }

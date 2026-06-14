@@ -235,6 +235,99 @@ describe('ensureBoosted', () => {
     expect(creep.memory.boosts).toHaveLength(1);
   });
 
+  it('fails open after the wait timeout when supply exists but is never delivered to the lab', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');
+
+    // Reserved lab permanently understocked — a hauler never tops it up (the
+    // live starvation case: link drain monopolises all haulers).
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: labPos,
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => ERR_NOT_ENOUGH_RESOURCES),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      // Storage holds GH2O the whole time — hasSupply is always true, so only the
+      // timeout (not the exhausted-supply path) can break the wait.
+      room: mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => []),
+        storage: { store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 5000 : 0) } },
+      }),
+    });
+
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    // First tick: starts the wait timer, keeps waiting.
+    Game.time = 1000;
+    expect(ensureBoosted(creep)).toBe(false);
+    expect(creep.memory.boosts).toBeDefined();
+    expect(creep.memory.boostWaitStart).toBe(1000);
+
+    // Still within the timeout window — keeps waiting, timer unchanged.
+    Game.time = 1040;
+    expect(ensureBoosted(creep)).toBe(false);
+    expect(creep.memory.boosts).toBeDefined();
+    expect(creep.memory.boostWaitStart).toBe(1000);
+
+    // Past the timeout (>= 50 ticks) — fails open and proceeds unboosted.
+    Game.time = 1050;
+    expect(ensureBoosted(creep)).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
+    expect(creep.memory.boostWaitStart).toBeUndefined();
+  });
+
+  it('clears the wait timer once the boost finally succeeds', () => {
+    const labId = 'reserved_lab' as Id<StructureLab>;
+    const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');
+
+    // boostCreep fails the first call (understocked) then succeeds (hauler arrived).
+    let stocked = false;
+    const reservedLab = mockLab({
+      id: labId,
+      compound: 'GH2O',
+      mineralType: 'GH2O',
+      pos: labPos,
+      store: { getUsedCapacity: vi.fn(() => 0) },
+      boostCreep: vi.fn(() => (stocked ? OK : ERR_NOT_ENOUGH_RESOURCES)),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => (id === labId ? reservedLab : undefined)) as any;
+
+    const creep = mockCreep({
+      pos: new (globalThis as any).RoomPosition(25, 25, 'W1N1'),
+      body: [{ type: WORK, hits: 100, boost: undefined }],
+      memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      room: mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => []),
+        storage: { store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 5000 : 0) } },
+      }),
+    });
+
+    Memory.rooms['W1N1'] = { boostLabId: labId, boostCompound: 'GH2O' } as any;
+
+    Game.time = 2000;
+    expect(ensureBoosted(creep)).toBe(false);
+    expect(creep.memory.boostWaitStart).toBe(2000);
+
+    // Hauler delivers; next attempt succeeds. Timer and boosts must be cleared.
+    stocked = true;
+    Game.time = 2010;
+    expect(ensureBoosted(creep)).toBe(true);
+    expect(creep.memory.boosts).toBeUndefined();
+    expect(creep.memory.boostWaitStart).toBeUndefined();
+  });
+
   it('fails open when reserved lab is understocked and compound is exhausted empire-wide', () => {
     const labId = 'reserved_lab' as Id<StructureLab>;
     const labPos = new (globalThis as any).RoomPosition(26, 25, 'W1N1');

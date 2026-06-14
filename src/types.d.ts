@@ -24,6 +24,8 @@ interface CreepMemory {
   role: CreepRoleName;
   /** Desired boosts to apply before the creep starts its role; consumed by ensureBoosted() in src/utils/boost.ts. Entries are removed as applied; the field is deleted once all are done (or on fail-open). */
   boosts?: { part: BodyPartConstant; compound: ResourceConstant }[];
+  /** Tick at which the creep first started waiting in range of the boost lab for an absent compound. Used by ensureBoosted() to bound the wait and fail open rather than idling forever. Cleared on success/fail-open. */
+  boostWaitStart?: number;
   /** ID of the assigned target (source, container, controller, mineral, etc.) */
   targetId?: Id<
     | Source

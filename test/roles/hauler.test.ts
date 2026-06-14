@@ -858,6 +858,106 @@ describe('hauler pickup priority', () => {
     expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
   });
 
+  it('preempts the storage-link drain to service the boost lab when a creep awaits the compound', () => {
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    // Boost lab empty of GH2O (needs topping up), energy already at target.
+    const boostLab = {
+      id: 'bLab' as Id<StructureLab>,
+      structureType: STRUCTURE_LAB,
+      mineralType: null,
+      store: mockStore({ energy: 1000 }, 3000),
+      pos: new RoomPosition(18, 31, 'W1N1'),
+    };
+    const storage = {
+      id: 'stor' as Id<StructureStorage>,
+      store: mockStore({ GH2O: 2000, energy: 50000 }, 60000),
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'bLab') return boostLab;
+      return null;
+    }) as any;
+    // An upgrader in the room is waiting for its GH2O boost.
+    Game.creeps = {
+      hauler_1: {},
+      up_1: {
+        room: { name: 'W1N1' },
+        memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      },
+    } as any;
+    (Memory as any).rooms = {
+      W1N1: { storageLinkId: 'sLink', boostLabId: 'bLab', boostCompound: 'GH2O' },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // GH2O withdrawn from storage for the boost lab — NOT the link drain.
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', 800);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('does NOT preempt the link drain for the boost lab when no creep awaits the compound', () => {
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    const boostLab = {
+      id: 'bLab' as Id<StructureLab>,
+      structureType: STRUCTURE_LAB,
+      mineralType: null,
+      store: mockStore({ energy: 1000 }, 3000),
+      pos: new RoomPosition(18, 31, 'W1N1'),
+    };
+    const storage = {
+      id: 'stor' as Id<StructureStorage>,
+      store: mockStore({ GH2O: 2000, energy: 50000 }, 60000),
+    };
+
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'bLab') return boostLab;
+      return null;
+    }) as any;
+    // No creep awaiting a boost — the link drain must win.
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = {
+      W1N1: { storageLinkId: 'sLink', boostLabId: 'bLab', boostCompound: 'GH2O' },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'GH2O', expect.anything());
+  });
+
   it('falls back to full source container when storage link is empty', () => {
     const fullContainer = {
       id: 'cSrc' as Id<StructureContainer>,

@@ -253,6 +253,25 @@ function pickup(creep: Creep): boolean {
     }
   }
 
+  // Boost-lab service normally ranks below the storage-link drain (see the
+  // pickupBoostLab call further down). But source links refill the storage link
+  // every tick, so when haulers are saturated the drain never yields and the
+  // boost lab is never topped up — a creep then parks at the lab waiting for a
+  // compound that sits unused in storage (observed live W43N58: 2 upgraders idle
+  // ~500 ticks while 1.6k GH2O sat in storage). When (and only when) a creep is
+  // actually awaiting that compound, preempt the link drain — and the existing
+  // commitment — to service the lab. Bounded and self-limiting: pickupBoostLab
+  // returns false once the lab is stocked, and the await check clears the moment
+  // the creep is boosted, so normal link-first operation is untouched.
+  if (
+    mem?.boostLabId &&
+    mem.boostCompound &&
+    anyCreepAwaitingBoost(creep.room, mem.boostCompound) &&
+    pickupBoostLab(creep, mem)
+  ) {
+    return true;
+  }
+
   // Continue committed pickup task if still valid
   if (continueCommittedPickup(creep)) return true;
 
@@ -644,6 +663,23 @@ function pickupLabOutput(creep: Creep, mem: RoomMemory | undefined): boolean {
  * the boost lab is serviced promptly while still losing to urgent spawn-energy
  * and decay-critical large drops, matching the existing lab priority slot.
  */
+/**
+ * True when at least one creep in `room` is still waiting for a boost of
+ * `compound` (its memory.boosts lists that compound). Cached per room per tick.
+ * Drives the boost-lab-service-preempts-link-drain decision in pickup().
+ */
+function anyCreepAwaitingBoost(room: Room, compound: ResourceConstant): boolean {
+  return cached(`hauler:awaitingBoost:${room.name}`, () => {
+    for (const c of Object.values(Game.creeps)) {
+      const boosts = c.memory?.boosts;
+      if (!boosts || !boosts.some((b) => b.compound === compound)) continue;
+      if (c.room?.name !== room.name) continue;
+      return true;
+    }
+    return false;
+  });
+}
+
 function pickupBoostLab(creep: Creep, mem: RoomMemory | undefined): boolean {
   if (!mem?.boostLabId || !mem.boostCompound) return false;
   const lab = Game.getObjectById(mem.boostLabId);
