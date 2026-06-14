@@ -169,6 +169,15 @@ Both tiers' `throttleAt` sit **below** our ~5500 idle bucket on purpose — at n
 
 `scripts/deploy.mjs` POSTs `dist/main.js` to Screeps API with `X-Token` auth. Config in `.env` (gitignored). `npm run deploy` auto-bumps patch version; build stamps a version banner on line 1 of the bundle.
 
+### Live inspection (context-cheap, no MCP)
+
+`scripts/screeps-query.mjs` reads live bot state over the Screeps HTTP API, reusing the **same `.env` `SCREEPS_TOKEN`** as deploy (sent as `X-Token`; never printed, never a CLI arg). It exists to keep agent context small: the `screeps-mcp` read tools dump large raw payloads (console buffers full of log chatter, whole Memory subtrees) into context, whereas this prints only a scoped, already-filtered result.
+
+- `node scripts/screeps-query.mjs mem <path>` — GET a Memory subtree (dot path, e.g. `mem _health`, `mem boostStats`, `mem rooms.W43N58`), gzip-decoded. No game-tick latency, no size limit. **Preferred for anything that lives in Memory.**
+- `node scripts/screeps-query.mjs probe <file.js>` — run a single JS expression in-game (from a file in `scripts/probes/`), capture its return into `Memory._probe`, poll until fresh, print it. For live `Game.*` data not in Memory. **Constraints:** the Screeps console caps expression size (~1KB — the script strips comments/indentation but not intra-line spacing, so keep probe files free of inline mid-code comments and double-spaces inside string literals), and the console command queue has variable latency (~12–60s).
+
+The bot writes a compact health snapshot to `Memory._health` every `HEALTH_SNAPSHOT_INTERVAL` ticks (`src/utils/healthSnapshot.ts`, called from the loop) — read-only telemetry, nothing consumes it. This makes the **HealthCheck skill** a single `mem _health` read instead of three MCP console probes. Uses `myStorage`/`myTerminal` so reclaimed rooms report our structures. The MCP server stays available as a documented fallback in the skill.
+
 ### Error mapping
 
 `src/utils/ErrorMapper.ts` wraps the loop with a synchronous VLQ decoder (not `source-map` — it's async/too slow) to map runtime errors to TypeScript source lines. Map cached across ticks, rebuilt on global reset.
