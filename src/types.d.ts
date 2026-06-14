@@ -552,6 +552,62 @@ interface Memory {
     room: string;
     homeRoom: string;
   };
+  /**
+   * Compact live-health snapshot refreshed every HEALTH_SNAPSHOT_INTERVAL ticks
+   * by writeHealthSnapshot() (src/utils/healthSnapshot.ts). It exists purely so
+   * the bot's health can be inspected with a single cheap Memory-path read
+   * (`scripts/screeps-query.mjs mem _health`) instead of dumping a console buffer
+   * through the MCP server — the filtering happens here, in-game, so only the
+   * small object crosses the wire. Read-only telemetry; nothing in the bot
+   * consumes it.
+   */
+  _health?: HealthSnapshot;
+}
+
+/** One owned-room entry in the {@link HealthSnapshot}. Field names kept terse to keep the snapshot small. */
+interface HealthRoomSnapshot {
+  n: string;
+  rcl: number;
+  /** controller progress %, 1dp */
+  cp: number;
+  /** safe-mode ticks remaining (0 = inactive) */
+  sm: number;
+  /** "available/capacity" spawn energy */
+  se: string;
+  /** own-storage energy, or null if no own storage */
+  stE: number | null;
+  /** own-storage non-energy minerals */
+  stM: Record<string, number>;
+  /** own-terminal energy, or null */
+  tE: number | null;
+  /** own-terminal non-energy minerals */
+  tM: Record<string, number>;
+  /** per-lab "mineral:amount" ("-:0" when empty) */
+  lab: string[];
+  /** reserved boost compound, or null */
+  bl: string | null;
+  /** active reaction output, or null */
+  rx: string | null;
+}
+
+/** See {@link Memory._health}. Mirrors the HealthCheck skill's rendered shape. */
+interface HealthSnapshot {
+  t: number;
+  sys: {
+    b: number;
+    lim: number;
+    tl: number;
+    gcl: number;
+    gp: number;
+    cr: number;
+    ord: number;
+    loop: number | null;
+    sells: string[];
+    buys: string[];
+    tr: string[];
+  };
+  rooms: HealthRoomSnapshot[];
+  boost: string;
 }
 
 // Screeps provides a global require for loading modules

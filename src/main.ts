@@ -36,6 +36,7 @@ import {
   TRANSPORT_DRAIN_ALL,
 } from './utils/missions';
 import { myStorage } from './utils/ownership';
+import { writeHealthSnapshot, HEALTH_SNAPSHOT_INTERVAL } from './utils/healthSnapshot';
 import { roles } from './roles';
 
 // Console-callable exports.
@@ -311,6 +312,10 @@ export const loop = ErrorMapper.wrapLoop(() => {
     if (shouldRun({ interval: 5, priority: THROTTLE_LOW }))
       profile('construction', runConstruction);
     if (shouldRun({ priority: THROTTLE_LOW })) profile('visuals', runVisuals);
+
+    // Read-only telemetry: refresh the compact health snapshot for cheap
+    // out-of-band inspection (scripts/screeps-query.mjs mem _health).
+    if (Game.time % HEALTH_SNAPSHOT_INTERVAL === 0) profile('healthSnapshot', writeHealthSnapshot);
 
     flushSegments();
   });
