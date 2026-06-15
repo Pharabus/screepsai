@@ -117,6 +117,41 @@ describe('computeLayout', () => {
     }
   });
 
+  it('keeps the storage accessible — does not box it in with extensions', () => {
+    // Live regression (W44N57): the extension stamp filled all but one neighbour of
+    // the storage, deadlocking creeps queueing for the single access tile. The
+    // planner must reserve >= STORAGE_ACCESS_MIN (3) walkable neighbours.
+    const room = makeRoom({
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
+    });
+    const plan = computeLayout(room)!;
+    const sp = plan.storagePos;
+    const occupied = new Set<string>([
+      `${plan.terminalPos.x},${plan.terminalPos.y}`,
+      ...(plan.factoryPos ? [`${plan.factoryPos.x},${plan.factoryPos.y}`] : []),
+      ...plan.towerPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.labPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.extensionPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.spawnPositions.map((p) => `${p.x},${p.y}`),
+    ]);
+    const neighbors: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    const open = neighbors.filter(([dx, dy]) => {
+      const x = sp.x + dx;
+      const y = sp.y + dy;
+      return x >= 2 && x <= 47 && y >= 2 && y <= 47 && !occupied.has(`${x},${y}`);
+    });
+    expect(open.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('skips wall tiles for extension positions', () => {
     const spawn = new RoomPosition(25, 25, 'W1N1');
     // Wall at first stamp position (-1, -2) relative to spawn

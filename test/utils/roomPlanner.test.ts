@@ -1,4 +1,5 @@
 import { resetGameGlobals, mockRoom } from '../mocks/screeps';
+import { LAYOUT_PLAN_VERSION } from '../../src/utils/layoutPlanner';
 import {
   ensureRoomPlan,
   ensureRemoteRoomPlan,
@@ -478,7 +479,7 @@ describe('roomPlanner', () => {
       ensureRoomPlan(room);
 
       // Stale plan cleared; a fresh plan (current version) computed
-      expect(Memory.rooms['W1N1'].layoutPlan?.version).toBe(3);
+      expect(Memory.rooms['W1N1'].layoutPlan?.version).toBe(LAYOUT_PLAN_VERSION);
     });
 
     it('preserves a current layoutPlan without recomputing', () => {
@@ -493,7 +494,7 @@ describe('roomPlanner', () => {
       Memory.rooms['W1N1'] = {
         sources: [],
         layoutPlan: {
-          version: 3,
+          version: LAYOUT_PLAN_VERSION,
           storagePos: { x: 10, y: 10 },
           terminalPos: { x: 11, y: 10 },
           towerPositions: [],
@@ -514,7 +515,7 @@ describe('roomPlanner', () => {
 
   describe('pathDist computation', () => {
     const STUB_LAYOUT = {
-      version: 3,
+      version: LAYOUT_PLAN_VERSION,
       storagePos: { x: 25, y: 25 },
       terminalPos: { x: 26, y: 25 },
       towerPositions: [],

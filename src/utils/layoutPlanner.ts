@@ -82,7 +82,17 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 3;
+export const LAYOUT_PLAN_VERSION = 4;
+
+/**
+ * Minimum walkable tiles to keep open around the storage. The storage is the
+ * room's logistics hub — every hauler/worker that withdraws or deposits must
+ * stand on an adjacent tile, so too few access tiles deadlocks creeps queueing
+ * for the one opening (observed live W44N57: storage boxed to a single open
+ * neighbour by extensions, ~5 creeps frozen in the approach corridor). Reserved
+ * before extension placement so the stamp can never close them off.
+ */
+const STORAGE_ACCESS_MIN = 3;
 
 export interface LayoutPlan {
   version: number;
@@ -156,6 +166,18 @@ const CARDINALS: [number, number][] = [
   [1, 0],
   [0, -1],
   [0, 1],
+];
+
+/** All 8 surrounding offsets — range-1 reach (withdraw/transfer/build) includes diagonals. */
+const EIGHT_NEIGHBORS: [number, number][] = [
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [-1, 0],
+  [1, 0],
+  [-1, 1],
+  [0, 1],
+  [1, 1],
 ];
 
 /**
@@ -458,6 +480,28 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   // Step 4: Tower positions — seed from live towers, fill remaining slots spread around spawn
   const towerPositions = pickTowerPositions(room, liveMap, spawn.pos, reserved, terrain, 6);
   for (const t of towerPositions) reserved.add(`${t.x},${t.y}`);
+
+  // Step 4b: Reserve storage access tiles BEFORE extensions so the stamp can't box
+  // in the storage. Walks all 8 neighbours (range-1 reach includes diagonals) and
+  // reserves up to STORAGE_ACCESS_MIN that are walkable floor — not a wall, not an
+  // already-reserved hub structure (terminal/factory/labs/towers), and not a built
+  // non-walkable structure. Whatever is already open stays open; extensions skip
+  // reserved tiles. (Terminal/factory/labs legitimately consume some neighbours, so
+  // this reserves the best of what remains rather than a fixed count.)
+  let storageAccessReserved = 0;
+  for (const [dx, dy] of EIGHT_NEIGHBORS) {
+    if (storageAccessReserved >= STORAGE_ACCESS_MIN) break;
+    const x = storagePos.x + dx;
+    const y = storagePos.y + dy;
+    if (!inBounds(x, y)) continue;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+    const key = `${x},${y}`;
+    if (reserved.has(key)) continue; // already a hub structure — not an open access tile
+    const built = liveMap.get(key);
+    if (built && NON_WALKABLE_STRUCTURES.has(built)) continue; // built obstacle — can't be access
+    reserved.add(key);
+    storageAccessReserved++;
+  }
 
   // Step 5: Extension positions — stamp minus reserved and live-blocked, with overflow.
   const extensionPositions: { x: number; y: number }[] = [];
