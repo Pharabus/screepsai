@@ -2,13 +2,14 @@ import {
   ENERGY_TERMINAL_BUFFER,
   BATTERY_TERMINAL_SELL_FLOOR,
   MINERAL_TERMINAL_SELL_FLOOR,
+  INTERMEDIATE_SATURATION,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
   MIN_BUY_ENERGY_BASE,
   LAB_BUY_CREDIT_RESERVE,
 } from '../utils/thresholds';
-import { getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
-import { getChainIntermediates } from '../utils/reactions';
+import { buildAvailableMap, getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
+import { getChainIntermediates, GOAL_CAPS } from '../utils/reactions';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 import { colonyEnergy } from '../utils/economy';
 
@@ -163,10 +164,17 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   // Ask the lab manager which minerals the current chain needs
   const needs = getChainBuyNeeds(room);
 
-  // Also include current active reaction inputs as fallback
+  // Also include current active reaction inputs as fallback — but only when
+  // its output isn't already backed up. Without this guard the fallback could
+  // buy inputs (e.g. L) for a reaction whose product (UL) has piled up past
+  // INTERMEDIATE_SATURATION, the same wasteful buy getChainBuyNeeds now filters.
   const toConsider: ResourceConstant[] = [...needs];
   if (mem.activeReaction && toConsider.length === 0) {
-    toConsider.push(mem.activeReaction.input1, mem.activeReaction.input2);
+    const available = buildAvailableMap(room);
+    const outputStock = available.get(mem.activeReaction.output) ?? 0;
+    if (outputStock < INTERMEDIATE_SATURATION) {
+      toConsider.push(mem.activeReaction.input1, mem.activeReaction.input2);
+    }
   }
 
   for (const mineral of toConsider) {
@@ -520,4 +528,106 @@ export function runTerminal(): void {
       sellSurplus(room, terminal);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Economy observability — marketStatus() console command
+// ---------------------------------------------------------------------------
+// Mirrors the boostStatus()/combatLog() pattern: a console command that turns
+// a Memory ring + on-demand Game.market/Memory.rooms reads into a one-shot
+// human-readable diagnosis. Built so the *next* lab/market stall ("why isn't
+// it buying/selling/reacting") is a single command instead of log-tailing.
+// ---------------------------------------------------------------------------
+
+/** Credits trend description from {@link Memory.creditHistory} (oldest vs newest sample). */
+function creditTrend(): string {
+  const history = Memory.creditHistory;
+  if (!history || history.length < 2) return 'no trend data yet';
+  const first = history[0]!;
+  const last = history[history.length - 1]!;
+  const delta = last.cr - first.cr;
+  const ticks = last.t - first.t;
+  if (ticks <= 0) return `${last.cr} cr`;
+  const sign = delta > 0 ? '+' : '';
+  return `${last.cr} cr (${sign}${delta} over ${ticks}t)`;
+}
+
+/**
+ * Human-readable economy diagnosis for the `marketStatus()` console command.
+ * Computed on-demand from Game.market + Memory.rooms — no dedicated Memory
+ * state beyond the creditHistory ring (see writeHealthSnapshot). Reports, for
+ * the lab hub: credits + trend, the active reaction and its GH2O-goal
+ * progress, any stranded intermediates (>= INTERMEDIATE_SATURATION — what's
+ * blocking further buys), what buying is currently gated on, and recent
+ * buys/sells (from Memory._health, refreshed every HEALTH_SNAPSHOT_INTERVAL).
+ */
+export function formatMarketStatus(): string {
+  const lines: string[] = [];
+  lines.push(`credits: ${creditTrend()}`);
+
+  const hubName = getLabHubName();
+  const hub = hubName ? Game.rooms[hubName] : undefined;
+  if (!hubName || !hub) {
+    lines.push('no lab hub detected');
+    return lines.join('\n');
+  }
+
+  const mem = Memory.rooms[hubName];
+  lines.push(`hub: ${hubName}`);
+
+  const active = mem?.activeReaction;
+  if (active) {
+    const available = buildAvailableMap(hub);
+    const stock = available.get(active.output) ?? 0;
+    const cap = GOAL_CAPS[active.output];
+    const capStr = cap !== undefined ? ` (cap ${cap})` : '';
+    lines.push(
+      `active reaction: ${active.input1}+${active.input2}->${active.output} = ${stock}${capStr}`,
+    );
+  } else {
+    lines.push('active reaction: none');
+  }
+  if (mem?.labFlushing) lines.push('labFlushing: true');
+
+  // Stranded intermediates: compounds at/above INTERMEDIATE_SATURATION —
+  // these are what's currently blocking further leaf buys for their chain.
+  if (mem) {
+    const available = buildAvailableMap(hub);
+    const stranded: string[] = [];
+    for (const [resource, amount] of available) {
+      if (amount >= INTERMEDIATE_SATURATION && getChainIntermediates().has(resource)) {
+        stranded.push(`${resource}=${amount}`);
+      }
+    }
+    lines.push(
+      stranded.length > 0
+        ? `stranded intermediates: ${stranded.join(', ')}`
+        : 'stranded intermediates: none',
+    );
+  }
+
+  // What's currently gating buyForLabs.
+  if (Memory.pauseLabBuying) {
+    lines.push('buying: PAUSED (Memory.pauseLabBuying)');
+  } else if (Game.market.credits <= LAB_BUY_CREDIT_RESERVE) {
+    lines.push(
+      `buying: gated — credits ${Math.round(Game.market.credits)} <= reserve ${LAB_BUY_CREDIT_RESERVE}`,
+    );
+  } else {
+    const storageEnergy = hub.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+    if (storageEnergy < MIN_BUY_ENERGY_BASE) {
+      lines.push(`buying: gated — storage energy ${storageEnergy} < ${MIN_BUY_ENERGY_BASE}`);
+    } else {
+      const needs = getChainBuyNeeds(hub);
+      lines.push(needs.length > 0 ? `buying: wants ${needs.join(', ')}` : 'buying: nothing needed');
+    }
+  }
+
+  const health = Memory._health;
+  if (health) {
+    if (health.sys.buys.length > 0) lines.push(`recent buys: ${health.sys.buys.join(', ')}`);
+    if (health.sys.sells.length > 0) lines.push(`recent sells: ${health.sys.sells.join(', ')}`);
+  }
+
+  return lines.join('\n');
 }

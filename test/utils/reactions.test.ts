@@ -1,11 +1,22 @@
 import {
+  backedUpLeaves,
   buildReactionChain,
   chainMissingInputs,
   findNextChainStep,
   getChainIntermediates,
+  isReactionViable,
   type ReactionStep,
 } from '../../src/utils/reactions';
 import { resetGameGlobals } from '../mocks/screeps';
+
+/** Minimal StructureLab stub exposing only store.getUsedCapacity. */
+function mockInputLab(stored: Partial<Record<ResourceConstant, number>> = {}): any {
+  return {
+    store: {
+      getUsedCapacity: (r?: ResourceConstant) => (r ? (stored[r] ?? 0) : 0),
+    },
+  };
+}
 
 beforeEach(() => {
   resetGameGlobals();
@@ -269,5 +280,110 @@ describe('getChainIntermediates', () => {
 
   it('excludes RESOURCE_BATTERY (not in any reaction chain)', () => {
     expect(intermediates.has(RESOURCE_BATTERY)).toBe(false);
+  });
+});
+
+describe('isReactionViable', () => {
+  const reaction: ReactionStep = {
+    input1: 'Z' as ResourceConstant,
+    input2: 'K' as ResourceConstant,
+    output: 'ZK' as ResourceConstant,
+  };
+
+  it('is viable when both inputs meet MIN_STEP_AMOUNT via storage/terminal alone', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['Z', 500] as [ResourceConstant, number],
+      ['K', 500] as [ResourceConstant, number],
+    ]);
+    const lab1 = mockInputLab();
+    const lab2 = mockInputLab();
+    expect(isReactionViable(reaction, available, lab1, lab2)).toBe(true);
+  });
+
+  it('is viable when supply comes from the input labs rather than storage', () => {
+    // A loaded, mid-consumption batch: storage is drawn down to 0 but the
+    // input labs still hold a viable pair — must NOT read as unviable, or
+    // runLabs would thrash off a reaction that's actively running.
+    const available = new Map<ResourceConstant, number>();
+    const lab1 = mockInputLab({ Z: 300 } as Partial<Record<ResourceConstant, number>>);
+    const lab2 = mockInputLab({ K: 300 } as Partial<Record<ResourceConstant, number>>);
+    expect(isReactionViable(reaction, available, lab1, lab2)).toBe(true);
+  });
+
+  it('combines storage and lab contents to reach the threshold', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['Z', 100] as [ResourceConstant, number],
+      ['K', 100] as [ResourceConstant, number],
+    ]);
+    const lab1 = mockInputLab({ Z: 100 } as Partial<Record<ResourceConstant, number>>);
+    const lab2 = mockInputLab({ K: 100 } as Partial<Record<ResourceConstant, number>>);
+    // 100 + 100 = 200 = MIN_STEP_AMOUNT for each input
+    expect(isReactionViable(reaction, available, lab1, lab2)).toBe(true);
+  });
+
+  it('is not viable when neither storage nor labs hold enough of an input', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['Z', 500] as [ResourceConstant, number],
+      // K missing entirely
+    ]);
+    const lab1 = mockInputLab();
+    const lab2 = mockInputLab();
+    expect(isReactionViable(reaction, available, lab1, lab2)).toBe(false);
+  });
+});
+
+describe('backedUpLeaves', () => {
+  // NB: the mock REACTIONS table treats G as a base mineral (no ZK+UL->G), so
+  // OH/GH are the representative produced-and-consumed intermediates here.
+  // Chain for GH2O: O+H->OH, G+H->GH, OH+GH->GH2O.
+  const chain: ReactionStep[] = [
+    {
+      input1: 'O' as ResourceConstant,
+      input2: 'H' as ResourceConstant,
+      output: 'OH' as ResourceConstant,
+    },
+    {
+      input1: 'G' as ResourceConstant,
+      input2: 'H' as ResourceConstant,
+      output: 'GH' as ResourceConstant,
+    },
+    {
+      input1: 'OH' as ResourceConstant,
+      input2: 'GH' as ResourceConstant,
+      output: 'GH2O' as ResourceConstant,
+    },
+  ];
+
+  it('returns the leaf inputs of a step whose output is saturated', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['OH', 6000] as [ResourceConstant, number], // >= saturation (5000)
+      ['GH', 100] as [ResourceConstant, number],
+    ]);
+    const leaves = backedUpLeaves(chain, available, 5000);
+    // OH is saturated -> its leaves O and H are backed up
+    expect(leaves.has('O' as ResourceConstant)).toBe(true);
+    expect(leaves.has('H' as ResourceConstant)).toBe(true);
+    // GH is below saturation -> its leaf G is NOT backed up (just from this step)
+    expect(leaves.has('G' as ResourceConstant)).toBe(false);
+  });
+
+  it('excludes leaves of steps whose output is below saturation', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['OH', 100] as [ResourceConstant, number],
+      ['GH', 100] as [ResourceConstant, number],
+      ['GH2O', 100] as [ResourceConstant, number],
+    ]);
+    const leaves = backedUpLeaves(chain, available, 5000);
+    expect(leaves.size).toBe(0);
+  });
+
+  it('does not return intermediate outputs as leaves (only base minerals)', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['GH2O', 6000] as [ResourceConstant, number], // saturated final step
+    ]);
+    const leaves = backedUpLeaves(chain, available, 5000);
+    // GH2O's inputs are OH and GH, both produced earlier in the chain — not leaves
+    expect(leaves.has('OH' as ResourceConstant)).toBe(false);
+    expect(leaves.has('GH' as ResourceConstant)).toBe(false);
   });
 });

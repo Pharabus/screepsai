@@ -569,6 +569,21 @@ interface Memory {
    * console through the MCP server. Each entry: tick + (truncated) stack.
    */
   _errors?: { t: number; msg: string }[];
+  /**
+   * Ring-buffer of recent `{ tick, credits }` samples, appended by
+   * writeHealthSnapshot() every HEALTH_SNAPSHOT_INTERVAL ticks and capped at
+   * CREDIT_HISTORY_MAX entries (~20, i.e. ~200 ticks of trend). Feeds
+   * `marketStatus()`'s credit-trend line — "is the lab/market economy net
+   * gaining or bleeding credits" was previously answerable only by manually
+   * sampling Game.market.credits over time.
+   */
+  creditHistory?: CreditHistoryEntry[];
+}
+
+/** One sample in {@link Memory.creditHistory}. */
+interface CreditHistoryEntry {
+  t: number;
+  cr: number;
 }
 
 /** One owned-room entry in the {@link HealthSnapshot}. Field names kept terse to keep the snapshot small. */

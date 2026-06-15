@@ -34,25 +34,31 @@ function setupRoom(
   rcl: number,
   labSetup: { labIds: string[]; inputLabIds: [string, string]; activeReaction?: any },
 ): any {
+  // buildAvailableMap (src/managers/labs.ts) reads storage/terminal contents
+  // via Object.entries(store) — mirroring the real Store, which exposes
+  // resource constants as own enumerable properties. getUsedCapacity/
+  // getFreeCapacity must be non-enumerable so they don't show up as bogus
+  // "resources" in that scan.
+  const storageStore: Record<string, any> = { H: 5000, O: 5000 };
+  Object.defineProperty(storageStore, 'getUsedCapacity', {
+    enumerable: false,
+    value: vi.fn(() => 10000),
+  });
+  const terminalStore: Record<string, any> = {};
+  Object.defineProperty(terminalStore, 'getUsedCapacity', {
+    enumerable: false,
+    value: vi.fn(() => 0),
+  });
+  Object.defineProperty(terminalStore, 'getFreeCapacity', {
+    enumerable: false,
+    value: vi.fn(() => 100000),
+  });
+
   const room = mockRoom({
     name: 'W1N1',
     controller: { my: true, level: rcl },
-    storage: {
-      store: {
-        getUsedCapacity: vi.fn(() => 10000),
-        [Symbol.iterator]: function* () {
-          yield ['H', 5000];
-          yield ['O', 5000];
-        },
-      },
-    },
-    terminal: {
-      store: {
-        getUsedCapacity: vi.fn(() => 0),
-        getFreeCapacity: vi.fn(() => 100000),
-        [Symbol.iterator]: function* () {},
-      },
-    },
+    storage: { store: storageStore },
+    terminal: { store: terminalStore },
   });
 
   (Memory as any).rooms = {
@@ -634,25 +640,28 @@ describe('runLabs', () => {
     });
 
     // W1N1 has 6 labs → it's the hub
+    // buildAvailableMap reads via Object.entries(store) — see setupRoom's
+    // comment. H/O must be enumerable own properties; getUsedCapacity non-enumerable.
+    const storageStore: Record<string, any> = { H: 5000, O: 5000 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn(() => 10000),
+    });
+    const terminalStore: Record<string, any> = {};
+    Object.defineProperty(terminalStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn(() => 0),
+    });
+    Object.defineProperty(terminalStore, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn(() => 100000),
+    });
+
     const room = mockRoom({
       name: 'W1N1',
       controller: { my: true, level: 7 },
-      storage: {
-        store: {
-          getUsedCapacity: vi.fn(() => 10000),
-          [Symbol.iterator]: function* () {
-            yield ['H', 5000];
-            yield ['O', 5000];
-          },
-        },
-      },
-      terminal: {
-        store: {
-          getUsedCapacity: vi.fn(() => 0),
-          getFreeCapacity: vi.fn(() => 100000),
-          [Symbol.iterator]: function* () {},
-        },
-      },
+      storage: { store: storageStore },
+      terminal: { store: terminalStore },
     });
     (Game as any).rooms = { W1N1: room };
     (Memory as any).rooms = {
@@ -669,6 +678,68 @@ describe('runLabs', () => {
     const mem = Memory.rooms['W1N1'];
     // Hub retains (or refreshes) activeReaction — must still be defined
     expect(mem?.activeReaction).toBeDefined();
+  });
+
+  it('re-selects mid-interval when the active reaction is unviable and a different one is viable', () => {
+    // Game.time is NOT a multiple of REACTION_CHECK_INTERVAL (500), so only the
+    // event-driven unviable check can trigger re-selection here.
+    //
+    // Active reaction is Z+K->ZK, but neither storage nor the input labs hold
+    // any Z or K -> unviable. Storage holds H:5000/O:5000, so the GH2O goal's
+    // first viable step (H+O->OH) is selectable and must be picked instead.
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: null, stored: {} });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: null, stored: {} });
+    const outputLab = mockLab({ id: 'lab3', capacity: { OH: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    setupRoom(6, {
+      labIds: ['lab1', 'lab2', 'lab3'],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'Z', input2: 'K', output: 'ZK' },
+    });
+    (Game as any).time = 123; // not a %500 tick
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    expect(mem?.activeReaction?.output).not.toBe('ZK');
+    expect(mem?.activeReaction?.output).toBe('OH');
+  });
+
+  it('does NOT re-select mid-interval while labFlushing is true, even if the active reaction is unviable', () => {
+    // Same unviable Z+K->ZK setup as above, but labFlushing is already true —
+    // the event-driven re-eval must be suppressed so the established flush
+    // path (not a fresh selection) handles the stale input labs.
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'L', stored: { L: 500 } });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'O', stored: { O: 100 } });
+    const outputLab = mockLab({ id: 'lab3', capacity: { ZK: 3000 } });
+
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+
+    setupRoom(6, {
+      labIds: ['lab1', 'lab2', 'lab3'],
+      inputLabIds: ['lab1', 'lab2'] as [string, string],
+      activeReaction: { input1: 'Z', input2: 'K', output: 'ZK' },
+    });
+    (Memory.rooms['W1N1'] as any).labFlushing = true;
+    (Game as any).time = 123; // not a %500 tick
+
+    runLabs();
+
+    const mem = Memory.rooms['W1N1'];
+    // activeReaction unchanged — re-selection was suppressed by labFlushing
+    expect(mem?.activeReaction?.output).toBe('ZK');
   });
 });
 

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeHealthSnapshot, HEALTH_SNAPSHOT_INTERVAL } from '../../src/utils/healthSnapshot';
+import {
+  writeHealthSnapshot,
+  HEALTH_SNAPSHOT_INTERVAL,
+  CREDIT_HISTORY_MAX,
+} from '../../src/utils/healthSnapshot';
 import { resetGameGlobals, mockRoom } from '../mocks/screeps';
 
 /** Give the bare mock Game the cpu/market/gcl shape writeHealthSnapshot reads. */
@@ -153,5 +157,42 @@ describe('writeHealthSnapshot', () => {
 
   it('snapshot interval is a sane positive cadence', () => {
     expect(HEALTH_SNAPSHOT_INTERVAL).toBeGreaterThan(0);
+  });
+
+  describe('creditHistory ring', () => {
+    it('appends a {t, cr} entry on each call', () => {
+      (globalThis as any).Game.rooms = {};
+      (globalThis as any).Game.time = 1000;
+      (globalThis as any).Game.market.credits = 100_000;
+      writeHealthSnapshot();
+
+      (globalThis as any).Game.time = 1010;
+      (globalThis as any).Game.market.credits = 100_500;
+      writeHealthSnapshot();
+
+      const history = (globalThis as any).Memory.creditHistory;
+      expect(history).toEqual([
+        { t: 1000, cr: 100_000 },
+        { t: 1010, cr: 100_500 },
+      ]);
+    });
+
+    it('caps the ring at CREDIT_HISTORY_MAX entries, dropping the oldest first', () => {
+      (globalThis as any).Game.rooms = {};
+      for (let i = 0; i < CREDIT_HISTORY_MAX + 5; i++) {
+        (globalThis as any).Game.time = 1000 + i * 10;
+        (globalThis as any).Game.market.credits = 100_000 + i;
+        writeHealthSnapshot();
+      }
+
+      const history = (globalThis as any).Memory.creditHistory;
+      expect(history).toHaveLength(CREDIT_HISTORY_MAX);
+      // Oldest 5 entries dropped — first remaining entry is the 6th sample (i=5)
+      expect(history[0]).toEqual({ t: 1050, cr: 100_005 });
+      expect(history[history.length - 1]).toEqual({
+        t: 1000 + (CREDIT_HISTORY_MAX + 4) * 10,
+        cr: 100_000 + CREDIT_HISTORY_MAX + 4,
+      });
+    });
   });
 });

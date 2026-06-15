@@ -2,6 +2,7 @@ import {
   runTerminal,
   resetColonySendCache,
   resetReceiversThisTick,
+  formatMarketStatus,
 } from '../../src/managers/terminal';
 import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetColonyScoreCache } from '../../src/utils/colonyPlanner';
@@ -838,6 +839,89 @@ describe('runTerminal — lab buying', () => {
     // H is already above BUY_BATCH_SIZE so no buy should be placed
     const buyCalls = (Game.market.deal as any).mock.calls;
     expect(buyCalls).toHaveLength(0);
+    consoleSpy.mockRestore();
+  });
+
+  it('does not buy a leaf input for a saturated chain product (active-reaction fallback)', () => {
+    // O/H/G are all stocked (>= MIN_STEP_AMOUNT), so the GH2O chain has no
+    // missing inputs and is "currently producing" -> getChainBuyNeeds returns
+    // [] and buyForLabs falls back to activeReaction's inputs (Z, H).
+    // ZH (the active reaction's output) is >= INTERMEDIATE_SATURATION (5000)
+    // -> the fallback must be suppressed, so H is never bought even though
+    // storage holds none.
+    (Game as any).time = 500;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const storageStore: Record<string, any> = { O: 500, H: 500, G: 500, ZH: 6000, energy: 50000 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: { store: storageStore },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H' || opts.resourceType === 'Z') {
+        return [{ id: 'sell1', price: 0.1, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('still buys the active reaction inputs when its output is below saturation', () => {
+    // Same setup (GH2O chain fully stocked -> needs=[]), but ZH is below
+    // INTERMEDIATE_SATURATION (5000) -> the fallback fires and considers
+    // buying H even though storage already holds some (below BUY_BATCH_SIZE).
+    (Game as any).time = 500;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const storageStore: Record<string, any> = { O: 500, H: 500, G: 500, ZH: 100, energy: 50000 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: { store: storageStore },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 0.1, remainingAmount: 5000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('sell1', expect.any(Number), 'W1N1');
     consoleSpy.mockRestore();
   });
 
@@ -1732,5 +1816,115 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     // No hub → fallback to selling surplus locally
     expect(Game.market.deal).toHaveBeenCalledWith('order1', expect.any(Number), 'W1N1');
     consoleSpy.mockRestore();
+  });
+});
+
+describe('formatMarketStatus', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    (Game as any).market = {
+      credits: 1_000_000,
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+  });
+
+  it('reports "no lab hub detected" when no room has labs configured', () => {
+    (Game as any).rooms = { W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 4 } }) };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const status = formatMarketStatus();
+
+    expect(status).toContain('no lab hub detected');
+  });
+
+  it('reports "no trend data yet" when creditHistory has fewer than 2 samples', () => {
+    (Game as any).rooms = { W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 4 } }) };
+    (Memory as any).rooms = { W1N1: {} };
+    (Memory as any).creditHistory = [{ t: 100, cr: 1_000_000 }];
+
+    const status = formatMarketStatus();
+
+    expect(status).toContain('no trend data yet');
+  });
+
+  it('renders the hub line with active reaction, stock, and credit trend', () => {
+    const storageStore: Record<string, any> = { O: 500, H: 500, GH2O: 1000 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: undefined,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'],
+        activeReaction: { input1: 'O', input2: 'H', output: 'OH' },
+      },
+    };
+    (Memory as any).creditHistory = [
+      { t: 100, cr: 1_000_000 },
+      { t: 200, cr: 1_001_000 },
+    ];
+
+    const status = formatMarketStatus();
+
+    expect(status).toContain('hub: W1N1');
+    expect(status).toContain('active reaction: O+H->OH');
+    expect(status).toContain('1001000 cr (+1000 over 100t)');
+  });
+
+  it('lists stranded intermediates at or above INTERMEDIATE_SATURATION', () => {
+    const storageStore: Record<string, any> = { OH: 6000, GH: 100 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: undefined,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+
+    const status = formatMarketStatus();
+
+    // OH is an intermediate (produced+reconsumed in the mock chain) and >= 5000
+    expect(status).toContain('stranded intermediates: OH=6000');
+  });
+
+  it('reports "stranded intermediates: none" when nothing is backed up', () => {
+    const storageStore: Record<string, any> = { O: 100, H: 100 };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageStore[r] ?? 0) : 0)),
+    });
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: storageStore },
+      terminal: undefined,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+
+    const status = formatMarketStatus();
+
+    expect(status).toContain('stranded intermediates: none');
   });
 });

@@ -177,3 +177,56 @@ export function chainMissingInputs(
   }
   return [...missing];
 }
+
+/**
+ * True when `reaction` can run right now: both inputs have supply >=
+ * MIN_STEP_AMOUNT counting storage+terminal (`available`) PLUS whatever the
+ * two input labs already hold. The lab-contents term matters — a loaded,
+ * mid-consumption batch (storage drawn down as the labs work it) must still
+ * read as viable, or runLabs would re-select away from a reaction that is
+ * actively running and thrash.
+ *
+ * Used by runLabs to widen the re-eval trigger: re-select immediately when
+ * the active reaction becomes unrunnable, instead of waiting up to
+ * REACTION_CHECK_INTERVAL ticks on a stale pick.
+ */
+export function isReactionViable(
+  reaction: ReactionStep,
+  available: Map<ResourceConstant, number>,
+  inputLab1: StructureLab,
+  inputLab2: StructureLab,
+): boolean {
+  const supply = (resource: ResourceConstant) =>
+    (available.get(resource) ?? 0) +
+    (inputLab1.store.getUsedCapacity(resource) ?? 0) +
+    (inputLab2.store.getUsedCapacity(resource) ?? 0);
+
+  return supply(reaction.input1) >= MIN_STEP_AMOUNT && supply(reaction.input2) >= MIN_STEP_AMOUNT;
+}
+
+/**
+ * For each step in `chain` whose output stock has reached `saturation`, add
+ * that step's leaf inputs (base minerals not produced by an earlier step in
+ * the same chain) to the returned set.
+ *
+ * Used to stop buying a leaf input when the chain is backed up downstream —
+ * e.g. UL piles up while L keeps getting bought, because the bottleneck is
+ * lab time (or a different input), not L. Excludes leaves of steps whose
+ * output is below saturation, so unblocked legs of the chain keep buying.
+ */
+export function backedUpLeaves(
+  chain: ReactionStep[],
+  available: Map<ResourceConstant, number>,
+  saturation: number,
+): Set<ResourceConstant> {
+  const producedInChain = new Set<ResourceConstant>(chain.map((s) => s.output));
+  const leaves = new Set<ResourceConstant>();
+  for (const step of chain) {
+    if ((available.get(step.output) ?? 0) < saturation) continue;
+    for (const input of [step.input1, step.input2]) {
+      if (producedInChain.has(input)) continue; // produced upstream, not a leaf
+      leaves.add(input);
+    }
+  }
+  return leaves;
+}

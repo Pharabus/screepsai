@@ -8,6 +8,9 @@ import { myStorage, myTerminal } from './ownership';
  */
 export const HEALTH_SNAPSHOT_INTERVAL = 10;
 
+/** Max entries kept in {@link Memory.creditHistory} (~20 samples × 10 ticks = ~200-tick trend). */
+export const CREDIT_HISTORY_MAX = 20;
+
 /** Non-energy contents of a store as a terse { mineral: amount } map. */
 function nonEnergy(store: StoreDefinition | undefined): Record<string, number> {
   const out: Record<string, number> = {};
@@ -66,6 +69,13 @@ export function writeHealthSnapshot(): void {
   const loopSample = Memory.profiling ? Memory.stats?.['main.loop'] : undefined;
   const out = Game.market.outgoingTransactions ?? [];
   const inc = Game.market.incomingTransactions ?? [];
+
+  // Credit-trend ring: append this sample and cap at CREDIT_HISTORY_MAX so
+  // marketStatus() can report whether credits are trending up/down without
+  // the operator having to manually sample Game.market.credits over time.
+  const history = (Memory.creditHistory ??= []);
+  history.push({ t: Game.time, cr: Math.round(Game.market.credits) });
+  if (history.length > CREDIT_HISTORY_MAX) history.splice(0, history.length - CREDIT_HISTORY_MAX);
 
   Memory._health = {
     t: Game.time,

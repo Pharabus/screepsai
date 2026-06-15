@@ -44,6 +44,15 @@ export const BATTERY_TERMINAL_SELL_FLOOR = 0;
  * Used consistently by repairer role, spawner, and towers to avoid drift.
  */
 export const REPAIR_THRESHOLD = 0.75;
+/**
+ * High-water mark for an uncapped reaction-chain intermediate (UL, ZK, OH, …
+ * — compounds with no GOAL_CAPS entry) above which buying the leaves that
+ * feed it is paused. Without this, a leaf (e.g. L) keeps getting bought to
+ * make an intermediate (UL) that's already piled up (~13k observed live) —
+ * the bottleneck is lab time / a different input, not this leaf. Well above
+ * MIN_STEP_AMOUNT so a healthy chain never trips this; tunable.
+ */
+export const INTERMEDIATE_SATURATION = 5_000;
 export const MINERAL_TERMINAL_CEILING = 20_000;
 /** Terminal mineral above this amount is sold as surplus. Sits below MINERAL_TERMINAL_CEILING (the combined hold/throttle cap) so there is always a sellable band — without this gap the terminal can never cross its own sell line and minerals never sell. */
 export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;

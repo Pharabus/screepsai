@@ -6,7 +6,7 @@ import { runConstruction } from './managers/construction';
 import { runDefense } from './managers/defense';
 import { runVisuals } from './managers/visuals';
 import { runLinks } from './managers/links';
-import { runTerminal } from './managers/terminal';
+import { runTerminal, formatMarketStatus } from './managers/terminal';
 import { runLabs } from './managers/labs';
 import { runFactory } from './managers/factory';
 import { initMemory } from './utils/memoryInit';
@@ -89,6 +89,7 @@ export const neighbors = () => summarizeNeighbors();
 
 export const combatLog = () => formatCombatLog();
 export const boostStatus = () => formatBoostStats();
+export const marketStatus = () => formatMarketStatus();
 
 export const suggestSpawn = (roomName: string): string => {
   const result = findBestSpawnPosition(roomName);
@@ -279,6 +280,7 @@ global.replanPerimeter = replanPerimeter;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
 global.boostStatus = boostStatus;
+global.marketStatus = marketStatus;
 global.suggestSpawn = suggestSpawn;
 global.claim = claim;
 global.colonies = colonies;

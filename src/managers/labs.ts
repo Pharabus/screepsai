@@ -1,11 +1,14 @@
 import {
+  backedUpLeaves,
   buildReactionChain,
   chainMissingInputs,
   findNextChainStep,
   getReactionProduct,
+  isReactionViable,
   GOAL_CAPS,
   REACTION_GOALS,
 } from '../utils/reactions';
+import { INTERMEDIATE_SATURATION } from '../utils/thresholds';
 import { isOperational } from '../utils/structures';
 import { cached } from '../utils/tickCache';
 import type { ReactionStep } from '../utils/reactions';
@@ -94,7 +97,7 @@ function isGoalSatisfied(
   return satisfied;
 }
 
-function buildAvailableMap(room: Room): Map<ResourceConstant, number> {
+export function buildAvailableMap(room: Room): Map<ResourceConstant, number> {
   const available = new Map<ResourceConstant, number>();
   const add = (resource: ResourceConstant, amount: number) => {
     available.set(resource, (available.get(resource) ?? 0) + amount);
@@ -230,7 +233,15 @@ export function getChainBuyNeeds(room: Room): ResourceConstant[] {
     const chain = buildReactionChain(goal);
     if (chain.length === 0) continue;
     const needs = chainMissingInputs(chain, available);
-    if (needs.length > 0) return needs;
+    if (needs.length > 0) {
+      // Don't buy a leaf whose product is already backed up downstream
+      // (e.g. L when UL has piled to INTERMEDIATE_SATURATION) — the
+      // bottleneck is lab time / a different input, not this leaf.
+      const backedUp = backedUpLeaves(chain, available, INTERMEDIATE_SATURATION);
+      const filtered = needs.filter((need) => !backedUp.has(need));
+      if (filtered.length > 0) return filtered;
+      continue; // everything missing is backed up — try the next goal
+    }
     // If this goal has no missing inputs at any step, check next goal only if
     // this one is fully produced. Otherwise stick with this goal's needs.
     const nextStep = findNextChainStep(chain, available);
@@ -267,8 +278,17 @@ export function runLabs(): void {
     if (!inputLab1 || !inputLab2) continue;
     if (!isOperational(inputLab1) || !isOperational(inputLab2)) continue;
 
-    // Periodically re-evaluate which reaction to run
-    if (!mem.activeReaction || Game.time % REACTION_CHECK_INTERVAL === 0) {
+    // Re-evaluate which reaction to run: periodically, or immediately when the
+    // active reaction can no longer run (event-driven re-eval). The unviable
+    // check is skipped while labFlushing — don't re-pick mid-flush, the
+    // established flush path already handles a changed pick. Without this, the
+    // hub could weld onto a stale reaction (e.g. activeReaction=G while ZK=1)
+    // for up to REACTION_CHECK_INTERVAL ticks.
+    const activeUnviable =
+      !mem.labFlushing &&
+      !!mem.activeReaction &&
+      !isReactionViable(mem.activeReaction, buildAvailableMap(room), inputLab1, inputLab2);
+    if (!mem.activeReaction || Game.time % REACTION_CHECK_INTERVAL === 0 || activeUnviable) {
       const prev = mem.activeReaction;
       const reaction = selectReaction(room);
       mem.activeReaction = reaction;
