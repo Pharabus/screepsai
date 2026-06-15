@@ -114,6 +114,42 @@ export function findNextChainStep(
 }
 
 /**
+ * Compounds that are *intermediates* in the reaction goal chains — i.e. produced
+ * by one step and re-consumed by another (e.g. ZK, UL, OH, G, GH, GO, and the
+ * tier-2 boosts GH2O/GHO2/KHO2/LHO2 which the X-tier goals consume). These are
+ * minerals we spent credits/energy to build and intend to consume, so they must
+ * never be sold as "surplus" (the buy-L→make-UL→sell-UL-at-a-loss sawtooth that
+ * drained the wallet 1.5M→1).
+ *
+ * Base elements (H,O,U,K,L,Z,X) are consumed but never produced → not
+ * intermediates → still sellable as raw surplus. The X-tier finals (XGH2O…) are
+ * produced but never consumed → still sellable. Anything not in a goal chain
+ * (e.g. RESOURCE_BATTERY) is likewise unaffected.
+ *
+ * REACTION_GOALS is a compile-time constant, so the set is computed once and
+ * memoised on the module heap (a global reset re-derives it cheaply).
+ */
+let _chainIntermediates: Set<ResourceConstant> | undefined;
+export function getChainIntermediates(): Set<ResourceConstant> {
+  if (_chainIntermediates) return _chainIntermediates;
+  const produced = new Set<ResourceConstant>();
+  const consumed = new Set<ResourceConstant>();
+  for (const goal of REACTION_GOALS) {
+    for (const step of buildReactionChain(goal)) {
+      produced.add(step.output);
+      consumed.add(step.input1);
+      consumed.add(step.input2);
+    }
+  }
+  const intermediates = new Set<ResourceConstant>();
+  for (const compound of produced) {
+    if (consumed.has(compound)) intermediates.add(compound);
+  }
+  _chainIntermediates = intermediates;
+  return intermediates;
+}
+
+/**
  * Scan every step in the chain and return all leaf inputs (base minerals /
  * catalyst) that are below MIN_STEP_AMOUNT.  Intermediate compounds whose
  * output is produced by an earlier step in the same chain are never returned

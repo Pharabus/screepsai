@@ -426,6 +426,37 @@ describe('runTerminal', () => {
 
     consoleSpy.mockRestore();
   });
+
+  it('does NOT sell chain intermediates (e.g. GH) even above the 10k floor', () => {
+    // GH is a chain intermediate we paid to build. Dumping intermediates above the
+    // 10k terminal floor was the loss-making leg of the buy-L→sell-UL sawtooth (UL
+    // is the live example; the test mock treats G as a base mineral so GH is the
+    // representative in-chain intermediate it models). Intermediates must be held
+    // for consumption, never sold.
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      terminal: {
+        store: mockTerminalStore({ GH: 15000, energy: 100000 }),
+        cooldown: 0,
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 60, remainingAmount: 5000, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    // Intermediate skipped before any order lookup or deal.
+    expect(Game.market.getAllOrders).not.toHaveBeenCalled();
+    expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
 });
 
 describe('runTerminal — lab buying', () => {
@@ -666,10 +697,11 @@ describe('runTerminal — lab buying', () => {
     consoleSpy.mockRestore();
   });
 
-  it('scales buy amount down to what credits can afford', () => {
+  it('scales buy amount to the credit headroom above the reserve floor', () => {
     (Game as any).time = 500;
     (Game as any).shard = { name: 'shard3' }; // raise MAX_BUY_PRICE so 99cr passes
-    (Game as any).market.credits = 1000; // only enough for ~10 units @ 99cr
+    // Reserve is 50k; leave exactly 990cr of headroom → 990/99 = 10 units affordable.
+    (Game as any).market.credits = 50_990;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const room = mockRoom({
@@ -701,8 +733,49 @@ describe('runTerminal — lab buying', () => {
 
     runTerminal();
 
-    // Should deal for ~10 units (1000cr / 99cr/unit = 10), not the full 3000-unit batch
+    // Only the headroom above the 50k reserve is spendable: 990cr / 99 = 10 units.
     expect(Game.market.deal).toHaveBeenCalledWith('sell1', 10, 'W1N1');
+    consoleSpy.mockRestore();
+  });
+
+  it('does not buy lab inputs when credits are at or below the reserve floor', () => {
+    // Live failure: credits crashed to ~1 from expensive-L top-ups, stranding the
+    // wallet. The reserve floor (50k) must hard-stop buying before that.
+    (Game as any).time = 500;
+    (Game as any).shard = { name: 'shard3' };
+    (Game as any).market.credits = 50_000; // exactly at the reserve — no headroom
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: { store: makeTerminalStore({ energy: 200000 }), cooldown: 0 },
+      storage: {
+        store: {
+          getUsedCapacity: vi.fn((r?: string) =>
+            r === RESOURCE_ENERGY ? 50000 : r === 'Z' ? 5000 : 0,
+          ),
+        },
+      },
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'Z', input2: 'H', output: 'ZH' },
+      },
+    };
+    (Game as any).market.getAllOrders = vi.fn((opts: any) => {
+      if (opts.resourceType === 'H') {
+        return [{ id: 'sell1', price: 99, remainingAmount: 3000, roomName: 'W2N2' }];
+      }
+      return [];
+    });
+
+    runTerminal();
+
+    expect(Game.market.deal).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 

@@ -2,6 +2,7 @@ import {
   buildReactionChain,
   chainMissingInputs,
   findNextChainStep,
+  getChainIntermediates,
   type ReactionStep,
 } from '../../src/utils/reactions';
 import { resetGameGlobals } from '../mocks/screeps';
@@ -229,5 +230,44 @@ describe('chainMissingInputs', () => {
     ]);
 
     expect(chainMissingInputs(chain, available)).toHaveLength(0);
+  });
+});
+
+describe('getChainIntermediates', () => {
+  // NB: the test mock's REACTIONS table omits the real ghodium reaction
+  // (ZK + UL → G) and so treats G as a base mineral. In the live game UL/ZK/G
+  // ARE produced-and-reconsumed intermediates (Game.REACTIONS has ZK+UL→G); the
+  // production code derives the set from that real table. Here we assert the
+  // classification *logic* against what the mock topology supports: OH/GH and the
+  // tier-2 boosts are produced-and-consumed → intermediates; base elements and
+  // X-tier finals are not.
+  const intermediates = getChainIntermediates();
+
+  it('contains compounds that are both produced and re-consumed in goal chains', () => {
+    for (const compound of ['OH', 'GH'] as ResourceConstant[]) {
+      expect(intermediates.has(compound)).toBe(true);
+    }
+  });
+
+  it('contains tier-2 boosts the X-tier goals consume (so they are held, not sold)', () => {
+    for (const compound of ['GH2O', 'GHO2', 'KHO2', 'LHO2'] as ResourceConstant[]) {
+      expect(intermediates.has(compound)).toBe(true);
+    }
+  });
+
+  it('excludes base elements (consumed but never produced — sellable as raw surplus)', () => {
+    for (const element of ['H', 'O', 'U', 'K', 'L', 'Z', 'X'] as ResourceConstant[]) {
+      expect(intermediates.has(element)).toBe(false);
+    }
+  });
+
+  it('excludes the X-tier finals (produced but never consumed — sellable)', () => {
+    for (const compound of ['XGH2O', 'XGHO2', 'XLHO2', 'XKHO2', 'XZHO2'] as ResourceConstant[]) {
+      expect(intermediates.has(compound)).toBe(false);
+    }
+  });
+
+  it('excludes RESOURCE_BATTERY (not in any reaction chain)', () => {
+    expect(intermediates.has(RESOURCE_BATTERY)).toBe(false);
   });
 });

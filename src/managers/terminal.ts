@@ -5,8 +5,10 @@ import {
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
   MIN_BUY_ENERGY_BASE,
+  LAB_BUY_CREDIT_RESERVE,
 } from '../utils/thresholds';
 import { getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
+import { getChainIntermediates } from '../utils/reactions';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 import { colonyEnergy } from '../utils/economy';
 
@@ -55,6 +57,12 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
   });
   for (const resource of resources) {
     if (resource === RESOURCE_ENERGY) continue;
+    // Never sell chain intermediates (UL/OH/ZK/G/GH/GO/GH2O/GHO2…): we spent
+    // credits + energy building them to consume them. Dumping them above the 10k
+    // terminal floor was the loss-making leg of the buy-L→sell-UL sawtooth. Raw
+    // elements, batteries, and finished X-tier boosts are not intermediates and
+    // still sell. (See getChainIntermediates.)
+    if (getChainIntermediates().has(resource)) continue;
     // Batteries are a for-sale product — sell all of them (floor 0); MIN_DEAL_SIZE
     // is the only gate. (Reusing FACTORY_BATTERY_CAP here deadlocked sales — see
     // BATTERY_TERMINAL_SELL_FLOOR.) Raw minerals keep the normal storage floor.
@@ -139,8 +147,10 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
   // Gate: need at least 3 labs and an active or pending reaction
   const mem = Memory.rooms[room.name];
   if (!mem?.labIds || mem.labIds.length < 3) return;
-  // Don't spend credits on lab inputs until we have an energy surplus
-  if (Game.market.credits < 50) return;
+  // Never drain the wallet to ~0 on lab inputs: hold a credit reserve and only
+  // ever spend the headroom above it (the expensive-L top-up otherwise crashed
+  // credits 1.5M→1 — see LAB_BUY_CREDIT_RESERVE).
+  if (Game.market.credits <= LAB_BUY_CREDIT_RESERVE) return;
 
   const storage = room.storage;
   const storageEnergy = storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
@@ -189,7 +199,9 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
       BUY_BATCH_SIZE - (inStorage + inTerminal),
       cheapestOrder.remainingAmount,
     );
-    const affordableAmount = Math.floor(Game.market.credits / cheapestOrder.price);
+    const affordableAmount = Math.floor(
+      (Game.market.credits - LAB_BUY_CREDIT_RESERVE) / cheapestOrder.price,
+    );
     const buyAmount = Math.min(wantAmount, affordableAmount);
     if (buyAmount <= 0) {
       if (wantAmount > 0) {

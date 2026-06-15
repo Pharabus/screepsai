@@ -78,6 +78,15 @@ export function getMaxBuyPrice(): number {
 }
 
 export const BUY_BATCH_SIZE = 3000;
+/**
+ * Credit reserve that lab-input buying must never spend below. `buyForLabs`
+ * skips when credits are at/under this floor and only ever spends the headroom
+ * above it. Small relative to a healthy balance (~1.5M) so normal buying is
+ * unaffected, but it stops the expensive-L top-up from draining the wallet to ~0
+ * (observed live: credits crashed 1.5M→1, stranding defensive-boost buys and the
+ * mineral-cooldown market bridge). Tunable.
+ */
+export const LAB_BUY_CREDIT_RESERVE = 50_000;
 export const BUY_INTERVAL = 500;
 // Energy gates for lab buying: lower threshold for base minerals (H,O,K,L,Z,U,X,G)
 // so the reaction chain can start accumulating well before we hit 100k terminal energy.
