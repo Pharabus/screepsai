@@ -53,6 +53,15 @@ export const REPAIR_THRESHOLD = 0.75;
  * MIN_STEP_AMOUNT so a healthy chain never trips this; tunable.
  */
 export const INTERMEDIATE_SATURATION = 5_000;
+/**
+ * Release-valve threshold (2x INTERMEDIATE_SATURATION) above which a chain
+ * intermediate is grossly overstocked and the terminal portion is sold down
+ * to INTERMEDIATE_SATURATION. Below this, intermediates are held entirely
+ * (the normal "never sell what we're building" behavior) — only genuinely
+ * frozen capital (e.g. ~14.7k UL while the goal chain only needs ~5k) is
+ * released. See sellSurplus in terminal.ts.
+ */
+export const INTERMEDIATE_RELEASE_THRESHOLD = 10_000;
 export const MINERAL_TERMINAL_CEILING = 20_000;
 /** Terminal mineral above this amount is sold as surplus. Sits below MINERAL_TERMINAL_CEILING (the combined hold/throttle cap) so there is always a sellable band — without this gap the terminal can never cross its own sell line and minerals never sell. */
 export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;

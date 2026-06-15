@@ -182,7 +182,11 @@ export function selectReaction(room: Room): ReactionStep | undefined {
     if (isGoalSatisfied(goal, available, room.name)) continue;
     const chain = buildReactionChain(goal);
     if (chain.length === 0) continue;
-    const step = findNextChainStep(chain, available);
+    // Saturation-aware: skip a step whose output is already piled up
+    // (INTERMEDIATE_SATURATION) so the chain advances toward the goal instead
+    // of welding onto an intermediate with nowhere to go (e.g. L+U->UL when UL
+    // is already stranded at ~14,760, starving GH2O of OH/GH production).
+    const step = findNextChainStep(chain, available, INTERMEDIATE_SATURATION);
     if (step) return step;
   }
 

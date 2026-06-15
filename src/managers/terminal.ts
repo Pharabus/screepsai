@@ -3,6 +3,7 @@ import {
   BATTERY_TERMINAL_SELL_FLOOR,
   MINERAL_TERMINAL_SELL_FLOOR,
   INTERMEDIATE_SATURATION,
+  INTERMEDIATE_RELEASE_THRESHOLD,
   getMaxBuyPrice,
   BUY_BATCH_SIZE,
   MIN_BUY_ENERGY_BASE,
@@ -12,6 +13,7 @@ import { buildAvailableMap, getChainBuyNeeds, getLabHubName, isLabHub } from './
 import { getChainIntermediates, GOAL_CAPS } from '../utils/reactions';
 import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
 import { colonyEnergy } from '../utils/economy';
+import { myStorage } from '../utils/ownership';
 
 /**
  * Minimum stack size to ship in one terminal send. Minerals don't decay so we
@@ -58,17 +60,31 @@ function sellSurplus(room: Room, terminal: StructureTerminal): void {
   });
   for (const resource of resources) {
     if (resource === RESOURCE_ENERGY) continue;
-    // Never sell chain intermediates (UL/OH/ZK/G/GH/GO/GH2O/GHO2…): we spent
-    // credits + energy building them to consume them. Dumping them above the 10k
-    // terminal floor was the loss-making leg of the buy-L→sell-UL sawtooth. Raw
-    // elements, batteries, and finished X-tier boosts are not intermediates and
-    // still sell. (See getChainIntermediates.)
-    if (getChainIntermediates().has(resource)) continue;
-    // Batteries are a for-sale product — sell all of them (floor 0); MIN_DEAL_SIZE
-    // is the only gate. (Reusing FACTORY_BATTERY_CAP here deadlocked sales — see
-    // BATTERY_TERMINAL_SELL_FLOOR.) Raw minerals keep the normal storage floor.
-    const sellFloor =
-      resource === RESOURCE_BATTERY ? BATTERY_TERMINAL_SELL_FLOOR : MINERAL_TERMINAL_SELL_FLOOR;
+    // Chain intermediates (UL/OH/ZK/G/GH/GO/GH2O/GHO2…): we spent credits + energy
+    // building them to consume them, so hold them by default — dumping them above
+    // the 10k terminal floor was the loss-making leg of the buy-L→sell-UL sawtooth.
+    // RELEASE VALVE (v1.0.274): if storage+terminal combined is grossly overstocked
+    // (>= INTERMEDIATE_RELEASE_THRESHOLD, 2x INTERMEDIATE_SATURATION), the chain is
+    // genuinely stuck (e.g. ~14.7k UL while GH2O sits stalled at 264) — sell the
+    // terminal portion down to a INTERMEDIATE_SATURATION buffer to free frozen
+    // capital. This can't reignite the sawtooth: Change 1 (findNextChainStep with
+    // saturation) won't re-make a saturated intermediate, and backedUpLeaves won't
+    // let buyForLabs rebuy its leaf inputs while it's above INTERMEDIATE_SATURATION
+    // — so the release only drains capital the chain has already stopped consuming.
+    // Raw elements, batteries, and finished X-tier boosts are not intermediates and
+    // always use their normal floors. (See getChainIntermediates.)
+    let sellFloor: number;
+    if (resource === RESOURCE_BATTERY) {
+      sellFloor = BATTERY_TERMINAL_SELL_FLOOR;
+    } else if (getChainIntermediates().has(resource)) {
+      const total =
+        (myStorage(room)?.store.getUsedCapacity(resource) ?? 0) +
+        terminal.store.getUsedCapacity(resource);
+      if (total < INTERMEDIATE_RELEASE_THRESHOLD) continue; // held — not yet frozen capital
+      sellFloor = INTERMEDIATE_SATURATION;
+    } else {
+      sellFloor = MINERAL_TERMINAL_SELL_FLOOR;
+    }
     const amount = terminal.store.getUsedCapacity(resource);
     if (amount <= sellFloor) continue;
 

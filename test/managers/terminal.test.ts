@@ -428,12 +428,12 @@ describe('runTerminal', () => {
     consoleSpy.mockRestore();
   });
 
-  it('does NOT sell chain intermediates (e.g. GH) even above the 10k floor', () => {
+  it('holds a chain intermediate (e.g. GH) above the 10k floor when below the release threshold', () => {
     // GH is a chain intermediate we paid to build. Dumping intermediates above the
     // 10k terminal floor was the loss-making leg of the buy-L→sell-UL sawtooth (UL
     // is the live example; the test mock treats G as a base mineral so GH is the
-    // representative in-chain intermediate it models). Intermediates must be held
-    // for consumption, never sold.
+    // representative in-chain intermediate it models). Below INTERMEDIATE_RELEASE_THRESHOLD
+    // (10k total storage+terminal) intermediates must be held for consumption, never sold.
     (Game as any).time = 100;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -441,9 +441,10 @@ describe('runTerminal', () => {
       name: 'W1N1',
       controller: { my: true, level: 7 },
       terminal: {
-        store: mockTerminalStore({ GH: 15000, energy: 100000 }),
+        store: mockTerminalStore({ GH: 8000, energy: 100000 }),
         cooldown: 0,
       },
+      // no storage -> myStorage(room) is undefined -> total = terminal portion only (8000)
     });
     (Game as any).rooms = { W1N1: room };
 
@@ -453,9 +454,40 @@ describe('runTerminal', () => {
 
     runTerminal();
 
-    // Intermediate skipped before any order lookup or deal.
+    // Total (8000) < INTERMEDIATE_RELEASE_THRESHOLD (10000) -> held, no order lookup or deal.
     expect(Game.market.getAllOrders).not.toHaveBeenCalled();
     expect(Game.market.deal).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('releases a grossly overstocked chain intermediate (e.g. GH) down to the saturation buffer', () => {
+    // Live motivation: ~14.7k UL frozen while GH2O stalls at 264 -- ~900k credits
+    // of stranded capital with nothing using it. Once storage+terminal total
+    // reaches INTERMEDIATE_RELEASE_THRESHOLD (10k, 2x INTERMEDIATE_SATURATION),
+    // the terminal portion above INTERMEDIATE_SATURATION (5k) is sold.
+    (Game as any).time = 100;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      terminal: {
+        store: mockTerminalStore({ GH: 12000, energy: 100000 }),
+        cooldown: 0,
+      },
+      // no storage -> total = terminal portion (12000) >= release threshold (10000)
+    });
+    (Game as any).rooms = { W1N1: room };
+
+    // surplus = 12000 - INTERMEDIATE_SATURATION(5000) = 7000
+    (Game as any).market.getAllOrders = vi.fn(() => [
+      { id: 'order1', price: 60, remainingAmount: 10000, roomName: 'W2N2' },
+    ]);
+
+    runTerminal();
+
+    expect(Game.market.deal).toHaveBeenCalledWith('order1', 7000, 'W1N1');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('sold 7000 GH'));
     consoleSpy.mockRestore();
   });
 });

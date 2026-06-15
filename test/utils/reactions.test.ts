@@ -104,6 +104,54 @@ describe('findNextChainStep', () => {
     ]);
     expect(findNextChainStep(chain, available)).toBeUndefined();
   });
+
+  describe('with saturation', () => {
+    it('skips a step whose output is already saturated and returns the next-best viable step', () => {
+      const chain = buildReactionChain('ZHO2' as ResourceConstant);
+      const available = new Map<ResourceConstant, number>([
+        ['Z', 500] as [ResourceConstant, number],
+        ['H', 500] as [ResourceConstant, number],
+        ['ZH', 5000] as [ResourceConstant, number], // saturated output of Z+H->ZH
+        ['O', 500] as [ResourceConstant, number],
+      ]);
+      // Without saturation: ZHO2 (ZH+O) is the highest-tier viable step.
+      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
+
+      // ZHO2's own output is well below saturation, so it's still picked even
+      // when ZH (an upstream output) is saturated — saturation only blocks
+      // making MORE of an already-piled-up compound, not consuming it.
+      expect(findNextChainStep(chain, available, 5000)?.output).toBe('ZHO2');
+    });
+
+    it('skips the final step when ITS output is saturated, falling back to an earlier step', () => {
+      const chain = buildReactionChain('ZHO2' as ResourceConstant);
+      const available = new Map<ResourceConstant, number>([
+        ['Z', 500] as [ResourceConstant, number],
+        ['H', 500] as [ResourceConstant, number],
+        ['ZH', 500] as [ResourceConstant, number],
+        ['O', 500] as [ResourceConstant, number],
+        ['ZHO2', 5000] as [ResourceConstant, number], // saturated final output
+      ]);
+      // Without saturation: ZHO2 (the highest tier) wins.
+      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
+
+      // With saturation: ZHO2 is skipped (output already at saturation), so the
+      // earlier Z+H->ZH step (also viable) is returned instead.
+      expect(findNextChainStep(chain, available, 5000)?.output).toBe('ZH');
+    });
+
+    it('without saturation arg, behavior is unchanged', () => {
+      const chain = buildReactionChain('ZHO2' as ResourceConstant);
+      const available = new Map<ResourceConstant, number>([
+        ['Z', 500] as [ResourceConstant, number],
+        ['H', 500] as [ResourceConstant, number],
+        ['ZH', 5000] as [ResourceConstant, number],
+        ['O', 500] as [ResourceConstant, number],
+        ['ZHO2', 5000] as [ResourceConstant, number],
+      ]);
+      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
+    });
+  });
 });
 
 describe('chainMissingInputs', () => {

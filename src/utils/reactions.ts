@@ -97,13 +97,25 @@ export function buildReactionChain(target: ResourceConstant): ReactionStep[] {
  * Given available resources and a production chain (ordered prerequisite-first),
  * find the highest-tier step where both inputs meet the minimum threshold.
  * "Highest tier" = the step closest to the final goal = pick the last viable one.
+ *
+ * When `saturation` is provided, a step whose OUTPUT stock (`available.get(step.output)`)
+ * is already >= saturation is skipped entirely — don't make more of an
+ * already-saturated intermediate even if its inputs are viable. This lets the
+ * goal-directed selector (selectReaction) fall through to an earlier/sibling
+ * step instead of welding onto a step whose product has nowhere to go (e.g.
+ * L+U->UL when UL is already stranded at 14,760). Omitted (default), this
+ * check is skipped and behavior is unchanged — existing callers (e.g.
+ * getChainBuyNeeds, which governs buying and already filters via
+ * backedUpLeaves) are unaffected.
  */
 export function findNextChainStep(
   chain: ReactionStep[],
   available: Map<ResourceConstant, number>,
+  saturation?: number,
 ): ReactionStep | undefined {
   let best: ReactionStep | undefined;
   for (const step of chain) {
+    if (saturation !== undefined && (available.get(step.output) ?? 0) >= saturation) continue;
     const amt1 = available.get(step.input1) ?? 0;
     const amt2 = available.get(step.input2) ?? 0;
     if (amt1 >= MIN_STEP_AMOUNT && amt2 >= MIN_STEP_AMOUNT) {
