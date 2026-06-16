@@ -281,6 +281,21 @@ function pickup(creep: Creep): boolean {
     }
   }
 
+  // Lab-flush preempt: when runLabs is switching reactions it sets labFlushing so a
+  // hauler clears stale minerals from the input labs before the new inputs load. That
+  // flush (pickupLabFlush, ranked below the link drain) is starved when source links keep
+  // the storage link above the drain threshold every tick — so the reaction transition
+  // hangs. Like the boost-lab preempt above, service the flush ahead of the link drain,
+  // but ONLY while flushing (a finite ~2-trip job) and ONLY one hauler at a time (the
+  // existing lab-work cap) so the whole fleet doesn't abandon the link for it.
+  if (
+    mem?.labFlushing &&
+    !isLabWorkClaimedByOther(creep, mem) &&
+    creep.store.getFreeCapacity() > 0
+  ) {
+    if (pickupLabFlush(creep, mem)) return true;
+  }
+
   // Continue committed pickup task if still valid
   if (continueCommittedPickup(creep)) return true;
 

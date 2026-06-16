@@ -1582,6 +1582,161 @@ describe('hauler pickup priority', () => {
 
     expect(creep.withdraw).toHaveBeenCalledWith(mineralContainer, 'H');
   });
+
+  it('lab-flush preempt: fires ahead of the storage-link drain when labFlushing is set', () => {
+    // The input lab holds Z (wrong mineral — reaction expects H), so pickupLabFlush
+    // has work to do. Storage link is above the drain threshold. The flush preempt
+    // must win: hauler withdraws from the lab, not the storage link.
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    const inputLab1 = mockLab('iLab1', {
+      mineralType: 'Z', // wrong mineral — reaction wants H
+      store: mockLabStore({ Z: 800 }),
+    });
+    const inputLab2 = mockLab('iLab2');
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'iLab1') return inputLab1;
+      if (id === 'iLab2') return inputLab2;
+      return null;
+    }) as any;
+    (Memory as any).rooms = {
+      W1N1: {
+        storageLinkId: 'sLink',
+        labFlushing: true,
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        inputLabIds: ['iLab1', 'iLab2'],
+        labIds: ['iLab1', 'iLab2', 'oLab1'],
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}), // free capacity > 0
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    // isLabWorkClaimedByOther iterates Game.creeps and reads c.memory.role —
+    // use the actual creep mock (not a bare {}) so the access doesn't crash.
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Flush preempt fires — hauler drains the wrong mineral from the input lab
+    expect(creep.withdraw).toHaveBeenCalledWith(inputLab1, 'Z');
+    // Storage-link drain must NOT win this tick
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('lab-flush preempt: respects the one-hauler lab cap when another hauler is already on a lab', () => {
+    // Same setup as above, but another hauler already targets a lab in labIds.
+    // isLabWorkClaimedByOther returns true → preempt must not fire; hauler falls
+    // through to the storage-link drain instead.
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    const inputLab1 = mockLab('iLab1', {
+      mineralType: 'Z',
+      store: mockLabStore({ Z: 800 }),
+    });
+    const inputLab2 = mockLab('iLab2');
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'iLab1') return inputLab1;
+      if (id === 'iLab2') return inputLab2;
+      return null;
+    }) as any;
+    // Another hauler is committed to iLab1 (a lab in labIds) — cap is claimed.
+    const busyHauler = mockCreep({
+      name: 'hauler_busy',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'iLab1' },
+      store: mockStore({}),
+      pos: new RoomPosition(18, 31, 'W1N1'),
+    });
+    const freeHauler = mockCreep({
+      name: 'hauler_free',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_busy: busyHauler, hauler_free: freeHauler } as any;
+    (Memory as any).rooms = {
+      W1N1: {
+        storageLinkId: 'sLink',
+        labFlushing: true,
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        inputLabIds: ['iLab1', 'iLab2'],
+        labIds: ['iLab1', 'iLab2', 'oLab1'],
+      },
+    };
+
+    hauler.run(freeHauler);
+
+    // Cap is claimed — preempt must NOT fire; hauler drains the storage link instead
+    expect(freeHauler.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(freeHauler.withdraw).not.toHaveBeenCalledWith(inputLab1, 'Z');
+  });
+
+  it('lab-flush preempt: inert when labFlushing is falsy — normal link drain wins', () => {
+    // No labFlushing → the preempt block is never entered; hauler drains the storage
+    // link as normal. Guards against disturbing steady-state operation.
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    const inputLab1 = mockLab('iLab1', {
+      mineralType: 'Z',
+      store: mockLabStore({ Z: 800 }),
+    });
+    const inputLab2 = mockLab('iLab2');
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'iLab1') return inputLab1;
+      if (id === 'iLab2') return inputLab2;
+      return null;
+    }) as any;
+    (Memory as any).rooms = {
+      W1N1: {
+        storageLinkId: 'sLink',
+        labFlushing: false, // NOT flushing — preempt must be inert
+        activeReaction: { input1: 'H', input2: 'O', output: 'OH' },
+        inputLabIds: ['iLab1', 'iLab2'],
+        labIds: ['iLab1', 'iLab2', 'oLab1'],
+      },
+    };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    // isLabWorkClaimedByOther iterates Game.creeps and reads c.memory.role —
+    // use the actual creep mock so the access doesn't crash.
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    // Storage-link drain fires normally — no lab withdraw
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(inputLab1, 'Z');
+  });
 });
 
 describe('hauler task commitment', () => {
