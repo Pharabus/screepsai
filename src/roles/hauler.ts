@@ -50,6 +50,11 @@ const MIN_LAB_LOAD = 500;
 // Once a pile crosses this size, treat it as decay-critical and preempt the
 // link drain to clear it.
 const LARGE_DROP_THRESHOLD = 1000;
+// A hauler with this much free capacity or less is considered effectively full:
+// don't chase the last few units from an unreachable pickup — just deliver.
+// One CARRY part (50) is the granularity floor; a 94%+ loaded hauler wastes
+// a round trip chasing the tail sliver.
+const HAULER_EFFECTIVELY_FULL_FREE = 50;
 
 const states: StateMachineDefinition = {
   PICKUP: {
@@ -57,7 +62,17 @@ const states: StateMachineDefinition = {
       delete creep.memory.targetId;
     },
     run(creep) {
-      if (creep.store.getFreeCapacity() === 0) return 'DELIVER';
+      // (1) The urgent responder rushes energy to a starved spawn — if it ALREADY carries
+      //     energy, deliver it now rather than detouring to storage for more. Otherwise it
+      //     pins in COLLECT trying to top off from a storage it can't reach when the core
+      //     approach is congested (observed live W44N57: a 793/800 responder stuck at 27,3,
+      //     never delivering, target oscillating between unreachable pickups).
+      if (creep.store.getUsedCapacity() > 0 && getUrgentResponder(creep.room) === creep.name) {
+        return 'DELIVER';
+      }
+      // (2) Effectively full: don't chase the last few units (deadlocks when the pickup is
+      //     unreachable). Replaces the exact `=== 0` check.
+      if (creep.store.getFreeCapacity() <= HAULER_EFFECTIVELY_FULL_FREE) return 'DELIVER';
       const found = pickup(creep);
       if (!found && creep.store.getUsedCapacity() > 0) return 'DELIVER';
       return undefined;

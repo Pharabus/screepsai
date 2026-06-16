@@ -898,6 +898,134 @@ describe('hauler urgent responder', () => {
 
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
   });
+
+  it('loaded urgent responder transitions to DELIVER without withdrawing from storage', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [makeSpawn()]),
+    });
+
+    // Creep already carrying 700/800 energy — the urgent-responder check should
+    // fire immediately and send it to DELIVER rather than having it chase storage.
+    const creep = mockCreep({
+      name: 'hauler_near',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({ energy: 700 }, 800),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_near: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    expect(creep.memory.state).toBe('DELIVER');
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('empty urgent responder still collects from storage', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => [makeSpawn()]),
+    });
+
+    // Creep carrying nothing — condition (1) must not fire (used = 0),
+    // and it should withdraw from storage as normal.
+    const creep = mockCreep({
+      name: 'hauler_near',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_near: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+    expect(creep.memory.state).not.toBe('DELIVER');
+  });
+
+  it('effectively full hauler (free <= 50) not the responder transitions to DELIVER', () => {
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({ energy: 50000 }, 500000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      // No spawn need → getUrgentResponder returns undefined, so no creep is the responder.
+      find: vi.fn(() => [{ structureType: STRUCTURE_SPAWN, store: { getFreeCapacity: () => 0 } }]),
+    });
+
+    // Hauler at 760/800 — free capacity is 40, below the HAULER_EFFECTIVELY_FULL_FREE (50)
+    // threshold, so it should deliver without reaching pickup().
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({ energy: 760 }, 800),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_1: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    expect(creep.memory.state).toBe('DELIVER');
+  });
+
+  it('partially loaded hauler (free > 50) not the responder keeps collecting', () => {
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 400 }, 800),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      // No spawn need → no urgent responder.
+      find: vi.fn((_type: number, opts?: any) => {
+        const all: any[] = [];
+        return opts?.filter ? all.filter(opts.filter) : all;
+      }),
+    });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+
+    // Hauler at 200/800 — free capacity is 600, well above the 50-unit threshold.
+    // A storage link provides a real pickup so pickup() returns true and the
+    // hauler must NOT early-deliver under either guard condition.
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({ energy: 200 }, 800),
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    hauler.run(creep);
+
+    expect(creep.memory.state).not.toBe('DELIVER');
+  });
 });
 
 describe('hauler pickup priority', () => {
