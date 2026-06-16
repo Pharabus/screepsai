@@ -5,6 +5,7 @@ import {
   findNextChainStep,
   getReactionProduct,
   isReactionViable,
+  nextStepFor,
   GOAL_CAPS,
   REACTION_GOALS,
 } from '../utils/reactions';
@@ -180,13 +181,12 @@ export function selectReaction(room: Room): ReactionStep | undefined {
   // an intermediate indefinitely.)
   for (const goal of REACTION_GOALS) {
     if (isGoalSatisfied(goal, available, room.name)) continue;
-    const chain = buildReactionChain(goal);
-    if (chain.length === 0) continue;
-    // Saturation-aware: skip a step whose output is already piled up
-    // (INTERMEDIATE_SATURATION) so the chain advances toward the goal instead
-    // of welding onto an intermediate with nowhere to go (e.g. L+U->UL when UL
-    // is already stranded at ~14,760, starving GH2O of OH/GH production).
-    const step = findNextChainStep(chain, available, INTERMEDIATE_SATURATION);
+    // Goal-directed backward chaining (see nextStepFor doc comment): produce
+    // the input the goal actually lacks, descending into precursors only when
+    // a wanted downstream step is genuinely missing one. Returns undefined when
+    // the goal is fully ready (handled elsewhere) or blocked on a missing base
+    // mineral — either way, rotate to the next goal.
+    const step = nextStepFor(goal, available);
     if (step) return step;
   }
 

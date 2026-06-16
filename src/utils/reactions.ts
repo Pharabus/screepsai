@@ -97,25 +97,13 @@ export function buildReactionChain(target: ResourceConstant): ReactionStep[] {
  * Given available resources and a production chain (ordered prerequisite-first),
  * find the highest-tier step where both inputs meet the minimum threshold.
  * "Highest tier" = the step closest to the final goal = pick the last viable one.
- *
- * When `saturation` is provided, a step whose OUTPUT stock (`available.get(step.output)`)
- * is already >= saturation is skipped entirely — don't make more of an
- * already-saturated intermediate even if its inputs are viable. This lets the
- * goal-directed selector (selectReaction) fall through to an earlier/sibling
- * step instead of welding onto a step whose product has nowhere to go (e.g.
- * L+U->UL when UL is already stranded at 14,760). Omitted (default), this
- * check is skipped and behavior is unchanged — existing callers (e.g.
- * getChainBuyNeeds, which governs buying and already filters via
- * backedUpLeaves) are unaffected.
  */
 export function findNextChainStep(
   chain: ReactionStep[],
   available: Map<ResourceConstant, number>,
-  saturation?: number,
 ): ReactionStep | undefined {
   let best: ReactionStep | undefined;
   for (const step of chain) {
-    if (saturation !== undefined && (available.get(step.output) ?? 0) >= saturation) continue;
     const amt1 = available.get(step.input1) ?? 0;
     const amt2 = available.get(step.input2) ?? 0;
     if (amt1 >= MIN_STEP_AMOUNT && amt2 >= MIN_STEP_AMOUNT) {
@@ -123,6 +111,74 @@ export function findNextChainStep(
     }
   }
   return best;
+}
+
+/**
+ * Goal-directed backward chaining (3rd iteration on reaction selection — see
+ * CLAUDE.md "Engineering lessons" and the v1.0.276 plan for why the first two
+ * attempts didn't stick). Forward-greedy selection (`findNextChainStep`) picks
+ * the highest-tier step whose inputs are viable, which is correct when building
+ * up from base minerals but wrong when intermediates are *unevenly* pre-stocked:
+ * live case `GH2O = GH + OH` with GH=5000 (plenty) and OH=50 (short) — greedy kept
+ * making ZK/G (deep precursors of the already-stocked GH) instead of OH (the
+ * goal's actual missing input), so GH2O never climbed off 264.
+ *
+ * `nextStepFor(goal, available)` walks the recipe graph backward from `goal`:
+ * - An intermediate (non-goal) with `available >= MIN_STEP_AMOUNT` is treated
+ *   as `'ready'` — we have enough, don't make more. The GOAL itself is never
+ *   short-circuited this way (`isGoalSatisfied` in selectReaction already gates
+ *   whether the goal is pursued at all; once pursued, it's pursued to its cap).
+ * - A compound with no recipe (base mineral) that isn't in stock is `'blocked'`
+ *   — nothing we can do in-lab; buying is handled separately by
+ *   `getChainBuyNeeds`. A `seen` set guards against pathological cycles.
+ * - Otherwise recurse into both recipe inputs. If either is `'blocked'`, the
+ *   whole branch is `'blocked'`. If either is a concrete `ReactionStep` (i.e.
+ *   that input itself needs to be made first), bubble it up — that's the step
+ *   to run now. If both inputs are `'ready'`, this compound's own recipe step
+ *   is what's missing — return it.
+ *
+ * `nextStepFor` returns `solve(goal, true)`, or `undefined` when the result is
+ * `'ready'` (goal's own inputs both already on hand — caller should have
+ * selected the goal step itself, this only occurs if goal has no recipe) or
+ * `'blocked'` (some required base mineral is missing entirely — goal loop
+ * rotates to the next goal).
+ *
+ * Worked example (live GH2O stall): need(GH2O) → GH ready (5000 >= threshold,
+ * don't make), OH not ready (50 < threshold) → need(OH) → O ready, H ready →
+ * both ready → return O+H→OH. Once OH climbs, the next eval finds GH2O's own
+ * inputs (GH, OH) both ready → returns the GH2O step itself. ZK/G/UL are never
+ * touched while GH is stocked — `need(GH)` short-circuits to `'ready'` and the
+ * G/ZK/UL branch is never visited.
+ */
+export function nextStepFor(
+  goal: ResourceConstant,
+  available: Map<ResourceConstant, number>,
+): ReactionStep | undefined {
+  const seen = new Set<ResourceConstant>();
+
+  function solve(compound: ResourceConstant, isGoal: boolean): 'ready' | 'blocked' | ReactionStep {
+    if (!isGoal && (available.get(compound) ?? 0) >= MIN_STEP_AMOUNT) return 'ready';
+
+    if (seen.has(compound)) return 'blocked';
+    const recipe = findReactionProducing(compound);
+    if (!recipe) return 'blocked'; // base mineral, not in stock
+
+    seen.add(compound);
+
+    const a = solve(recipe.input1, false);
+    if (a === 'blocked') return 'blocked';
+    if (a !== 'ready') return a; // make this input first
+
+    const b = solve(recipe.input2, false);
+    if (b === 'blocked') return 'blocked';
+    if (b !== 'ready') return b; // make this input first
+
+    // Both inputs ready — this compound's own recipe is the missing step.
+    return { input1: recipe.input1, input2: recipe.input2, output: compound };
+  }
+
+  const result = solve(goal, true);
+  return result === 'ready' || result === 'blocked' ? undefined : result;
 }
 
 /**

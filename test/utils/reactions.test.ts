@@ -5,6 +5,7 @@ import {
   findNextChainStep,
   getChainIntermediates,
   isReactionViable,
+  nextStepFor,
   type ReactionStep,
 } from '../../src/utils/reactions';
 import { resetGameGlobals } from '../mocks/screeps';
@@ -104,53 +105,71 @@ describe('findNextChainStep', () => {
     ]);
     expect(findNextChainStep(chain, available)).toBeUndefined();
   });
+});
 
-  describe('with saturation', () => {
-    it('skips a step whose output is already saturated and returns the next-best viable step', () => {
-      const chain = buildReactionChain('ZHO2' as ResourceConstant);
-      const available = new Map<ResourceConstant, number>([
-        ['Z', 500] as [ResourceConstant, number],
-        ['H', 500] as [ResourceConstant, number],
-        ['ZH', 5000] as [ResourceConstant, number], // saturated output of Z+H->ZH
-        ['O', 500] as [ResourceConstant, number],
-      ]);
-      // Without saturation: ZHO2 (ZH+O) is the highest-tier viable step.
-      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
+describe('nextStepFor', () => {
+  // NB: the mock REACTIONS table omits the real ZK+UL->G reaction (treats G as
+  // a base mineral). The mock's GH2O chain is: O+H->OH, G+H->GH, OH+GH->GH2O.
+  // All tests below are written against THAT topology.
 
-      // ZHO2's own output is well below saturation, so it's still picked even
-      // when ZH (an upstream output) is saturated — saturation only blocks
-      // making MORE of an already-piled-up compound, not consuming it.
-      expect(findNextChainStep(chain, available, 5000)?.output).toBe('ZHO2');
-    });
+  it('makes the goal-missing input (OH) when GH is stocked — the live GH2O stall case', () => {
+    // GH2O = GH + OH. GH is plentiful (stocked above threshold), OH is low.
+    // O and H (OH's inputs) are abundant. Must return O+H->OH, NOT a precursor
+    // of GH (which is already stocked and doesn't need more).
+    const available = new Map<ResourceConstant, number>([
+      ['GH', 5000] as [ResourceConstant, number],
+      ['OH', 50] as [ResourceConstant, number],
+      ['O', 500] as [ResourceConstant, number],
+      ['H', 500] as [ResourceConstant, number],
+    ]);
+    const step = nextStepFor('GH2O' as ResourceConstant, available);
+    expect(step?.output).toBe('OH');
+  });
 
-    it('skips the final step when ITS output is saturated, falling back to an earlier step', () => {
-      const chain = buildReactionChain('ZHO2' as ResourceConstant);
-      const available = new Map<ResourceConstant, number>([
-        ['Z', 500] as [ResourceConstant, number],
-        ['H', 500] as [ResourceConstant, number],
-        ['ZH', 500] as [ResourceConstant, number],
-        ['O', 500] as [ResourceConstant, number],
-        ['ZHO2', 5000] as [ResourceConstant, number], // saturated final output
-      ]);
-      // Without saturation: ZHO2 (the highest tier) wins.
-      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
+  it('returns the goal step itself when both goal inputs are available', () => {
+    const available = new Map<ResourceConstant, number>([
+      ['GH', 5000] as [ResourceConstant, number],
+      ['OH', 500] as [ResourceConstant, number],
+    ]);
+    const step = nextStepFor('GH2O' as ResourceConstant, available);
+    expect(step?.output).toBe('GH2O');
+    expect(step).toMatchObject({ input1: 'OH', input2: 'GH', output: 'GH2O' });
+  });
 
-      // With saturation: ZHO2 is skipped (output already at saturation), so the
-      // earlier Z+H->ZH step (also viable) is returned instead.
-      expect(findNextChainStep(chain, available, 5000)?.output).toBe('ZH');
-    });
+  it('returns the deepest viable base-pair step when only base minerals are available', () => {
+    // Neither GH nor OH stocked; only G, H, O available -> both inputs of GH2O
+    // are blocked-but-makeable. solve descends into whichever input is checked
+    // first (OH = O+H, both base minerals available) and returns that step.
+    const available = new Map<ResourceConstant, number>([
+      ['G', 500] as [ResourceConstant, number],
+      ['H', 500] as [ResourceConstant, number],
+      ['O', 500] as [ResourceConstant, number],
+    ]);
+    const step = nextStepFor('GH2O' as ResourceConstant, available);
+    expect(step?.output).toBe('OH');
+    expect(step).toMatchObject({ input1: 'H', input2: 'O', output: 'OH' });
+  });
 
-    it('without saturation arg, behavior is unchanged', () => {
-      const chain = buildReactionChain('ZHO2' as ResourceConstant);
-      const available = new Map<ResourceConstant, number>([
-        ['Z', 500] as [ResourceConstant, number],
-        ['H', 500] as [ResourceConstant, number],
-        ['ZH', 5000] as [ResourceConstant, number],
-        ['O', 500] as [ResourceConstant, number],
-        ['ZHO2', 5000] as [ResourceConstant, number],
-      ]);
-      expect(findNextChainStep(chain, available)?.output).toBe('ZHO2');
-    });
+  it('returns undefined when a required base mineral is missing entirely', () => {
+    // Nothing in stock at all -> OH needs O+H (neither available, neither has a
+    // recipe) -> blocked; GH needs G+H (same) -> blocked -> whole goal blocked.
+    const available = new Map<ResourceConstant, number>();
+    expect(nextStepFor('GH2O' as ResourceConstant, available)).toBeUndefined();
+  });
+
+  it('does not return a precursor of an already-stocked intermediate (GH)', () => {
+    // GH stocked above threshold, OH also stocked above threshold -> both goal
+    // inputs ready -> returns the goal step (GH2O), never descends into G/H
+    // (GH's precursors) since GH itself is 'ready'.
+    const available = new Map<ResourceConstant, number>([
+      ['GH', 5000] as [ResourceConstant, number],
+      ['OH', 5000] as [ResourceConstant, number],
+      ['G', 9999] as [ResourceConstant, number],
+      ['H', 9999] as [ResourceConstant, number],
+    ]);
+    const step = nextStepFor('GH2O' as ResourceConstant, available);
+    expect(step?.output).toBe('GH2O');
+    expect(step?.output).not.toBe('GH');
   });
 });
 

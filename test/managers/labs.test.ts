@@ -797,6 +797,16 @@ describe('selectReaction', () => {
     return room;
   }
 
+  it('goal-directed: GH stocked + OH low + O/H available -> selects O+H->OH (live GH2O stall case)', () => {
+    // Live state: GH2O frozen at 264 with GH=5000 (plenty), OH=50 (short),
+    // O/H abundant. The forward-greedy selector kept making deep precursors
+    // of the already-stocked GH (ZK/G) instead of OH, the goal's actual
+    // missing input. nextStepFor must return the O+H->OH step.
+    const room = makeSelectRoom({ GH: 5000, OH: 50, O: 500, H: 500 });
+    const result = selectReaction(room);
+    expect(result?.output).toBe('OH');
+  });
+
   it('regression: goal step wins over sticky low-tier pair in input labs', () => {
     // The bug: input labs hold H+O (viable OH pair → sticky returns OH).
     // Storage has GH:500 and OH:500 — enough to run GH+OH→GH2O, the highest-tier
@@ -966,10 +976,14 @@ describe('goal satisfaction cap (selectReaction)', () => {
     expect(sat?.output).toBe('KHO2'); // GH2O skipped
 
     // Second call (same room name, stock now at 1900 — below 4000*0.5=2000):
-    // hysteresis releases, GH2O is pursued again.
-    const room1900 = makeCapRoom({ GH2O: 1900, G: 500, H: 500 });
+    // hysteresis releases, GH2O is pursued again. O is included so the
+    // goal-directed solver can resolve OH (O+H->OH) — without O, GH2O's OH
+    // branch is blocked entirely and selection falls through to the greedy
+    // GH fallback instead (a distinct, also-valid outcome but not what this
+    // test is checking).
+    const room1900 = makeCapRoom({ GH2O: 1900, G: 500, H: 500, O: 500 });
     const resumed = selectReaction(room1900);
-    // GH (G+H→GH) or OH are the reachable GH2O-chain steps with G:500 H:500
+    // GH (G+H→GH) or OH are the reachable GH2O-chain steps with G:500 H:500 O:500
     expect(['GH', 'OH']).toContain(resumed?.output);
   });
 
