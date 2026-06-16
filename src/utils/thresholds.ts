@@ -79,6 +79,15 @@ export const TERMINAL_RESTOCK_MIN_BATCH = 2_000;
 // but shard3 is illiquid and floor prices are ~99-150cr. Keying the cap on
 // the active shard prevents the lab pipeline from deadlocking on shard3
 // without forcing us to pay shard3-inflated prices on shard0.
+/**
+ * Below this much OWN storage energy, a room lacks the buffer to ride out a
+ * miner-replacement gap, so the emergency bootstrap harvester is warranted.
+ * Well below mature operating levels (40k–100k) so routine miner churn never
+ * trips it — harvesters are emergency low-energy bootstrappers, not a fixture of
+ * mature rooms. Young/no-storage rooms (storage 0 < floor) keep the lifeline.
+ */
+export const HARVESTER_EMERGENCY_STORAGE_FLOOR = 5_000;
+
 const MAX_BUY_PRICE_BY_SHARD: Record<string, number> = {
   shard0: 0.5,
   shard1: 0.5,

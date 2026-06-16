@@ -272,6 +272,65 @@ describe('buildSpawnQueue', () => {
     expect(harvester?.minCount).toBe(1);
   });
 
+  it('does NOT spawn the emergency harvester on a miner gap when storage is healthy', () => {
+    // Mature rich room: src2 lacks a miner (a gap), but storage is full — haulers
+    // cover the gap from storage and the replacement miner arrives shortly, so no
+    // harvester should be queued. Harvesters are emergency low-energy bootstrappers.
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any }, // no miner → gap
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner', homeRoom: 'W1N1', state: 'HARVEST' } },
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 50000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    expect(harvester?.minCount).toBe(0);
+  });
+
+  it('spawns the emergency harvester on a miner gap when own storage is below the floor', () => {
+    // Same gap, but storage is below HARVESTER_EMERGENCY_STORAGE_FLOOR (5k) — a
+    // genuine low-energy emergency where the harvester is the recovery lifeline.
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any }, // no miner → gap
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner', homeRoom: 'W1N1', state: 'HARVEST' } },
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 3000 : 0) },
+      },
+    });
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    expect(harvester?.minCount).toBe(1);
+  });
+
   it('scout spawns when there is a room to explore', () => {
     (Memory as any).rooms = {
       W1N1: {

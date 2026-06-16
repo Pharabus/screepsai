@@ -17,7 +17,9 @@ import {
   REPAIR_THRESHOLD,
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_MINERAL_MAINTAIN,
+  HARVESTER_EMERGENCY_STORAGE_FLOOR,
 } from '../utils/thresholds';
+import { myStorage } from '../utils/ownership';
 import { compoundInTransit } from '../utils/boost';
 import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
 import {
@@ -833,15 +835,23 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     }
     // Emergency bootstrap harvester: queued before hauler so the first creep
     // spawned during recovery has WORK parts and can actually harvest from
-    // sources. A hauler alone cannot generate energy. Fires when a source
-    // lacks a miner OR when no local miner is actively harvesting (e.g. the
-    // only miner is still travelling to its container and the spawn is stuck
-    // below capacity with nothing filling it).
+    // sources. A hauler alone cannot generate energy. Gated on BOTH a
+    // miner-coverage gap (a source lacks a miner, or no local miner is actively
+    // harvesting) AND a genuine low-energy state (own storage below
+    // HARVESTER_EMERGENCY_STORAGE_FLOOR). A mature room with a full storage rides
+    // out a routine miner-replacement gap on its buffer — haulers refill the spawn
+    // from storage and the replacement miner arrives shortly — so it must NOT
+    // spawn a harvester every time a miner cycles. Harvesters are emergency
+    // low-energy bootstrappers, not a fixture of energy-rich rooms.
+    const minerGap = minersNeeded(room) > 0 || !hasActiveLocalMiner(room);
+    const lowBuffer =
+      (myStorage(room)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0) <
+      HARVESTER_EMERGENCY_STORAGE_FLOOR;
     queue.push({
       role: 'harvester',
       pattern: [WORK, CARRY, MOVE],
       maxRepeats: 4,
-      minCount: minersNeeded(room) > 0 || !hasActiveLocalMiner(room) ? 1 : 0,
+      minCount: minerGap && lowBuffer ? 1 : 0,
     });
     queue.push({
       role: 'hauler',
