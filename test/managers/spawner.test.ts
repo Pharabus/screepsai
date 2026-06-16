@@ -614,6 +614,106 @@ describe('haulersNeeded', () => {
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
     expect(haulersNeeded(room)).toBe(2); // normal result, cap not reached
   });
+
+  // --- HAULER_DIST_BUMP_BY_RCL tests (distribution term for linked-source mature rooms) ---
+
+  it('applies RCL6 distribution bump for a linked source (1 link-drain + 2 bump = 3)', () => {
+    // linked source: linkId present and Game.getObjectById returns truthy
+    // RCL6: HAULER_DIST_BUMP_BY_RCL[6]=2 → count = 1 (link) + 2 (bump) = 3, max(3,2) = 3
+    (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+    });
+    expect(haulersNeeded(room)).toBe(3);
+  });
+
+  it('applies RCL6 bump plus remote room bonus (1 link + 2 bump + 1 remote = 4)', () => {
+    // Same setup as above but with 1 remote room active
+    (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+        remoteRooms: ['W1N2'],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+    });
+    expect(haulersNeeded(room)).toBe(4);
+  });
+
+  it('applies RCL7 distribution bump for a linked source (1 link + 2 bump = 3)', () => {
+    // RCL7: HAULER_DIST_BUMP_BY_RCL[7]=2 → count = 1 + 2 = 3
+    (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 7 },
+    });
+    expect(haulersNeeded(room)).toBe(3);
+  });
+
+  it('applies RCL8 distribution bump for a linked source (1 link + 3 bump = 4)', () => {
+    // RCL8: HAULER_DIST_BUMP_BY_RCL[8]=3 → count = 1 + 3 = 4
+    (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 8 },
+    });
+    expect(haulersNeeded(room)).toBe(4);
+  });
+
+  it('does not apply distribution bump for an unlinked source at RCL6 (gate check)', () => {
+    // No linkId → source is unlinked → no bump. dist=25, haulerCarry=400 → count=2 (unlinked formula)
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+    });
+    expect(haulersNeeded(room)).toBe(2); // no bump — gate is linked.length > 0
+  });
+
+  it('does not apply distribution bump for a linked source at RCL5 (not in ladder)', () => {
+    // HAULER_DIST_BUMP_BY_RCL[5] is undefined → ?? 0 → no bump
+    // count = 1 (link) + 0 (no bump) = 1, max(1,2) = 2
+    (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 5 },
+    });
+    expect(haulersNeeded(room)).toBe(2); // max(1+0, 2) = 2
+  });
 });
 
 describe('upgradersNeeded', () => {

@@ -85,6 +85,12 @@ const YOUNG_COLONY_MIN_SCORE = 20;
 // shortens the path.
 const MAX_HAULERS_PER_SOURCE = 5;
 
+// Extra haulers for storage->spawn/extension DISTRIBUTION in linked-source rooms. Linked sources
+// need only 1 hauler for link-drain, but filling the spawn + extensions scales with extension
+// count (~RCL), not source count — the base count starves a large mature core (live W44N57:
+// 2 haulers, extensions 2/40, spawn idle, colony collapsed). ~ extension-cap / 20. Tunable.
+const HAULER_DIST_BUMP_BY_RCL: Record<number, number> = { 6: 2, 7: 2, 8: 3 };
+
 type SpawnRequest = {
   role: CreepRoleName;
   minCount: number;
@@ -235,6 +241,13 @@ export function haulersNeeded(room: Room): number {
   );
 
   let count = linked.length > 0 ? 1 : 0;
+
+  // Distribution bandwidth: filling the spawn + extensions scales with extension count (~RCL),
+  // not source count. Linked sources only contribute link-drain (1) above; without this a large
+  // mature core under-haulers its extensions and the spawn starves (see HAULER_DIST_BUMP_BY_RCL).
+  if (linked.length > 0 && room.controller) {
+    count += HAULER_DIST_BUMP_BY_RCL[room.controller.level] ?? 0;
+  }
 
   for (const s of unlinked) {
     const dist = s.pathDist ?? 25;
