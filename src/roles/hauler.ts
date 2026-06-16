@@ -37,6 +37,7 @@ export function mineralStorageFloor(room: Room): number {
 }
 
 const STORAGE_LINK_DRAIN_THRESHOLD = 200;
+const STORAGE_LINK_HIGH_WATER = 600;
 // Only dispatch a hauler for lab minerals when the lab genuinely needs a
 // refill batch. LAB_REACTION_AMOUNT (5) is far too small — it fired on every
 // tick of reaction consumption, monopolising both haulers with micro-loads
@@ -294,6 +295,29 @@ function pickup(creep: Creep): boolean {
     creep.store.getFreeCapacity() > 0
   ) {
     if (pickupLabFlush(creep, mem)) return true;
+  }
+
+  // Storage-link high-water preempt: the normal link drain (STORAGE_LINK_DRAIN_THRESHOLD)
+  // sits below continueCommittedPickup, so once a hauler commits to a distant source drop
+  // it won't re-check the link for the whole round trip. With far sources (W44N57,
+  // pathDist 25-30) the link refills to near-full behind the committed hauler and stays
+  // there — source links can't transmit into a full storage link, containers overflow,
+  // miners spill to the floor, and the bigger drops keep haulers committed. When the link
+  // is near full (can no longer absorb a source-link transmit), drain it even mid-commitment.
+  // Gated to EMPTY haulers: one already carrying energy should finish its commitment, and an
+  // empty hauler en route to a drop is exactly the one to redirect (no hauled load wasted).
+  if (mem?.storageLinkId && creep.store.getUsedCapacity() === 0) {
+    const link = Game.getObjectById(mem.storageLinkId);
+    if (link && link.store.getUsedCapacity(RESOURCE_ENERGY) >= STORAGE_LINK_HIGH_WATER) {
+      creep.memory.targetId = link.id;
+      if (creep.withdraw(link, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, link, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ffaa00' },
+        });
+      }
+      return true;
+    }
   }
 
   // Continue committed pickup task if still valid

@@ -1737,6 +1737,127 @@ describe('hauler pickup priority', () => {
     expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
     expect(creep.withdraw).not.toHaveBeenCalledWith(inputLab1, 'Z');
   });
+
+  it('storage-link high-water preempt: breaks committed drop and drains link when link is near full', () => {
+    // W44N57 live repro: all haulers committed to a distant floor drop while the
+    // storage link sat at ~799. Empty hauler committed to the drop must be redirected
+    // to drain the link when it crosses STORAGE_LINK_HIGH_WATER (600).
+    const bigDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: RESOURCE_ENERGY,
+      amount: 1200,
+      pos: new RoomPosition(3, 24, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 650 }, 800), // >= 600 high-water mark
+      pos: new RoomPosition(22, 4, 'W1N1'),
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'drop1') return bigDrop;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'drop1' },
+      store: mockStore({}), // empty hauler — getUsedCapacity() === 0
+      pos: new RoomPosition(10, 20, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Preempt fires: commitment to the drop is broken, link is drained instead
+    expect(creep.withdraw).toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+    expect(creep.pickup).not.toHaveBeenCalledWith(bigDrop);
+  });
+
+  it('storage-link high-water preempt: does NOT fire below high-water — committed drop continues', () => {
+    // Link at 300 (>= 200 drain threshold but < 600 high-water): the preempt must
+    // not fire. continueCommittedPickup continues the drop normally.
+    const bigDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: RESOURCE_ENERGY,
+      amount: 1200,
+      pos: new RoomPosition(3, 24, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 300 }, 800), // below 600 high-water
+      pos: new RoomPosition(22, 4, 'W1N1'),
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'drop1') return bigDrop;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'drop1' },
+      store: mockStore({}), // empty hauler
+      pos: new RoomPosition(10, 20, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Preempt does NOT fire — hauler continues its commitment to the drop
+    expect(creep.pickup).toHaveBeenCalledWith(bigDrop);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
+
+  it('storage-link high-water preempt: does NOT fire for a loaded hauler even when link is near full', () => {
+    // A hauler already carrying energy should finish its delivery commitment.
+    // The high-water preempt is gated on empty haulers (getUsedCapacity() === 0).
+    const bigDrop = {
+      id: 'drop1' as Id<Resource>,
+      resourceType: RESOURCE_ENERGY,
+      amount: 1200,
+      pos: new RoomPosition(3, 24, 'W1N1'),
+    };
+    const storageLink = {
+      id: 'sLink' as Id<StructureLink>,
+      store: mockStore({ energy: 700 }, 800), // >= 600 high-water
+      pos: new RoomPosition(22, 4, 'W1N1'),
+    };
+
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'sLink') return storageLink;
+      if (id === 'drop1') return bigDrop;
+      return null;
+    }) as any;
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { storageLinkId: 'sLink' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP', targetId: 'drop1' },
+      store: mockStore({ energy: 150 }), // loaded hauler — getUsedCapacity() > 0
+      pos: new RoomPosition(10, 20, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Preempt is inert — loaded hauler continues its commitment (drop pickup)
+    expect(creep.pickup).toHaveBeenCalledWith(bigDrop);
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storageLink, RESOURCE_ENERGY);
+  });
 });
 
 describe('hauler task commitment', () => {
