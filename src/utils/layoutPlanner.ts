@@ -82,17 +82,22 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 4;
+export const LAYOUT_PLAN_VERSION = 5;
 
 /**
  * Minimum walkable tiles to keep open around the storage. The storage is the
- * room's logistics hub — every hauler/worker that withdraws or deposits must
+ * room's busiest tile — every hauler/worker that withdraws or deposits must
  * stand on an adjacent tile, so too few access tiles deadlocks creeps queueing
  * for the one opening (observed live W44N57: storage boxed to a single open
- * neighbour by extensions, ~5 creeps frozen in the approach corridor). Reserved
- * before extension placement so the stamp can never close them off.
+ * neighbour by extensions, ~5 creeps frozen in the approach corridor). Raised
+ * from 3 to 4: with MIN=3 the reservation stopped one tile short, leaving a
+ * corridor-connecting neighbour unguarded so the stamp re-extended onto it —
+ * the boxed-core regression in W44N57 was a direct consequence. Only ever
+ * reserves already-open walkable neighbours, so healthy built rooms are
+ * unaffected. Reserved before extension placement so the stamp can never
+ * close them off.
  */
-const STORAGE_ACCESS_MIN = 3;
+const STORAGE_ACCESS_MIN = 4;
 
 export interface LayoutPlan {
   version: number;

@@ -120,7 +120,7 @@ describe('computeLayout', () => {
   it('keeps the storage accessible — does not box it in with extensions', () => {
     // Live regression (W44N57): the extension stamp filled all but one neighbour of
     // the storage, deadlocking creeps queueing for the single access tile. The
-    // planner must reserve >= STORAGE_ACCESS_MIN (3) walkable neighbours.
+    // planner must reserve >= STORAGE_ACCESS_MIN (4) walkable neighbours.
     const room = makeRoom({
       storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
     });
@@ -149,7 +149,59 @@ describe('computeLayout', () => {
       const y = sp.y + dy;
       return x >= 2 && x <= 47 && y >= 2 && y <= 47 && !occupied.has(`${x},${y}`);
     });
-    expect(open.length).toBeGreaterThanOrEqual(3);
+    expect(open.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('does not over-reserve storage access when fewer than STORAGE_ACCESS_MIN neighbours are open', () => {
+    // When terrain walls block most storage neighbours the planner should reserve only
+    // the tiles that actually exist — no phantom reservation, no out-of-bounds crash.
+    // Storage at (28,25): wall off 6 of 8 neighbours, leaving only (27,24) and (29,25).
+    // The extension stamp must not land on those 2 remaining walkable tiles even though
+    // there are fewer open tiles than STORAGE_ACCESS_MIN (4). Terminal/factory may
+    // legitimately consume one of them — only extensions are gated by the reservation.
+    const storagePos = new RoomPosition(28, 25, 'W1N1');
+    const walls = new Set<string>([
+      '27,25', // left cardinal
+      '29,24', // top-right diagonal
+      '28,24', // top cardinal
+      '28,26', // bottom cardinal
+      '27,26', // bottom-left diagonal
+      '29,26', // bottom-right diagonal
+    ]);
+    const room = makeRoom({
+      storage: { my: true, pos: storagePos },
+      terrain: makeTerrain(walls),
+    });
+    const plan = computeLayout(room)!;
+    const sp = plan.storagePos;
+    const allNeighbors: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    // Count how many non-wall neighbours there are (max the planner can reserve)
+    const walkableNeighborCount = allNeighbors.filter(([dx, dy]) => {
+      const x = sp.x + dx;
+      const y = sp.y + dy;
+      return x >= 2 && x <= 47 && y >= 2 && y <= 47 && !walls.has(`${x},${y}`);
+    }).length;
+    // Should be 2 given the walls above
+    expect(walkableNeighborCount).toBe(2);
+    // The core invariant: extensions must not land on any of the open storage neighbours.
+    // (Terminal/factory are allowed there — the reservation targets extensions only.)
+    const extSet = new Set(plan.extensionPositions.map((p) => `${p.x},${p.y}`));
+    for (const [dx, dy] of allNeighbors) {
+      const x = sp.x + dx;
+      const y = sp.y + dy;
+      if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+      if (walls.has(`${x},${y}`)) continue;
+      expect(extSet.has(`${x},${y}`)).toBe(false);
+    }
   });
 
   it('skips wall tiles for extension positions', () => {
