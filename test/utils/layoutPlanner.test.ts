@@ -3,6 +3,8 @@ import {
   LAB_STAMP,
   EXTENSION_STAMP,
   scoreSpawnCandidate,
+  pruneUnreachableExtensions,
+  findStrandedExtensions,
 } from '../../src/utils/layoutPlanner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -660,6 +662,315 @@ describe('scoreSpawnCandidate', () => {
     }
     const terrain = makeTerrain(walls);
     expect(scoreSpawnCandidate(10, 10, terrain)).toBe(-1);
+  });
+});
+
+describe('pruneUnreachableExtensions', () => {
+  // Helper: build a minimal RoomTerrain-like object from a wall key Set.
+  function makePruneTerrain(walls: Set<string> = new Set()): any {
+    return {
+      get: (x: number, y: number) => (walls.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+    };
+  }
+
+  it('drops a stranded extension whose only walkable neighbour is a sealed pocket', () => {
+    // Reproduces the W44N57 pattern: extension E at (30,9); its only walkable
+    // 8-neighbour is the pocket tile P at (29,9).  P itself is sealed — every
+    // one of its 8 neighbours is either E (an obstacle) or another obstacle key
+    // injected below — so the flood never reaches P, and therefore E has no
+    // reachable approach tile and gets pruned.
+    //
+    // E (30,9) 8-neighbours: 29,8  30,8  31,8  29,9(=P)  31,9  29,10  30,10  31,10
+    // P (29,9) 8-neighbours: 28,8  29,8  30,8  28,9  30,9(=E)  28,10  29,10  30,10
+    //
+    // We put the union of both neighbour sets (minus P and E themselves) into the
+    // obstacle set, making P completely surrounded and E reachable only via P.
+    const spawnPos = { x: 25, y: 25 };
+    const terrain = makePruneTerrain(); // no terrain walls
+
+    const obstacles = new Set<string>([
+      '25,25', // spawn
+      // neighbours of E (30,9) except P (29,9):
+      '29,8',
+      '30,8',
+      '31,8',
+      '31,9',
+      '29,10',
+      '30,10',
+      '31,10',
+      // additional neighbours of P (29,9) not already listed:
+      '28,8',
+      '28,9',
+      '28,10',
+    ]);
+
+    // E is the stranded extension; R is near-spawn and always reachable.
+    const strandedExt = { x: 30, y: 9 };
+    const reachableExt = { x: 24, y: 23 };
+    obstacles.add('30,9'); // E itself is an obstacle (it is an extension)
+    obstacles.add('24,23'); // R is also an extension obstacle
+    const extensions = [strandedExt, reachableExt];
+
+    const result = pruneUnreachableExtensions(extensions, obstacles, terrain, spawnPos);
+
+    const keys = result.map((p) => `${p.x},${p.y}`);
+    expect(keys).not.toContain('30,9'); // stranded via sealed pocket — pruned
+    expect(keys).toContain('24,23'); // reachable — kept
+  });
+
+  it('fixpoint: stranded extension is dropped and remaining set is self-consistent', () => {
+    // Extension A at (40,40) is directly stranded: ALL of its 8 neighbours are in
+    // the obstacle set, so it has zero walkable approach tiles and is pruned on the
+    // first flood pass.  Extension B at (24,23) is near-spawn and always reachable.
+    //
+    // A (40,40) 8-neighbours: 39,39  40,39  41,39  39,40  41,40  39,41  40,41  41,41
+    // We put all of them in obstacles so A has no walkable approach.
+    const spawnPos = { x: 25, y: 25 };
+    const terrain = makePruneTerrain();
+
+    const obstacles = new Set<string>([
+      '25,25', // spawn
+      '39,39',
+      '40,39',
+      '41,39',
+      '39,40',
+      '41,40',
+      '39,41',
+      '40,41',
+      '41,41',
+    ]);
+
+    const extA = { x: 40, y: 40 }; // stranded
+    const extB = { x: 24, y: 23 }; // reachable (near spawn, open corridor)
+
+    obstacles.add('40,40'); // A itself is an extension obstacle
+    obstacles.add('24,23'); // B itself is an extension obstacle
+
+    const result = pruneUnreachableExtensions([extA, extB], obstacles, terrain, spawnPos);
+    const keys = result.map((p) => `${p.x},${p.y}`);
+
+    // A is stranded (no walkable 8-neighbour) — pruned
+    expect(keys).not.toContain('40,40');
+    // B is reachable — kept
+    expect(keys).toContain('24,23');
+
+    // Self-consistency: every returned extension has at least one non-obstacle 8-neighbour
+    // in the post-prune obstacle set (obstacles was mutated — 40,40 removed from it).
+    const eight: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    for (const { x, y } of result) {
+      const hasOpenNeighbour = eight.some(([dx, dy]) => {
+        const nx = x + dx;
+        const ny = y + dy;
+        return nx >= 2 && nx <= 47 && ny >= 2 && ny <= 47 && !obstacles.has(`${nx},${ny}`);
+      });
+      expect(hasOpenNeighbour).toBe(true);
+    }
+  });
+
+  it('fail-open: returns list unchanged when spawn has no walkable neighbours', () => {
+    // Seal all 8 spawn neighbours — no seeds → fail open, return list as-is.
+    const spawnPos = { x: 25, y: 25 };
+    const terrain = makePruneTerrain(); // no terrain walls
+
+    const obstacles = new Set<string>([
+      '25,25', // spawn
+      '24,24',
+      '25,24',
+      '26,24',
+      '24,25',
+      '26,25',
+      '24,26',
+      '25,26',
+      '26,26',
+    ]);
+
+    const extensions = [
+      { x: 24, y: 23 },
+      { x: 26, y: 23 },
+      { x: 30, y: 30 },
+    ];
+    for (const p of extensions) obstacles.add(`${p.x},${p.y}`);
+
+    const result = pruneUnreachableExtensions(extensions, obstacles, terrain, spawnPos);
+
+    // Fail-open: all three returned unchanged
+    expect(result).toHaveLength(3);
+    expect(result.map((p) => `${p.x},${p.y}`)).toEqual(extensions.map((p) => `${p.x},${p.y}`));
+  });
+
+  it('no regression: open-terrain room drops no extensions', () => {
+    // In open terrain with only the spawn as an obstacle (no other hub structures, no
+    // extension obstacles), the entire room is reachable from spawn's neighbours.
+    // Every stamp extension has at least one open 8-neighbour that the flood reaches,
+    // so pruneUnreachableExtensions must return the list unchanged.
+    //
+    // NOTE: we intentionally do NOT add extensions to the obstacle set here.
+    // pruneUnreachableExtensions checks whether an extension's 8-neighbours contain
+    // a REACHABLE tile — if the extensions themselves are not obstacles, the flood
+    // covers the whole room and every extension is trivially reachable.  This mirrors
+    // the behaviour when roads/open-corridor tiles provide approach paths in a real room.
+    const spawnPos = { x: 25, y: 25 };
+    const terrain = makePruneTerrain();
+
+    // Only spawn is an obstacle — extensions are NOT added to the obstacle set.
+    const obstacles = new Set<string>(['25,25']);
+    const extensions: { x: number; y: number }[] = [];
+    for (const [dx, dy] of EXTENSION_STAMP) {
+      const x = spawnPos.x + dx;
+      const y = spawnPos.y + dy;
+      if (x >= 2 && x <= 47 && y >= 2 && y <= 47) extensions.push({ x, y });
+    }
+
+    const result = pruneUnreachableExtensions(extensions, obstacles, terrain, spawnPos);
+
+    // With a fully open room, no extensions should be pruned.
+    expect(result).toHaveLength(extensions.length);
+  });
+});
+
+describe('flood-fill prune integration (via computeLayout)', () => {
+  it('pruned stranded extension does not appear in the returned plan', () => {
+    // Reproduce the W44N57 scenario: a stamp position whose only walkable approach
+    // tile is sealed into a 1-tile pocket by surrounding planned obstacles.
+    //
+    // We use a targeted wall configuration to guarantee that at least one specific
+    // stamp tile is stranded, and verify it is absent from the plan while the overall
+    // extension count still satisfies the RCL cap.
+    //
+    // Spawn at (25,25). Extension stamp has [-1,-2] = (24,23).
+    // We want to seal (24,23) by walling off all its 8 neighbours except (25,25) which
+    // is the spawn (an obstacle itself), and (23,23) which we also wall.
+    // 24,23's 8 neighbours: 23,22  24,22  25,22  23,23  25,23  23,24  24,24  25,24
+    // Wall all of them → (24,23)'s only non-wall neighbour would be the spawn tile (25,25)
+    // which is an obstacle → (24,23) becomes unreachable.
+    const walls = new Set<string>([
+      '23,22',
+      '24,22',
+      '25,22',
+      '23,23',
+      '25,23',
+      '23,24',
+      '24,24',
+      '25,24',
+    ]);
+    const room = makeRoom({ terrain: makeTerrain(walls) });
+    const plan = computeLayout(room)!;
+    const extKeys = new Set(plan.extensionPositions.map((p) => `${p.x},${p.y}`));
+
+    // The sealed extension must be absent from the plan.
+    expect(extKeys.has('24,23')).toBe(false);
+
+    // The plan must still have enough extensions for a viable colony.
+    expect(plan.extensionPositions.length).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe('findStrandedExtensions', () => {
+  it('reports a built extension whose all 8 neighbours are obstacles', () => {
+    // Build a room fixture: spawn at (25,25); one built extension at (30,9) whose
+    // every 8-neighbour is a built non-walkable structure (so the flood can never
+    // reach any of them and the extension is reported as stranded).
+    //
+    // Neighbours of 30,9: 29,8  30,8  31,8  29,9  31,9  29,10  30,10  31,10
+    // We surface them all as built extensions (NON_WALKABLE_STRUCTURES) so each
+    // one is in the obstacle set and the flood can never reach any of them.
+    const spawnPos = new RoomPosition(25, 25, 'W1N1');
+    const strandedPos = new RoomPosition(30, 9, 'W1N1');
+    const neighbourOffsets: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    const neighbourStructures = neighbourOffsets.map(([dx, dy]) => ({
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(strandedPos.x + dx, strandedPos.y + dy, 'W1N1'),
+    }));
+    const strandedStructure = { structureType: STRUCTURE_EXTENSION, pos: strandedPos };
+    // A reachable extension near spawn — should NOT appear in results.
+    const reachableStructure = {
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(24, 23, 'W1N1'),
+    };
+    const allStructures = [...neighbourStructures, strandedStructure, reachableStructure];
+
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+      if (type === FIND_STRUCTURES)
+        return opts?.filter ? allStructures.filter(opts.filter) : allStructures;
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? allStructures.filter(opts.filter) : allStructures;
+      if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+      return [];
+    };
+
+    const result = findStrandedExtensions(room);
+    const keys = result.map((p) => `${p.x},${p.y}`);
+
+    expect(keys).toContain('30,9');
+    expect(result.find((p) => p.x === 30 && p.y === 9)?.built).toBe(true);
+    expect(keys).not.toContain('24,23'); // reachable — not reported
+  });
+
+  it('returns empty array when no spawn exists', () => {
+    const room = makeRoom();
+    room.find = () => [];
+    room.getTerrain = () => makeTerrain();
+    expect(findStrandedExtensions(room)).toEqual([]);
+  });
+
+  it('reports an extension construction site with no reachable approach', () => {
+    // Same sealed-pocket geometry but for a CS rather than a built structure.
+    const spawnPos = new RoomPosition(25, 25, 'W1N1');
+    const strandedPos = new RoomPosition(30, 9, 'W1N1');
+    const neighbourOffsets: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    const neighbourStructures = neighbourOffsets.map(([dx, dy]) => ({
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(strandedPos.x + dx, strandedPos.y + dy, 'W1N1'),
+    }));
+    const strandedSite = { structureType: STRUCTURE_EXTENSION, pos: strandedPos, id: 'cs1' };
+
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+      if (type === FIND_STRUCTURES)
+        return opts?.filter ? neighbourStructures.filter(opts.filter) : neighbourStructures;
+      if (type === FIND_MY_STRUCTURES)
+        return opts?.filter ? neighbourStructures.filter(opts.filter) : neighbourStructures;
+      if (type === FIND_MY_CONSTRUCTION_SITES) {
+        const sites = [strandedSite];
+        return opts?.filter ? sites.filter(opts.filter) : sites;
+      }
+      return [];
+    };
+
+    const result = findStrandedExtensions(room);
+    const keys = result.map((p) => `${p.x},${p.y}`);
+    expect(keys).toContain('30,9');
+    expect(result.find((p) => p.x === 30 && p.y === 9)?.built).toBe(false);
   });
 });
 

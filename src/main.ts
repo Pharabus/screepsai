@@ -17,7 +17,11 @@ import { cleanStuckTracker } from './utils/movement';
 import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
 import { shouldRun, THROTTLE_HIGH, THROTTLE_NORMAL, THROTTLE_LOW } from './utils/throttle';
-import { computeLayout, findBestSpawnPosition } from './utils/layoutPlanner';
+import {
+  computeLayout,
+  findBestSpawnPosition,
+  findStrandedExtensions,
+} from './utils/layoutPlanner';
 import { replanPerimeterForRoom } from './utils/perimeterPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
 import { formatCombatLog } from './utils/combatLog';
@@ -83,6 +87,19 @@ export const replanLayout = (roomName: string): string => {
     `${plan.labPositions.length} labs, ` +
     `${plan.towerPositions.length} towers`
   );
+};
+
+/** Scan a visible room for built extensions and extension sites with no reachable
+ *  approach from the spawn (8-directional flood-fill over walkable tiles).
+ *  Use this after deploying v6 to confirm the plan prune worked and to find any
+ *  pre-existing stranded built structures that need manual .destroy() + splice. */
+export const strandedExtensions = (roomName: string): string => {
+  const room = Game.rooms[roomName];
+  if (!room) return `Room ${roomName} not visible`;
+  const found = findStrandedExtensions(room);
+  if (found.length === 0) return `${roomName}: no stranded extensions`;
+  const desc = found.map((p) => `${p.x},${p.y}(${p.built ? 'built' : 'site'})`).join('  ');
+  return `${roomName}: ${found.length} stranded — ${desc}`;
 };
 
 export const neighbors = () => summarizeNeighbors();
@@ -277,6 +294,7 @@ global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
 global.replanPerimeter = replanPerimeter;
+global.strandedExtensions = strandedExtensions;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
 global.boostStatus = boostStatus;

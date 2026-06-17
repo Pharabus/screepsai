@@ -82,7 +82,7 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 5;
+export const LAYOUT_PLAN_VERSION = 6;
 
 /**
  * Minimum walkable tiles to keep open around the storage. The storage is the
@@ -221,6 +221,195 @@ function isAccessible(
   }
 
   return true;
+}
+
+/**
+ * Shared 8-directional flood-fill core.
+ *
+ * Walks all tiles reachable from `seeds` where a tile is walkable when it is
+ * in-bounds, not a terrain wall, and not present in `obstacleKeys`.
+ * Returns the set of reachable "x,y" keys (seeds themselves included).
+ */
+function floodReachable(
+  seeds: { x: number; y: number }[],
+  obstacleKeys: Set<string>,
+  terrain: RoomTerrain,
+): Set<string> {
+  const isWalkable = (x: number, y: number): boolean => {
+    if (!inBounds(x, y)) return false;
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) return false;
+    return !obstacleKeys.has(`${x},${y}`);
+  };
+
+  const reachable = new Set<string>();
+  const stack: { x: number; y: number }[] = [];
+  for (const s of seeds) {
+    const k = `${s.x},${s.y}`;
+    if (!reachable.has(k) && isWalkable(s.x, s.y)) {
+      reachable.add(k);
+      stack.push(s);
+    }
+  }
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (const [dx, dy] of EIGHT_NEIGHBORS) {
+      const nx = cur.x + dx;
+      const ny = cur.y + dy;
+      if (!isWalkable(nx, ny)) continue;
+      const nk = `${nx},${ny}`;
+      if (reachable.has(nk)) continue;
+      reachable.add(nk);
+      stack.push({ x: nx, y: ny });
+    }
+  }
+  return reachable;
+}
+
+/** Collect the 8 walkable neighbours of `pos` that are not in `obstacleKeys`. */
+function walkableNeighbourSeeds(
+  pos: { x: number; y: number },
+  obstacleKeys: Set<string>,
+  terrain: RoomTerrain,
+): { x: number; y: number }[] {
+  const seeds: { x: number; y: number }[] = [];
+  for (const [dx, dy] of EIGHT_NEIGHBORS) {
+    const nx = pos.x + dx;
+    const ny = pos.y + dy;
+    if (!inBounds(nx, ny)) continue;
+    if (terrain.get(nx, ny) === TERRAIN_MASK_WALL) continue;
+    if (obstacleKeys.has(`${nx},${ny}`)) continue;
+    seeds.push({ x: nx, y: ny });
+  }
+  return seeds;
+}
+
+/**
+ * Transitive reachability prune for extension positions.
+ *
+ * The local accessibility checks (`isAccessible`, overflow `wouldTrap`) only inspect
+ * immediate cardinal neighbours — they cannot detect a case where the approach tile
+ * is itself inside a sealed pocket unreachable from the spawn (live: W44N57 extension
+ * 30,9 whose only walkable neighbour 29,9 was a 1-tile road pocket sealed by other
+ * planned obstacles). This helper flood-fills (8-directional) from the spawn's walkable
+ * neighbours and drops any extension that has no adjacent reachable tile.
+ *
+ * **Fixpoint loop:** after dropping an unreachable extension its tile becomes walkable,
+ * which can rescue a neighbour. Repeats until stable (converges because dropping only
+ * opens tiles). Bounded by `extensionPositions.length` iterations to guard against
+ * degenerate inputs.
+ *
+ * **Fail open:** if the spawn has no walkable seed neighbours (degenerate room), returns
+ * `extensionPositions` unchanged rather than nuking everything.
+ *
+ * @param extensionPositions  candidate extension tiles (mutated copy is returned)
+ * @param plannedObstacleKeys mutable set of all planned + built non-walkable tile keys
+ *   (spawn, storage, terminal, factory, labs, towers, spawns, and every extension);
+ *   unreachable extensions are removed from this set so their tiles become walkable.
+ * @param terrain             room terrain for wall checks
+ * @param spawnPos            primary spawn tile (it is itself an obstacle; flood seeds
+ *   from its 8 walkable neighbours)
+ */
+export function pruneUnreachableExtensions(
+  extensionPositions: { x: number; y: number }[],
+  plannedObstacleKeys: Set<string>,
+  terrain: RoomTerrain,
+  spawnPos: { x: number; y: number },
+): { x: number; y: number }[] {
+  // Seed from spawn's 8 walkable neighbours (spawn itself is an obstacle).
+  const seeds = walkableNeighbourSeeds(spawnPos, plannedObstacleKeys, terrain);
+
+  // Fail open: if no seeds exist (degenerate room), return the list unchanged.
+  if (seeds.length === 0) return extensionPositions;
+
+  let remaining = [...extensionPositions];
+  const maxIter = extensionPositions.length + 1;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const reachable = floodReachable(seeds, plannedObstacleKeys, terrain);
+
+    // Find extensions with no reachable 8-neighbour (stranded).
+    const stranded = remaining.filter(
+      ({ x, y }) => !EIGHT_NEIGHBORS.some(([dx, dy]) => reachable.has(`${x + dx},${y + dy}`)),
+    );
+
+    if (stranded.length === 0) break; // fixed point — done
+
+    // Remove stranded extensions from both the candidate list and the obstacle set
+    // so their tiles become walkable for the next flood pass.
+    for (const p of stranded) {
+      plannedObstacleKeys.delete(`${p.x},${p.y}`);
+    }
+    const strandedKeys = new Set(stranded.map((p) => `${p.x},${p.y}`));
+    remaining = remaining.filter((p) => !strandedKeys.has(`${p.x},${p.y}`));
+  }
+
+  return remaining;
+}
+
+/**
+ * Finds already-BUILT extensions and extension construction sites whose 8 neighbours
+ * contain no tile reachable from the room's spawn via walkable (non-wall,
+ * non-NON_WALKABLE_STRUCTURES) tiles.
+ *
+ * Used by the `strandedExtensions(roomName)` console command to diagnose live rooms
+ * after a plan has already been built — the planner's prune only prevents NEW stranded
+ * extensions; this surfaces ones that slipped through before v6 was deployed.
+ *
+ * Obstacle set = every built NON_WALKABLE_STRUCTURES tile + every extension construction
+ * site (sites are passable for pathing but act as obstacles for approach purposes since
+ * a creep can't stand on them to interact). Extension structures themselves are also
+ * obstacles (creeps must approach from a neighbour, not stand on the extension).
+ *
+ * Fail open: returns [] if the room has no spawn or all spawn neighbours are blocked.
+ */
+export function findStrandedExtensions(room: Room): { x: number; y: number; built: boolean }[] {
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return [];
+
+  const terrain = room.getTerrain();
+
+  // Build obstacle set: all built non-walkable structures + extension CSes.
+  const obstacleKeys = new Set<string>();
+  for (const s of room.find(FIND_STRUCTURES)) {
+    if (NON_WALKABLE_STRUCTURES.has(s.structureType)) {
+      obstacleKeys.add(`${s.pos.x},${s.pos.y}`);
+    }
+  }
+  for (const cs of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+    if (cs.structureType === STRUCTURE_EXTENSION) {
+      obstacleKeys.add(`${cs.pos.x},${cs.pos.y}`);
+    }
+  }
+
+  // Seed flood from spawn's 8 walkable neighbours.
+  const seeds = walkableNeighbourSeeds(spawn.pos, obstacleKeys, terrain);
+  if (seeds.length === 0) return []; // fail open
+
+  const reachable = floodReachable(seeds, obstacleKeys, terrain);
+
+  const results: { x: number; y: number; built: boolean }[] = [];
+
+  // Check built extensions.
+  for (const s of room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+  })) {
+    const hasReachableNeighbour = EIGHT_NEIGHBORS.some(([dx, dy]) =>
+      reachable.has(`${s.pos.x + dx},${s.pos.y + dy}`),
+    );
+    if (!hasReachableNeighbour) results.push({ x: s.pos.x, y: s.pos.y, built: true });
+  }
+
+  // Check extension construction sites.
+  for (const cs of room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+  })) {
+    const hasReachableNeighbour = EIGHT_NEIGHBORS.some(([dx, dy]) =>
+      reachable.has(`${cs.pos.x + dx},${cs.pos.y + dy}`),
+    );
+    if (!hasReachableNeighbour) results.push({ x: cs.pos.x, y: cs.pos.y, built: false });
+  }
+
+  return results;
 }
 
 function countBuildableLabPositions(
@@ -581,6 +770,32 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     }
   }
 
+  // Step 6: Flood-fill reachability prune — drop any extension whose 8-neighbours are
+  // all unreachable from the spawn over the final planned + built obstacle set.
+  // Fixes the W44N57 case where a planned extension's only walkable approach tile was
+  // itself a 1-tile pocket sealed by other planned obstacles (local checks passed; the
+  // transitive flood catches it). Built non-walkable structures come from liveMap;
+  // planned non-walkable come from every fixed position in the layout.
+  const plannedObstacleKeys = new Set<string>();
+  for (const [key, type] of liveMap.entries()) {
+    if (NON_WALKABLE_STRUCTURES.has(type)) plannedObstacleKeys.add(key);
+  }
+  plannedObstacleKeys.add(`${storagePos.x},${storagePos.y}`);
+  plannedObstacleKeys.add(`${spawn.pos.x},${spawn.pos.y}`);
+  if (terminalPos) plannedObstacleKeys.add(`${terminalPos.x},${terminalPos.y}`);
+  if (factoryPos) plannedObstacleKeys.add(`${factoryPos.x},${factoryPos.y}`);
+  for (const p of spawnPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
+  for (const p of labPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
+  for (const p of towerPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
+  for (const p of extensionPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
+
+  const prunedExtensions = pruneUnreachableExtensions(
+    extensionPositions,
+    plannedObstacleKeys,
+    terrain,
+    spawn.pos,
+  );
+
   return {
     version: LAYOUT_PLAN_VERSION,
     storagePos,
@@ -588,7 +803,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     factoryPos,
     towerPositions,
     labPositions,
-    extensionPositions,
+    extensionPositions: prunedExtensions,
     spawnPositions,
   };
 }
