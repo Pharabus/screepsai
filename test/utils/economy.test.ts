@@ -18,6 +18,7 @@ import {
   UPGRADE_BUFFER,
   ENERGY_PER_UPGRADE_WORK,
   MINERAL_RESERVE_MARGIN,
+  MINERAL_PRIORITY_ENERGY_FLOOR,
   SATURATED_THRESHOLD,
   WALL_HARD_FLOOR,
   WALL_CAPS,
@@ -474,6 +475,87 @@ describe('energyBudget', () => {
       storage: { my: true, store: { getUsedCapacity: () => 200_000 } },
     });
     expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  // --- mineralPriority flag ---
+
+  it('mineralPriority: clears the lower gate at colonyEnergy 20k (above MINERAL_PRIORITY_ENERGY_FLOOR)', () => {
+    // RCL6, total=20k — below normal gate (40k) but above the priority floor (15k)
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, mineralPriority: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 20_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(true);
+  });
+
+  it('mineralPriority: same room WITHOUT the flag at 20k remains false', () => {
+    // Same setup but no mineralPriority flag — normal gate (40k) not cleared
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 20_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  it('mineralPriority: still gated when colonyEnergy < MINERAL_PRIORITY_ENERGY_FLOOR (10k < 15k)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, mineralPriority: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 10_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  it('mineralPriority: RCL5 room with high energy and flag stays false (extractor needs RCL6)', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, mineralPriority: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 5 },
+      storage: { my: true, store: { getUsedCapacity: () => 200_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  it('mineralPriority: bootstrap stage with high energy and flag stays false', () => {
+    // No minerEconomy → stage = 'bootstrap'; flag must not override the stage guard
+    (Memory as any).rooms = { W1N1: { mineralPriority: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 200_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  it('mineralPriority: normal room at 30k without flag stays false', () => {
+    // Non-priority path unchanged: 30k < 40k gate
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 30_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(false);
+  });
+
+  it('mineralPriority: normal room at 45k without flag is true (normal gate untouched)', () => {
+    // Non-priority path: 45k > 40k gate (buffer 25k + margin 15k = 40k)
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 45_000 } },
+    });
+    expect(energyBudget(room).allowMineralMining).toBe(true);
+  });
+
+  it('MINERAL_PRIORITY_ENERGY_FLOOR is 15k', () => {
+    expect(MINERAL_PRIORITY_ENERGY_FLOOR).toBe(15_000);
   });
 
   it('allowFactory: true when total > 120k', () => {

@@ -89,6 +89,21 @@ export const replanLayout = (roomName: string): string => {
   );
 };
 
+/**
+ * Set or clear the mineralPriority flag on a room, lowering the mineral-mining
+ * gate to MINERAL_PRIORITY_ENERGY_FLOOR (15k) so a single-source mineral-outpost
+ * room (e.g. W44N59 for X) auto-commissions its extractor + mineralMiner once
+ * it reaches RCL6, instead of stalling below the normal 40k gate.
+ *
+ * Usage: mineralPriority('W44N59')        // enable (default)
+ *        mineralPriority('W44N59', false) // disable
+ */
+export const mineralPriority = (roomName: string, on = true): string => {
+  const mem = (Memory.rooms[roomName] ??= {});
+  mem.mineralPriority = on;
+  return `${roomName}: mineralPriority ${on ? 'ON' : 'OFF'}`;
+};
+
 /** Scan a visible room for built extensions and extension sites with no reachable
  *  approach from the spawn (8-directional flood-fill over walkable tiles).
  *  Use this after deploying v6 to confirm the plan prune worked and to find any
@@ -293,6 +308,7 @@ global.stats = stats;
 global.resetStats = resetStats;
 global.status = status;
 global.replanLayout = replanLayout;
+global.mineralPriority = mineralPriority;
 global.replanPerimeter = replanPerimeter;
 global.strandedExtensions = strandedExtensions;
 global.neighbors = neighbors;

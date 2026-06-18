@@ -89,6 +89,18 @@ export const ENERGY_PER_UPGRADE_WORK = 5_000;
  */
 export const MINERAL_RESERVE_MARGIN = 15_000;
 
+/**
+ * Lowered mineral-mining gate for single-source mineral-outpost rooms
+ * (RoomMemory.mineralPriority = true, toggled via the mineralPriority() console command).
+ *
+ * A single-source room's colonyEnergy can't reach the normal
+ * buffer + MINERAL_RESERVE_MARGIN (40k at RCL6) because the continuous upgrader
+ * ramp eats surplus as storage climbs past ~25k, pinning equilibrium at ~25-30k.
+ * 15k sits comfortably below that equilibrium so the gate clears at the room's
+ * natural operating level while still keeping a spawn buffer.
+ */
+export const MINERAL_PRIORITY_ENERGY_FLOOR = 15_000;
+
 /** Overmind-style threshold above which a room is considered saturated and
  *  upgrade power is doubled to accelerate RCL8 progress. */
 export const SATURATED_THRESHOLD = 500_000;
@@ -250,6 +262,7 @@ export function energyBudget(room: Room): EnergyBudget {
     const buffer = upgradeBuffer(room);
     const surplus = Math.max(0, total - buffer);
     const rcl = room.controller?.level ?? 0;
+    const mineralPriority = Memory.rooms[room.name]?.mineralPriority === true;
 
     return {
       stage,
@@ -259,7 +272,9 @@ export function energyBudget(room: Room): EnergyBudget {
       upgradePower: upgradePower(room),
       wallHpTarget: wallHpTarget(room),
       allowMineralMining:
-        rcl >= 6 && stage !== 'bootstrap' && total > buffer + MINERAL_RESERVE_MARGIN,
+        rcl >= 6 &&
+        stage !== 'bootstrap' &&
+        total > (mineralPriority ? MINERAL_PRIORITY_ENERGY_FLOOR : buffer + MINERAL_RESERVE_MARGIN),
       allowEnergyExport: surplus > 0,
       allowFactory: total > FACTORY_ENERGY_FLOOR,
     };
