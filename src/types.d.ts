@@ -454,6 +454,12 @@ interface TransportMission extends MissionBase {
   status: 'active' | 'retiring';
   /** Names of courier creeps serving this mission (derived from missionId scan). */
   courierIds: string[];
+  /**
+   * Optional override: room whose spawner queues couriers. Defaults to destRoom.
+   * Use when the source room has spawn capacity and you want to avoid pulling
+   * courier bodies from the (possibly distant) destination colony.
+   */
+  spawnRoom?: string;
 }
 
 /**

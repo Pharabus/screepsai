@@ -1140,11 +1140,13 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
   }
 
   // Transport missions (operator-created via deliverEnergy): couriers spawn from
-  // the DESTINATION room — the natural empty→source→full→dest loop, and the dest
-  // is a mature colony with ample spawn capacity. Added last (lowest priority):
-  // a manual transport must never starve the local economy or defenders.
+  // m.spawnRoom if set, otherwise the destination room. Either way, homeRoom is
+  // always destRoom so the courier delivers there (and flees there on threat).
+  // Added last (lowest priority): a manual transport must never starve the local
+  // economy or defenders.
   for (const t of getTransportMissions()) {
-    if (t.destRoom !== room.name || t.status === 'retiring') continue;
+    const spawnFrom = t.spawnRoom ?? t.destRoom;
+    if (spawnFrom !== room.name || t.status === 'retiring') continue;
     syncTransportMission(t.id);
     // Re-fetch: syncTransportMission may have flipped status to 'retiring'.
     const m = getTransportMission(t.id);
@@ -1154,7 +1156,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       return sum + (c ? c.store.getUsedCapacity(m.resource) : 0);
     }, 0);
     if (m.deliveredAmount + carried >= m.targetAmount) continue;
-    const dist = Game.map.getRoomLinearDistance(room.name, m.sourceRoom);
+    const dist = Game.map.getRoomLinearDistance(m.sourceRoom, m.destRoom);
     // Linear distance under-provisions diagonal neighbours: W42N59↔W43N58 are
     // Chebyshev dist=1 but share no border, so the real route detours through a
     // third room (~165-tile round trip). 1+dist gave only 2 couriers and a
@@ -1169,7 +1171,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       minCount: countCreepsByRole('courier', room.name) + 1,
       memory: {
         role: 'courier' as CreepRoleName,
-        homeRoom: room.name, // destination
+        homeRoom: m.destRoom, // always deliver to dest (regardless of spawn origin)
         targetRoom: m.sourceRoom,
         missionId: m.id,
       },

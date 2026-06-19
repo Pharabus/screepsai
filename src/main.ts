@@ -243,26 +243,39 @@ export const claimCandidates = (): string => {
 };
 
 /**
- * Start a manual cross-room transport: couriers spawned from `dest` shuttle the
- * resource out of `source`'s storage/terminal into dest's OWN storage. `amount`
- * is a cap — the mission ends on delivered≥amount OR when the source is exhausted
- * (never hangs). Omit `amount` to drain the source fully.
+ * Start a manual cross-room transport: couriers shuttle a resource out of
+ * `source`'s storage/terminal into `dest`'s OWN storage. `amount` is a cap —
+ * the mission ends on delivered≥amount OR when the source is exhausted (never
+ * hangs). Omit `amount` to drain the source fully.
  *
- * Primary use: drain a reclaimed room's previous-owner storage hoard into a
- * mature colony — which also empties the husk so the source can build its storage.
+ * By default couriers spawn from `dest` (the mature colony). Pass `spawnRoom`
+ * to spawn them from a different owned room instead — useful when boosting an
+ * outpost whose source room already has spawn capacity and you don't want to
+ * pull courier bodies from the destination.
  *
- *   deliverEnergy('W42N59', 'W43N58')          // drain fully
- *   deliverEnergy('W42N59', 'W43N58', 100000)  // up to 100k
+ *   deliverEnergy('W42N59', 'W43N58')               // drain fully, spawn from dest
+ *   deliverEnergy('W42N59', 'W43N58', 100000)        // up to 100k, spawn from dest
+ *   deliverEnergy('W42N59', 'W44N59', 30000, 'W42N59') // spawn from source room
  */
-export const deliverEnergy = (source: string, dest: string, amount?: number): string => {
+export const deliverEnergy = (
+  source: string,
+  dest: string,
+  amount?: number,
+  spawnRoom?: string,
+): string => {
   if (source === dest) return 'deliver refused: source and dest are the same room';
   const destRoom = Game.rooms[dest];
   if (!destRoom?.controller?.my) return `deliver refused: ${dest} is not an owned room`;
   if (!destRoom.storage?.my) return `deliver refused: ${dest} has no own storage to receive into`;
+  if (spawnRoom !== undefined && spawnRoom !== dest) {
+    const sr = Game.rooms[spawnRoom];
+    if (!sr?.controller?.my) return `deliver refused: spawnRoom ${spawnRoom} is not an owned room`;
+  }
   const cap = amount && amount > 0 ? amount : TRANSPORT_DRAIN_ALL;
-  const m = createTransportMission(source, dest, cap);
+  const m = createTransportMission(source, dest, cap, RESOURCE_ENERGY, spawnRoom);
   const capStr = cap === TRANSPORT_DRAIN_ALL ? 'all available' : `up to ${cap}`;
-  return `transport ${source}->${dest} started: ${capStr} ${m.resource} (couriers spawn from ${dest})`;
+  const spawnFrom = spawnRoom ?? dest;
+  return `transport ${source}->${dest} started: ${capStr} ${m.resource} (couriers spawn from ${spawnFrom})`;
 };
 
 /**

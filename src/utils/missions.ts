@@ -322,6 +322,7 @@ export function createTransportMission(
   destRoom: string,
   amount: number,
   resource: ResourceConstant = RESOURCE_ENERGY,
+  spawnRoom?: string,
 ): TransportMission {
   const missions = getMissionsOfType<TransportMission>('transport');
   const id = getTransportMissionKey(sourceRoom, destRoom);
@@ -332,6 +333,7 @@ export function createTransportMission(
     existing.resource = resource;
     existing.status = 'active';
     existing.lastSynced = Game.time;
+    existing.spawnRoom = spawnRoom;
     return existing;
   }
   missions[id] = {
@@ -346,6 +348,7 @@ export function createTransportMission(
     createdAt: Game.time,
     lastSynced: Game.time,
     courierIds: [],
+    spawnRoom,
   };
   return missions[id];
 }
