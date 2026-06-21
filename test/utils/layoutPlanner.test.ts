@@ -437,6 +437,42 @@ describe('computeLayout', () => {
     expect(`${plan.terminalPos.x},${plan.terminalPos.y}`).not.toBe(spawnKey);
   });
 
+  it('keeps secondary spawns accessible — extensions do not box them in', () => {
+    const room = makeRoom({
+      storage: { my: true, pos: new RoomPosition(28, 25, 'W1N1') },
+    });
+    const plan = computeLayout(room)!;
+    expect(plan.spawnPositions.length).toBeGreaterThanOrEqual(2);
+    const allOccupied = new Set([
+      ...plan.extensionPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.towerPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.labPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.spawnPositions.map((p) => `${p.x},${p.y}`),
+      `${plan.storagePos.x},${plan.storagePos.y}`,
+      `${plan.terminalPos.x},${plan.terminalPos.y}`,
+      ...(plan.factoryPos ? [`${plan.factoryPos.x},${plan.factoryPos.y}`] : []),
+    ]);
+    const neighbors: [number, number][] = [
+      [-1, -1],
+      [0, -1],
+      [1, -1],
+      [-1, 0],
+      [1, 0],
+      [-1, 1],
+      [0, 1],
+      [1, 1],
+    ];
+    for (let i = 1; i < plan.spawnPositions.length; i++) {
+      const sp = plan.spawnPositions[i]!;
+      const open = neighbors.filter(([dx, dy]) => {
+        const x = sp.x + dx;
+        const y = sp.y + dy;
+        return x >= 2 && x <= 47 && y >= 2 && y <= 47 && !allOccupied.has(`${x},${y}`);
+      });
+      expect(open.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   it('spawnPositions picks only buildable tiles — no new slot on a live road', () => {
     // Block the first natural candidate range-3 tiles with roads so the planner
     // must skip past them and still fill 3 spawn positions total.

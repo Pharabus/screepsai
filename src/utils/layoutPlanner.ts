@@ -82,7 +82,7 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 6;
+export const LAYOUT_PLAN_VERSION = 7;
 
 /**
  * Minimum walkable tiles to keep open around the storage. The storage is the
@@ -98,6 +98,15 @@ export const LAYOUT_PLAN_VERSION = 6;
  * close them off.
  */
 const STORAGE_ACCESS_MIN = 4;
+
+/**
+ * Minimum walkable tiles to keep open around each planned spawn position.
+ * A spawn with zero open neighbours can't create creeps (no adjacent tile for
+ * the new creep to appear on) and can't be refilled by haulers. Observed live
+ * W44N57: spawn 2 at (24,4) completely sealed by 8 surrounding extensions —
+ * no reservation existed for spawn access unlike the storage reservation above.
+ */
+const SPAWN_ACCESS_MIN = 2;
 
 export interface LayoutPlan {
   version: number;
@@ -695,6 +704,29 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     if (built && NON_WALKABLE_STRUCTURES.has(built)) continue; // built obstacle — can't be access
     reserved.add(key);
     storageAccessReserved++;
+  }
+
+  // Step 4c: Reserve spawn access tiles BEFORE extensions so the stamp can't box
+  // in planned spawns. Mirrors the storage reservation above. The primary spawn
+  // already has corridors from the stamp's dx=0/dy=0 gap, but secondary spawns
+  // (indices 1+) sit in the extension ring and can be sealed on all 8 sides.
+  // Reserving for all spawns is harmless (the primary's corridor tiles are already
+  // open or reserved by other structures).
+  for (const sp of spawnPositions) {
+    let spawnAccessReserved = 0;
+    for (const [dx, dy] of EIGHT_NEIGHBORS) {
+      if (spawnAccessReserved >= SPAWN_ACCESS_MIN) break;
+      const x = sp.x + dx;
+      const y = sp.y + dy;
+      if (!inBounds(x, y)) continue;
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+      const key = `${x},${y}`;
+      if (reserved.has(key)) continue;
+      const built = liveMap.get(key);
+      if (built && NON_WALKABLE_STRUCTURES.has(built)) continue;
+      reserved.add(key);
+      spawnAccessReserved++;
+    }
   }
 
   // Step 5: Extension positions — stamp minus reserved and live-blocked, with overflow.

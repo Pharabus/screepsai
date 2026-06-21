@@ -948,6 +948,106 @@ export function clearLabBlockers(room: Room): void {
   }
 }
 
+function spliceExtensionFromPlan(roomName: string, x: number, y: number): void {
+  const plan = Memory.rooms[roomName]?.layoutPlan;
+  if (!plan) return;
+  const idx = plan.extensionPositions.findIndex((p) => p.x === x && p.y === y);
+  if (idx >= 0) plan.extensionPositions.splice(idx, 1);
+}
+
+/**
+ * Destroy one extension (or extension site) that is boxing a built secondary spawn
+ * with zero walkable 8-neighbours. Mirrors clearLabBlockers but for spawn access.
+ *
+ * Only checks planned spawn positions at index 1+ (the primary spawn has corridors
+ * from the extension stamp's dx=0/dy=0 gap). One destroy per tick.
+ *
+ * The layout planner (v7+) reserves SPAWN_ACCESS_MIN open tiles around each planned
+ * spawn so new plans won't re-box it. This function heals EXISTING boxed spawns from
+ * plans computed before the reservation was added.
+ */
+export function clearSpawnBlockers(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 7) return;
+  const plan = Memory.rooms[room.name]?.layoutPlan;
+  if (!plan?.spawnPositions || plan.spawnPositions.length < 2) return;
+
+  const terrain = room.getTerrain();
+  const spawns = room.find(FIND_MY_SPAWNS);
+
+  const NEIGHBORS: [number, number][] = [
+    [-1, -1],
+    [0, -1],
+    [1, -1],
+    [-1, 0],
+    [1, 0],
+    [-1, 1],
+    [0, 1],
+    [1, 1],
+  ];
+
+  for (let i = 1; i < plan.spawnPositions.length; i++) {
+    const pos = plan.spawnPositions[i];
+    if (!pos) continue;
+    const spawnHere = spawns.find((s) => s.pos.x === pos.x && s.pos.y === pos.y);
+    if (!spawnHere) continue;
+
+    const hasOpen = NEIGHBORS.some(([dx, dy]) => {
+      const nx = pos.x + dx;
+      const ny = pos.y + dy;
+      if (nx < 0 || nx > 49 || ny < 0 || ny > 49) return false;
+      if (terrain.get(nx, ny) === TERRAIN_MASK_WALL) return false;
+      const structsOk = room
+        .lookForAt(LOOK_STRUCTURES, nx, ny)
+        .every(
+          (s) =>
+            s.structureType === STRUCTURE_ROAD ||
+            s.structureType === STRUCTURE_RAMPART ||
+            s.structureType === STRUCTURE_CONTAINER,
+        );
+      if (!structsOk) return false;
+      const hasObstacleSite = room
+        .lookForAt(LOOK_CONSTRUCTION_SITES, nx, ny)
+        .some(
+          (s) =>
+            s.structureType === STRUCTURE_EXTENSION ||
+            s.structureType === STRUCTURE_SPAWN ||
+            s.structureType === STRUCTURE_TOWER ||
+            s.structureType === STRUCTURE_LAB,
+        );
+      return !hasObstacleSite;
+    });
+    if (hasOpen) continue;
+
+    for (const [dx, dy] of NEIGHBORS) {
+      const nx = pos.x + dx;
+      const ny = pos.y + dy;
+      const ext = room
+        .lookForAt(LOOK_STRUCTURES, nx, ny)
+        .find((s) => s.structureType === STRUCTURE_EXTENSION);
+      if (ext) {
+        console.log(
+          `[construction] ${room.name}: destroying extension at (${nx},${ny}) — boxing spawn at (${pos.x},${pos.y})`,
+        );
+        ext.destroy();
+        spliceExtensionFromPlan(room.name, nx, ny);
+        return;
+      }
+      const site = room
+        .lookForAt(LOOK_CONSTRUCTION_SITES, nx, ny)
+        .find((s) => s.structureType === STRUCTURE_EXTENSION);
+      if (site) {
+        console.log(
+          `[construction] ${room.name}: removing extension site at (${nx},${ny}) — boxing spawn at (${pos.x},${pos.y})`,
+        );
+        site.remove();
+        spliceExtensionFromPlan(room.name, nx, ny);
+        return;
+      }
+    }
+  }
+}
+
 export function placeLabs(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const max = MAX_LABS[rcl] ?? 0;
@@ -1719,6 +1819,7 @@ export function runConstruction(): void {
     placeSourceContainers(room);
     placeControllerContainer(room);
     placeStorage(room);
+    clearSpawnBlockers(room);
     placeSecondSpawn(room);
     placeLinks(room);
     placeExtensions(room);
