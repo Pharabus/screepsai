@@ -871,6 +871,52 @@ describe('pruneUnreachableExtensions', () => {
     // With a fully open room, no extensions should be pruned.
     expect(result).toHaveLength(extensions.length);
   });
+
+  it('drops a planned extension that would seal a built extension (W42N59 scenario)', () => {
+    // W42N59 layout: walls seal the north, built extensions form an inner block,
+    // and (20,19) is a walkable pocket tile. Planned extensions at (21,19) and
+    // (21,20) seal the corridor — the only path from (20,19) to the reachable
+    // room. The pruner BFS through the pocket must find and drop them.
+    const spawnPos = { x: 17, y: 23 };
+    const walls = new Set<string>(['18,18', '19,18', '20,18', '21,18']);
+    const terrain = makeTerrain(walls);
+
+    // Built extensions: the inner block (20,19 is NOT an extension — it's the pocket)
+    const builtExtensions = [
+      { x: 18, y: 19 },
+      { x: 19, y: 19 },
+      { x: 18, y: 20 },
+      { x: 19, y: 20 },
+      { x: 20, y: 20 },
+      { x: 18, y: 21 },
+      { x: 19, y: 21 },
+      { x: 20, y: 21 },
+      { x: 21, y: 21 },
+    ];
+
+    // Planned extensions that seal the corridor
+    const planned = [
+      { x: 21, y: 19 },
+      { x: 21, y: 20 },
+    ];
+
+    // Obstacle set: spawn + all built + planned
+    const obstacles = new Set<string>();
+    obstacles.add(`${spawnPos.x},${spawnPos.y}`);
+    for (const p of builtExtensions) obstacles.add(`${p.x},${p.y}`);
+    for (const p of planned) obstacles.add(`${p.x},${p.y}`);
+
+    const result = pruneUnreachableExtensions(
+      planned,
+      obstacles,
+      terrain,
+      spawnPos,
+      builtExtensions,
+    );
+
+    // Both planned extensions should be dropped — they seal built extensions
+    expect(result).toHaveLength(0);
+  });
 });
 
 describe('flood-fill prune integration (via computeLayout)', () => {

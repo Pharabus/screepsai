@@ -323,6 +323,7 @@ export function pruneUnreachableExtensions(
   plannedObstacleKeys: Set<string>,
   terrain: RoomTerrain,
   spawnPos: { x: number; y: number },
+  builtExtensions?: { x: number; y: number }[],
 ): { x: number; y: number }[] {
   // Seed from spawn's 8 walkable neighbours (spawn itself is an obstacle).
   const seeds = walkableNeighbourSeeds(spawnPos, plannedObstacleKeys, terrain);
@@ -336,20 +337,63 @@ export function pruneUnreachableExtensions(
   for (let iter = 0; iter < maxIter; iter++) {
     const reachable = floodReachable(seeds, plannedObstacleKeys, terrain);
 
-    // Find extensions with no reachable 8-neighbour (stranded).
+    // Find planned extensions with no reachable 8-neighbour (stranded).
     const stranded = remaining.filter(
       ({ x, y }) => !EIGHT_NEIGHBORS.some(([dx, dy]) => reachable.has(`${x + dx},${y + dy}`)),
     );
 
-    if (stranded.length === 0) break; // fixed point — done
+    // Check built extensions: if planned extensions seal a built one, BFS
+    // through the unreachable pocket to find the sealing planned extensions
+    // and drop them. The seal may be indirect — a planned extension 2+ tiles
+    // away can seal a built extension via an intermediate walkable pocket tile
+    // (W42N59: planned at (21,19)/(21,20) sealed built (19,19) via pocket (20,19)).
+    const sealingKeys = new Set<string>();
+    if (builtExtensions) {
+      const remainingKeys = new Set(remaining.map((p) => `${p.x},${p.y}`));
+      for (const bp of builtExtensions) {
+        const hasReachableNeighbour = EIGHT_NEIGHBORS.some(([dx, dy]) =>
+          reachable.has(`${bp.x + dx},${bp.y + dy}`),
+        );
+        if (!hasReachableNeighbour) {
+          const visited = new Set<string>();
+          const queue: { x: number; y: number }[] = [bp];
+          visited.add(`${bp.x},${bp.y}`);
+          while (queue.length > 0) {
+            const cur = queue.shift()!;
+            for (const [dx, dy] of EIGHT_NEIGHBORS) {
+              const nx = cur.x + dx;
+              const ny = cur.y + dy;
+              if (!inBounds(nx, ny)) continue;
+              const nk = `${nx},${ny}`;
+              if (visited.has(nk)) continue;
+              visited.add(nk);
+              if (remainingKeys.has(nk)) {
+                sealingKeys.add(nk);
+              } else if (
+                !reachable.has(nk) &&
+                terrain.get(nx, ny) !== TERRAIN_MASK_WALL &&
+                !plannedObstacleKeys.has(nk)
+              ) {
+                queue.push({ x: nx, y: ny });
+              }
+            }
+          }
+        }
+      }
+    }
 
-    // Remove stranded extensions from both the candidate list and the obstacle set
-    // so their tiles become walkable for the next flood pass.
+    if (stranded.length === 0 && sealingKeys.size === 0) break;
+
+    // Remove stranded and sealing extensions from both the candidate list and
+    // the obstacle set so their tiles become walkable for the next flood pass.
     for (const p of stranded) {
       plannedObstacleKeys.delete(`${p.x},${p.y}`);
     }
-    const strandedKeys = new Set(stranded.map((p) => `${p.x},${p.y}`));
-    remaining = remaining.filter((p) => !strandedKeys.has(`${p.x},${p.y}`));
+    for (const k of sealingKeys) {
+      plannedObstacleKeys.delete(k);
+    }
+    const dropKeys = new Set([...stranded.map((p) => `${p.x},${p.y}`), ...sealingKeys]);
+    remaining = remaining.filter((p) => !dropKeys.has(`${p.x},${p.y}`));
   }
 
   return remaining;
@@ -821,11 +865,20 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   for (const p of towerPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
   for (const p of extensionPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
 
+  const builtExtensions: { x: number; y: number }[] = [];
+  for (const [key, type] of liveMap.entries()) {
+    if (type === STRUCTURE_EXTENSION) {
+      const [xStr, yStr] = key.split(',');
+      builtExtensions.push({ x: Number(xStr), y: Number(yStr) });
+    }
+  }
+
   const prunedExtensions = pruneUnreachableExtensions(
     extensionPositions,
     plannedObstacleKeys,
     terrain,
     spawn.pos,
+    builtExtensions,
   );
 
   return {

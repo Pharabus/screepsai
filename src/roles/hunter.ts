@@ -51,8 +51,13 @@ const states: StateMachineDefinition = {
 
       mem.invaderSeenAt = Game.time;
 
-      // Target lowest-HP invader to finish off weakened ones first.
-      const target = invaders.reduce((a, b) => (a.hits < b.hits ? a : b));
+      // Target healers first to remove the attacker's sustain; fall back to
+      // lowest-HP when no healers remain (solo invader or healer already dead).
+      const healers = invaders.filter((c) => c.body.some((p) => p.type === HEAL && p.hits > 0));
+      const target =
+        healers.length > 0
+          ? healers.reduce((a, b) => (a.hits < b.hits ? a : b))
+          : invaders.reduce((a, b) => (a.hits < b.hits ? a : b));
       if (creep.attack(target) === ERR_NOT_IN_RANGE) {
         moveTo(creep, target, {
           range: 1,
