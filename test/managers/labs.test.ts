@@ -106,6 +106,27 @@ describe('getLabHubName / isLabHub', () => {
     expect(getLabHubName()).toBe('W1N1');
   });
 
+  it('breaks ties on controller progress when labs and RCL are equal (W42N59 regression)', () => {
+    // W42N59 stole the hub from W43N58 when both reached 6 labs at RCL7.
+    // The alphabetical tie-break picked W42N59 (W42 < W43) even though W43N58
+    // had 77.9% of RCL7 done vs W42N59's 2.8%. Fix: progress wins before name.
+    (Game as any).rooms = {
+      W42N59: mockRoom({
+        name: 'W42N59',
+        controller: { my: true, level: 7, progress: 45920 },
+      }),
+      W43N58: mockRoom({
+        name: 'W43N58',
+        controller: { my: true, level: 7, progress: 1277080 },
+      }),
+    };
+    (Memory as any).rooms = {
+      W42N59: { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] },
+      W43N58: { labIds: ['a', 'b', 'c', 'd', 'e', 'f'] },
+    };
+    expect(getLabHubName()).toBe('W43N58');
+  });
+
   it('returns undefined when no owned room has labs', () => {
     (Game as any).rooms = {
       W1N1: mockRoom({ name: 'W1N1', controller: { my: true, level: 4 } }),

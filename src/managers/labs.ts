@@ -42,22 +42,33 @@ export function resetReactionGoalCache(): void {
  * to make tier-1 compounds it can't chain and nobody consumes is pure waste.
  *
  * Auto-detected as the owned room with the most built labs (`labIds`), ties
- * broken by higher RCL then room name for determinism. Cached per tick — lab
- * counts change rarely, so this is effectively free on the hot path.
+ * broken by higher RCL, then higher controller progress (more established room),
+ * then room name for determinism. Cached per tick — lab counts change rarely.
+ *
+ * Controller progress as a tie-break after RCL prevents a freshly-built
+ * colony from stealing the hub role the instant it matches an older room's lab
+ * count — observed live when W42N59 (RCL7, 2.8% progress) beat W43N58 (RCL7,
+ * 77.9%) purely on alphabetical name, starving itself by running reactions with
+ * almost no energy (v1.0.290).
  */
 export function getLabHubName(): string | undefined {
   return cached('labs:hubName', () => {
-    let best: { name: string; labs: number; rcl: number } | undefined;
+    let best: { name: string; labs: number; rcl: number; progress: number } | undefined;
     for (const room of Object.values(Game.rooms)) {
       if (!room.controller?.my) continue;
       const labs = Memory.rooms[room.name]?.labIds?.length ?? 0;
       if (labs === 0) continue;
       const rcl = room.controller.level;
+      const progress = room.controller.progress;
       const better =
         !best ||
         labs > best.labs ||
-        (labs === best.labs && (rcl > best.rcl || (rcl === best.rcl && room.name < best.name)));
-      if (better) best = { name: room.name, labs, rcl };
+        (labs === best.labs &&
+          (rcl > best.rcl ||
+            (rcl === best.rcl &&
+              (progress > best.progress ||
+                (progress === best.progress && room.name < best.name)))));
+      if (better) best = { name: room.name, labs, rcl, progress };
     }
     return best?.name;
   });
