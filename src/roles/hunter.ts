@@ -58,6 +58,11 @@ const states: StateMachineDefinition = {
         healers.length > 0
           ? healers.reduce((a, b) => (a.hits < b.hits ? a : b))
           : invaders.reduce((a, b) => (a.hits < b.hits ? a : b));
+
+      // Ranged attack fires at range 1-3 every tick — harasses kiting ranged
+      // invaders during approach and stacks with melee at point-blank range.
+      creep.rangedAttack(target);
+
       if (creep.attack(target) === ERR_NOT_IN_RANGE) {
         moveTo(creep, target, {
           range: 1,

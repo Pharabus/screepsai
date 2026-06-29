@@ -134,32 +134,36 @@ describe('buildRemoteMinerBody', () => {
 describe('buildHunterBody', () => {
   it('returns empty when energy too low', () => {
     expect(buildHunterBody(700)).toEqual([]);
+    expect(buildHunterBody(859)).toEqual([]);
   });
 
-  it('returns tier-1 body at 790 energy', () => {
-    const body = buildHunterBody(790);
+  it('returns tier-1 body at 860 energy', () => {
+    const body = buildHunterBody(860);
     expect(body.filter((p) => p === TOUGH).length).toBe(2);
-    expect(body.filter((p) => p === ATTACK).length).toBe(4);
+    expect(body.filter((p) => p === RANGED_ATTACK).length).toBe(1);
+    expect(body.filter((p) => p === ATTACK).length).toBe(3);
     expect(body.filter((p) => p === HEAL).length).toBe(1);
     expect(body.filter((p) => p === MOVE).length).toBe(4);
   });
 
-  it('returns tier-1 body between 790 and 1309', () => {
+  it('returns tier-1 body between 860 and 1449', () => {
     const body = buildHunterBody(1000);
-    expect(body.filter((p) => p === ATTACK).length).toBe(4);
+    expect(body.filter((p) => p === RANGED_ATTACK).length).toBe(1);
+    expect(body.filter((p) => p === ATTACK).length).toBe(3);
     expect(body.filter((p) => p === HEAL).length).toBe(1);
   });
 
-  it('returns tier-2 body at 1310+ energy', () => {
-    const body = buildHunterBody(1310);
+  it('returns tier-2 body at 1450+ energy', () => {
+    const body = buildHunterBody(1450);
     expect(body.filter((p) => p === TOUGH).length).toBe(3);
-    expect(body.filter((p) => p === ATTACK).length).toBe(6);
+    expect(body.filter((p) => p === RANGED_ATTACK).length).toBe(2);
+    expect(body.filter((p) => p === ATTACK).length).toBe(4);
     expect(body.filter((p) => p === HEAL).length).toBe(2);
     expect(body.filter((p) => p === MOVE).length).toBe(6);
   });
 
   it('places TOUGH parts first for damage absorption', () => {
-    const body = buildHunterBody(1310);
+    const body = buildHunterBody(1450);
     expect(body[0]).toBe(TOUGH);
     expect(body[1]).toBe(TOUGH);
     expect(body[2]).toBe(TOUGH);

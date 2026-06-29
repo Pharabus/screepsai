@@ -148,6 +148,41 @@ describe('hunter', () => {
       expect(creep.heal).toHaveBeenCalledWith(creep);
     });
 
+    it('calls rangedAttack on the target every tick to suppress kiting', () => {
+      const invader = {
+        hits: 100,
+        hitsMax: 200,
+        body: [{ type: RANGED_ATTACK, hits: 100 }],
+        owner: { username: 'Invader' },
+        pos: new (globalThis as any).RoomPosition(20, 20, 'W2N1'),
+      };
+      const room = mockRoom({
+        name: 'W2N1',
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_HOSTILE_CREEPS) {
+            const filter = opts?.filter ?? (() => true);
+            return [invader].filter(filter);
+          }
+          return [];
+        }),
+      });
+      const creep = mockCreep({
+        memory: { role: 'hunter', homeRoom: 'W1N1', targetRoom: 'W2N1', state: 'HUNT' },
+        room,
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W2N1'),
+      });
+      (Game as any).creeps = { [creep.name]: creep };
+      (Game as any).rooms = { W2N1: room };
+      (Game as any).time = 500;
+      (Memory as any).rooms = { W2N1: {} };
+
+      creep.attack = vi.fn(() => OK);
+      hunter.run(creep);
+
+      expect(creep.rangedAttack).toHaveBeenCalledWith(invader);
+      expect(creep.attack).toHaveBeenCalledWith(invader);
+    });
+
     it('targets healer before attacker when a healer is present', () => {
       const attacker = {
         hits: 800,

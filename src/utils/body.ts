@@ -59,16 +59,18 @@ export function buildRemoteMinerBody(energyAvailable: number, maxWork = 5): Body
  * Build a hunter body for killing NPC invaders in remote/transit rooms.
  *
  * Three tiers keyed on energyCapacityAvailable:
- *   < 790  — can't field a useful fighter; returns [].
- *   790–1309 — [TOUGH×2, MOVE×4, ATTACK×4, HEAL×1] = 790e, road-speed.
- *   ≥ 1310 — [TOUGH×3, MOVE×6, ATTACK×6, HEAL×2] = 1310e, beats medium invaders.
+ *   < 860  — can't field a useful fighter; returns [].
+ *   860–1449 — [TOUGH×2, MOVE×4, RANGED_ATTACK×1, ATTACK×3, HEAL×1] = 860e, road-speed.
+ *   ≥ 1450 — [TOUGH×3, MOVE×6, RANGED_ATTACK×2, ATTACK×4, HEAL×2] = 1450e, beats medium invaders.
  *
- * Body order: TOUGH first (absorbs hits), MOVE, ATTACK, HEAL last (most valuable).
+ * Body order: TOUGH first (absorbs hits), MOVE, RANGED_ATTACK, ATTACK, HEAL last (most valuable).
  * Road-speed in both tiers (enough MOVE for 1 MOVE per 2 non-MOVE on roads).
+ * RANGED_ATTACK parts let the hunter harass kiting ranged invaders during approach
+ * (range 1-3) while still closing to melee for full ATTACK DPS at range 1.
  * Only targets Invader-owned NPC creeps — player combat is out of scope.
  */
 export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
-  if (energyCapacity >= 1310) {
+  if (energyCapacity >= 1450) {
     return [
       TOUGH,
       TOUGH,
@@ -79,8 +81,8 @@ export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
       MOVE,
       MOVE,
       MOVE,
-      ATTACK,
-      ATTACK,
+      RANGED_ATTACK,
+      RANGED_ATTACK,
       ATTACK,
       ATTACK,
       ATTACK,
@@ -89,8 +91,8 @@ export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
       HEAL,
     ];
   }
-  if (energyCapacity >= 790) {
-    return [TOUGH, TOUGH, MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK, HEAL];
+  if (energyCapacity >= 860) {
+    return [TOUGH, TOUGH, MOVE, MOVE, MOVE, MOVE, RANGED_ATTACK, ATTACK, ATTACK, ATTACK, HEAL];
   }
   return [];
 }
