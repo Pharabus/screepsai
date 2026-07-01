@@ -9,6 +9,7 @@ import { assignHaulers } from '../managers/haulerPool';
 import {
   MINERAL_STORAGE_FLOOR,
   TERMINAL_ENERGY_FLOOR,
+  TERMINAL_ENERGY_FLOOR_COLONY,
   TERMINAL_RESTOCK_MIN_BATCH,
   FACTORY_ENERGY_FLOOR,
   BOOST_LAB_MINERAL_TARGET,
@@ -1013,7 +1014,8 @@ function deliverToTerminalEnergy(creep: Creep): boolean {
   // not receive our energy.
   const terminal = myTerminal(creep.room);
   if (!terminal) return false;
-  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= TERMINAL_ENERGY_FLOOR) return false;
+  const floor = isLabHub(creep.room) ? TERMINAL_ENERGY_FLOOR : TERMINAL_ENERGY_FLOOR_COLONY;
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= floor) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
   if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
     moveTo(creep, terminal, {
@@ -1044,8 +1046,9 @@ function pickupTerminalEnergyToStorage(creep: Creep): boolean {
   if (!storage || !terminal) return false;
   if (storage.store.getUsedCapacity(RESOURCE_ENERGY) >= upgradeBuffer(creep.room)) return false;
   const terminalE = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
-  if (terminalE <= TERMINAL_ENERGY_FLOOR + TERMINAL_RESTOCK_MIN_BATCH) return false;
-  const amount = Math.min(creep.store.getFreeCapacity(), terminalE - TERMINAL_ENERGY_FLOOR);
+  const floor = isLabHub(creep.room) ? TERMINAL_ENERGY_FLOOR : TERMINAL_ENERGY_FLOOR_COLONY;
+  if (terminalE <= floor + TERMINAL_RESTOCK_MIN_BATCH) return false;
+  const amount = Math.min(creep.store.getFreeCapacity(), terminalE - floor);
   if (amount <= 0) return false;
   creep.memory.targetId = terminal.id;
   if (creep.withdraw(terminal, RESOURCE_ENERGY, amount) === ERR_NOT_IN_RANGE) {

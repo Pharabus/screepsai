@@ -3314,15 +3314,16 @@ describe('pickupTerminalEnergyToStorage', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
-  it('does not withdraw when terminal surplus is below the minimum batch threshold', () => {
-    // terminal 16k — only 1k above the 15k floor, below TERMINAL_RESTOCK_MIN_BATCH (2k)
+  it('does not withdraw when hub terminal surplus is below the minimum batch threshold', () => {
+    // Hub room: floor = 15k. terminal 16k — only 1k above floor, below TERMINAL_RESTOCK_MIN_BATCH (2k).
     const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
     const storage = makeStorage(5_000);
     const terminal = makeTerminal(16_000);
     room.storage = storage;
     room.terminal = terminal;
     (Game as any).rooms = { W1N1: room };
-    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    // labIds makes W1N1 the hub → 15k floor applies
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, labIds: ['a', 'b', 'c'] } };
 
     const creep = mockCreep({
       name: 'hauler_1',
@@ -3338,16 +3339,17 @@ describe('pickupTerminalEnergyToStorage', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
-  it('never drains terminal below the energy floor', () => {
-    // terminal 20k: surplus = 20k - 15k (floor) = 5k available. Creep carry 800.
-    // withdraw amount should be min(800, 5000) = 800, not the full 20k.
+  it('colony room withdraws when terminal exceeds colony floor (5k) + batch min', () => {
+    // Colony room (no labIds): floor = 5k. terminal 10k > 5k + 2k = 7k → triggers restock.
+    // This is the sendEnergyToColonies use case: a 10k send on top of ~6k landing = 16k
+    // should immediately drain to storage rather than waiting for a second send.
     const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
     const storage = makeStorage(5_000);
-    const terminal = makeTerminal(20_000);
+    const terminal = makeTerminal(10_000);
     room.storage = storage;
     room.terminal = terminal;
     (Game as any).rooms = { W1N1: room };
-    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } }; // no labIds → colony floor
 
     const creep = mockCreep({
       name: 'hauler_1',
@@ -3360,7 +3362,33 @@ describe('pickupTerminalEnergyToStorage', () => {
 
     hauler.run(creep);
 
-    // The amount passed to withdraw must be ≤ terminal surplus above floor (5000)
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+
+  it('hub: never drains terminal below the hub energy floor (15k)', () => {
+    // Hub room: terminal 20k, floor 15k → surplus 5k available. Creep carry 800.
+    // withdraw amount should be min(800, 5000) = 800, not the full 20k.
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 6 } });
+    const storage = makeStorage(5_000);
+    const terminal = makeTerminal(20_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    // labIds makes W1N1 the hub → 15k floor applies
+    (Memory as any).rooms = { W1N1: { minerEconomy: true, labIds: ['a', 'b', 'c'] } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    // Amount must be ≤ terminal surplus above hub floor (5000)
     const withdrawCall = (creep.withdraw as any).mock.calls.find(
       (args: any[]) => args[0] === terminal && args[1] === RESOURCE_ENERGY,
     );

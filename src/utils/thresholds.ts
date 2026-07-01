@@ -66,7 +66,16 @@ export const MINERAL_TERMINAL_CEILING = 20_000;
 /** Terminal mineral above this amount is sold as surplus. Sits below MINERAL_TERMINAL_CEILING (the combined hold/throttle cap) so there is always a sellable band — without this gap the terminal can never cross its own sell line and minerals never sell. */
 export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;
 export const ENERGY_TERMINAL_BUFFER = 5_000;
+/** Hub rooms keep 15k liquid for market ops (selling, buying, inter-empire sends). */
 export const TERMINAL_ENERGY_FLOOR = 15_000;
+/**
+ * Colony/feeder rooms only need a small floor — enough to cover the energy cost
+ * of a single mineral shipment to the hub (~hundreds of energy for nearby rooms).
+ * A lower floor means the first sendEnergyToColonies batch (10k) creates enough
+ * surplus above the floor to immediately drain to storage where builders can use it,
+ * rather than waiting for a second send to clear the 17k hub-floor gate.
+ */
+export const TERMINAL_ENERGY_FLOOR_COLONY = 5_000;
 /**
  * Minimum terminal energy surplus above TERMINAL_ENERGY_FLOOR before a hauler
  * will restock storage from the terminal. Avoids micro-trips for trivial amounts.
