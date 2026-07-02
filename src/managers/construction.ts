@@ -513,6 +513,69 @@ export function placeFactory(room: Room): void {
   if (pos) room.createConstructionSite(pos, STRUCTURE_FACTORY);
 }
 
+export function placeObserver(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 8) return;
+
+  const existing = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_OBSERVER,
+  });
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_OBSERVER,
+  });
+  if (existing.length > 0 || sites.length > 0) return;
+
+  // Observer is a standalone scouting structure — anchor to spawn, not storage.
+  // Not link-gated: it doesn't compete with energy infrastructure.
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return;
+
+  const pos = findOpenPosition(room, spawn.pos, 3, 8);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_OBSERVER);
+}
+
+export function placePowerSpawn(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 8) return;
+  if (hasUnbuiltLinkSites(room)) return;
+
+  const existing = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_POWER_SPAWN,
+  });
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_POWER_SPAWN,
+  });
+  if (existing.length > 0 || sites.length > 0) return;
+
+  const ownStorage = myStorage(room);
+  if (!ownStorage) return;
+
+  const pos = findOpenPosition(room, ownStorage.pos, 1, 4);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_POWER_SPAWN);
+}
+
+export function placeNuker(room: Room): void {
+  const rcl = room.controller?.level ?? 0;
+  if (rcl < 8) return;
+  if (hasUnbuiltLinkSites(room)) return;
+
+  const existing = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_NUKER,
+  });
+  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_NUKER,
+  });
+  if (existing.length > 0 || sites.length > 0) return;
+
+  const ownStorage = myStorage(room);
+  if (!ownStorage) return;
+
+  // Wider search range than power spawn — nuker doesn't need to be adjacent to storage,
+  // just somewhere accessible in the room.
+  const pos = findOpenPosition(room, ownStorage.pos, 2, 6);
+  if (pos) room.createConstructionSite(pos, STRUCTURE_NUKER);
+}
+
 export function placeExtractor(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   if (rcl < 6) return;
@@ -1279,6 +1342,13 @@ export function placeRamparts(room: Room): void {
   if (ownStorageForRampart) critical.push(ownStorageForRampart);
   if (room.terminal?.my) critical.push(room.terminal);
   if (room.controller) critical.push(room.controller);
+  // RCL 8 structures worth protecting — expensive to rebuild.
+  critical.push(
+    ...room.find(FIND_MY_STRUCTURES, {
+      filter: (s) =>
+        s.structureType === STRUCTURE_POWER_SPAWN || s.structureType === STRUCTURE_NUKER,
+    }),
+  );
 
   for (const structure of critical) {
     const hasRampart = structure.pos
@@ -1830,6 +1900,9 @@ export function runConstruction(): void {
     placeRemoteRoads(room);
     placeTerminal(room);
     placeFactory(room);
+    placeObserver(room);
+    placePowerSpawn(room);
+    placeNuker(room);
     placeExtractor(room);
     placeMineralContainer(room);
     clearBlockingExtensions(room);

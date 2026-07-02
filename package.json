@@ -1,6 +1,6 @@
 {
   "name": "screepsai",
-  "version": "1.0.290",
+  "version": "1.0.294",
   "description": "Screeps AI bot",
   "main": "dist/main.js",
   "scripts": {

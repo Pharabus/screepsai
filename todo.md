@@ -307,7 +307,7 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 #### Spawning capacity
 
 - [x] **Place 2nd spawn** — `construction.ts` `placeSecondSpawn` at RCL ≥ 7; `computeLayout` now returns `spawnPositions[]` (up to 3, id-sorted). Spawner already iterates `Object.values(Game.spawns)` — no spawner changes needed.
-- [ ] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn now in (`placeSecondSpawn` v1.0.144). Labs 9-cap at RCL 7 now in (`MAX_LABS[7]=9` v1.0.145). Factory (RCL 7), power spawn (RCL 8), observer (RCL 8), nuker (RCL 8). See Phase 2 (factory), Phase 4 (power spawn, observer, nuker) for detailed plans. This tracker item is a reminder to keep `construction.ts` in sync as each structure gets a placement function.
+- [x] **RCL-gated construction planner extensions (RCL 7-8)** — 2nd spawn now in (`placeSecondSpawn` v1.0.144). Labs 9-cap at RCL 7 now in (`MAX_LABS[7]=9` v1.0.145). Factory (RCL 7) in (`placeFactory`). Observer, power spawn, nuker (RCL 8) in (`placeObserver`, `placePowerSpawn`, `placeNuker`). Power spawn + nuker get ramparts. Observer is link-gate-exempt (standalone scouting structure).
 
 #### Lab expansion & boost infrastructure
 
@@ -352,9 +352,9 @@ Claim a third room, improve colony coordination, and add the CPU-management infr
 
 #### Multi-room expansion
 
-- [ ] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming.
+- [x] **Third room claim** — Score scouted candidates via `evaluateClaim`: require 2 sources, no aggressive neighbours, distance ≤ 3 from W43N58 or W44N57, ideally a different mineral from H. Verify `sendEnergyToColonies` scales to 3 terminals before claiming.
   - [x] **Claim-readiness machinery (prep, v1.0.202)** — `findClaimCandidates()` + `claimCandidates()` console command rank all scouted rooms (nearest owned room as prospective home); `scoreClaimTarget` now awards +5 for a mineral none of our owned rooms already mine (the docstring promise is now implemented). Multi-terminal energy balancing verified safe — `sendEnergyToColonies` already ranks N receivers and the per-room loop gives N senders; a forward-looking per-tick receiver-dedupe guard (`_receiversThisTick`) was added for a future empire-logistics model but is **inert today** (one `homeRoom` per colony means two senders can't target the same receiver). Live-verified on shard3: W44N58 (mineral U) tops the table at 13 over H-mineral rooms at 8.
-  - [ ] **The claim itself** — blocked on economy recovery (W43N58 storage funding wall backlog). When ready: run `claimCandidates()` → `claim(target)`.
+  - [x] **The claim itself** — completed 2026-07-02.
 - [x] **Colony priority scoring** — Heap-cache a score per colony every 500 ticks: `progressToNextRCL × costPerTick / incomeRate`. Use scores to drive spawn-time and inter-room energy priority decisions. `src/utils/colonyPlanner.ts`.
 - [x] **Tunnel-aware remote road planning** (v1.0.203) — `applyTunnelWalls` (`trafficManager.ts`) stamps natural wall tiles at `TUNNEL_WALL_COST` (30 = 15× plain) onto a clone of the base matrix inside `placeRemoteRoads`'s PathFinder pass; tunnels only when the plain detour is >~15 tiles longer. Overlay is local to road planning — creep-movement matrices untouched; built roads (cost 1) always beat tunnels so complete paths aren't re-dug. Original below.
 
