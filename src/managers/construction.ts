@@ -550,7 +550,9 @@ export function placePowerSpawn(room: Room): void {
   const ownStorage = myStorage(room);
   if (!ownStorage) return;
 
-  const pos = findOpenPosition(room, ownStorage.pos, 1, 4);
+  // Start at range 2 to preserve storage's direct-neighbour access tiles
+  // (STORAGE_ACCESS_MIN reserves them; power spawn must not compete for them).
+  const pos = findOpenPosition(room, ownStorage.pos, 2, 5);
   if (pos) room.createConstructionSite(pos, STRUCTURE_POWER_SPAWN);
 }
 
