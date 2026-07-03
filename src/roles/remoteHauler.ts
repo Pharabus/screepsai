@@ -24,6 +24,56 @@ function getRemoteSourcePos(creep: Creep): RoomPosition | undefined {
   return undefined;
 }
 
+// Mirrors hauler.ts's continueCommittedPickup: once a target is picked, reuse
+// Game.getObjectById (an O(1) lookup) instead of re-running the full
+// dropped/container/ruin/tombstone find() chain every tick. Without this the
+// PICKUP state below re-scanned the entire remote room from scratch on every
+// single tick of the pickup phase, even while already walking toward a target
+// selected ticks ago — the biggest single driver of role.remoteHauler's CPU
+// (avg ~3.5x a regular hauler's, which has had this pattern from the start).
+// Energy-only (unlike hauler.ts's version, which also handles minerals) — the
+// DELIVER state here only ever transfers RESOURCE_ENERGY.
+function continueCommittedPickup(creep: Creep): boolean {
+  if (!creep.memory.targetId) return false;
+
+  const target = Game.getObjectById(creep.memory.targetId);
+  if (!target) {
+    delete creep.memory.targetId;
+    return false;
+  }
+
+  if ('amount' in target) {
+    if (target.resourceType !== RESOURCE_ENERGY || target.amount === 0) {
+      delete creep.memory.targetId;
+      return false;
+    }
+    if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, target, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
+    }
+    return true;
+  }
+
+  if ('store' in target) {
+    if (target.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+      delete creep.memory.targetId;
+      return false;
+    }
+    if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, target, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffaa00' },
+      });
+    }
+    return true;
+  }
+
+  delete creep.memory.targetId;
+  return false;
+}
+
 const states: StateMachineDefinition = {
   PICKUP: {
     onEnter(creep) {
@@ -47,11 +97,16 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
+      // Already chasing a target from a previous tick — skip the full
+      // dropped/container/ruin/tombstone scan below entirely.
+      if (continueCommittedPickup(creep)) return undefined;
+
       // In the remote room — pick up dropped energy or withdraw from containers
       const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
         filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
       });
       if (dropped) {
+        creep.memory.targetId = dropped.id;
         if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
           moveTo(creep, dropped, {
             priority: PRIORITY_HAULER,
@@ -66,6 +121,7 @@ const states: StateMachineDefinition = {
           s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
       });
       if (container) {
+        creep.memory.targetId = container.id;
         if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           moveTo(creep, container, {
             priority: PRIORITY_HAULER,
@@ -93,6 +149,11 @@ const states: StateMachineDefinition = {
       if (lootTarget) {
         const resource = pickLootResource(lootTarget);
         if (resource) {
+          // continueCommittedPickup is energy-only (see its header comment), so
+          // only a genuinely-energy loot target is safe to commit to — a mixed
+          // ruin/tomb whose resource happens to be energy this tick still
+          // qualifies since pickLootResource already filters to RESOURCE_ENERGY.
+          creep.memory.targetId = lootTarget.id;
           if (creep.withdraw(lootTarget, resource) === ERR_NOT_IN_RANGE) {
             moveTo(creep, lootTarget, {
               priority: PRIORITY_HAULER,

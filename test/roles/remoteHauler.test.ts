@@ -131,4 +131,91 @@ describe('remoteHauler', () => {
 
     expect(moveTo).toHaveBeenCalled();
   });
+
+  describe('committed pickup', () => {
+    it('reuses a committed dropped-energy target instead of re-scanning the room', () => {
+      const drop = {
+        id: 'drop1' as Id<Resource>,
+        resourceType: RESOURCE_ENERGY,
+        amount: 200,
+      };
+      Game.getObjectById = vi.fn(() => drop) as any;
+
+      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const creep = mockCreep({
+        memory: {
+          role: 'remoteHauler',
+          state: 'PICKUP',
+          targetRoom: 'W2N1',
+          homeRoom: 'W1N1',
+          targetId: 'drop1',
+        },
+        room: remoteRoom,
+        pos: new RoomPosition(10, 10, 'W2N1'),
+        store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
+        pickup: vi.fn(() => OK),
+      });
+      creep.pos.findClosestByRange = vi.fn(() => {
+        throw new Error('should not re-scan while a committed target is still valid');
+      });
+
+      remoteHauler.run(creep);
+
+      expect(creep.pickup).toHaveBeenCalledWith(drop);
+      expect(creep.memory.targetId).toBe('drop1');
+    });
+
+    it('clears a drained committed container and falls back to a fresh scan', () => {
+      const staleContainer = {
+        id: 'c1' as Id<StructureContainer>,
+        structureType: STRUCTURE_CONTAINER,
+        store: { getUsedCapacity: () => 0 },
+      };
+      Game.getObjectById = vi.fn(() => staleContainer) as any;
+
+      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const creep = mockCreep({
+        memory: {
+          role: 'remoteHauler',
+          state: 'PICKUP',
+          targetRoom: 'W2N1',
+          homeRoom: 'W1N1',
+          targetId: 'c1',
+        },
+        room: remoteRoom,
+        pos: new RoomPosition(10, 10, 'W2N1'),
+        store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
+        withdraw: vi.fn(() => OK),
+      });
+      creep.pos.findClosestByRange = vi.fn(() => undefined);
+
+      remoteHauler.run(creep);
+
+      expect(creep.withdraw).not.toHaveBeenCalled();
+      expect(creep.memory.targetId).toBeUndefined();
+    });
+
+    it('clears a committed target that no longer exists and falls back to a fresh scan', () => {
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const creep = mockCreep({
+        memory: {
+          role: 'remoteHauler',
+          state: 'PICKUP',
+          targetRoom: 'W2N1',
+          homeRoom: 'W1N1',
+          targetId: 'gone1',
+        },
+        room: remoteRoom,
+        pos: new RoomPosition(10, 10, 'W2N1'),
+        store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
+      });
+      creep.pos.findClosestByRange = vi.fn(() => undefined);
+
+      remoteHauler.run(creep);
+
+      expect(creep.memory.targetId).toBeUndefined();
+    });
+  });
 });
