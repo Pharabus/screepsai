@@ -18,6 +18,7 @@ import {
 import { myStorage, myTerminal } from '../utils/ownership';
 import { colonyEnergy, upgradeBuffer } from '../utils/economy';
 import { isLabHub, getLabHubName } from '../managers/labs';
+import { HOME_SURPLUS_FLOOR } from '../managers/terminal';
 import { compoundInTransit } from '../utils/boost';
 
 /**
@@ -1009,12 +1010,30 @@ function deliver(creep: Creep): void {
   markIdle(creep);
 }
 
+// Any room with genuine colony-wide surplus keeps the hub-level terminal floor,
+// not just the hub itself — it needs that liquidity to actually act as a
+// sendEnergyToColonies sender (broadened v1.0.299 to also cover mineral-priority
+// siblings). Without this, a colony's terminal never holds more than
+// TERMINAL_ENERGY_FLOOR_COLONY (5k), well under what a send requires (15k), even
+// though its combined colonyEnergy clears HOME_SURPLUS_FLOOR — the room is
+// "eligible" to send but never physically holds enough to do it. Live: W42N59
+// and W44N57 terminals sat at ~13-14k (incidental leftovers, not maintained)
+// while comfortably clearing HOME_SURPLUS_FLOOR, and zero energy ever reached
+// W44N59 as a result.
+function terminalEnergyFloor(room: Room): number {
+  if (isLabHub(room)) return TERMINAL_ENERGY_FLOOR;
+  const energy = Memory.holisticEconomy
+    ? colonyEnergy(room)
+    : (room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0);
+  return energy >= HOME_SURPLUS_FLOOR ? TERMINAL_ENERGY_FLOOR : TERMINAL_ENERGY_FLOOR_COLONY;
+}
+
 function deliverToTerminalEnergy(creep: Creep): boolean {
   // Only deposit into OWN terminal — a foreign terminal in a reclaimed room must
   // not receive our energy.
   const terminal = myTerminal(creep.room);
   if (!terminal) return false;
-  const floor = isLabHub(creep.room) ? TERMINAL_ENERGY_FLOOR : TERMINAL_ENERGY_FLOOR_COLONY;
+  const floor = terminalEnergyFloor(creep.room);
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= floor) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
   if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -1046,7 +1065,7 @@ function pickupTerminalEnergyToStorage(creep: Creep): boolean {
   if (!storage || !terminal) return false;
   if (storage.store.getUsedCapacity(RESOURCE_ENERGY) >= upgradeBuffer(creep.room)) return false;
   const terminalE = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
-  const floor = isLabHub(creep.room) ? TERMINAL_ENERGY_FLOOR : TERMINAL_ENERGY_FLOOR_COLONY;
+  const floor = terminalEnergyFloor(creep.room);
   if (terminalE <= floor + TERMINAL_RESTOCK_MIN_BATCH) return false;
   const amount = Math.min(creep.store.getFreeCapacity(), terminalE - floor);
   if (amount <= 0) return false;

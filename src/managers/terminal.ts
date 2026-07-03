@@ -276,7 +276,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 /** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
 const COLONY_SEND_AMOUNT = 10_000;
 /** Home storage must hold at least this much before we'll donate energy. */
-const HOME_SURPLUS_FLOOR = 80_000;
+export const HOME_SURPLUS_FLOOR = 80_000;
 /** Stop topping a colony up once its storage clears this bar. */
 const COLONY_STORAGE_TARGET = 30_000;
 /**

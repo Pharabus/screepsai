@@ -380,6 +380,128 @@ describe('hauler terminal logistics', () => {
   });
 });
 
+describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  afterEach(() => {
+    delete (Memory as any).holisticEconomy;
+  });
+
+  it('delivers energy to terminal up to 15k for a surplus colony (holisticEconomy on)', () => {
+    (Memory as any).holisticEconomy = true;
+    const storage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 90_000 }, 1_000_000),
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 10_000 }, 300_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Old flat 5k colony floor would have skipped this (10k already ≥ 5k) —
+    // the surplus-aware 15k floor now delivers.
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+  });
+
+  it('keeps the 5k floor for a non-surplus colony (unchanged baseline)', () => {
+    (Memory as any).holisticEconomy = true;
+    const storage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 20_000 }, 1_000_000),
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 6_000 }, 300_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+  });
+
+  it('uses storage-only surplus check when holisticEconomy is off', () => {
+    const storage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 90_000 }, 1_000_000),
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 10_000 }, 300_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+  });
+
+  it('keeps the hub floor at 15k regardless of the room being non-surplus', () => {
+    (Memory as any).holisticEconomy = true;
+    const storage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 20_000 }, 1_000_000),
+    };
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 10_000 }, 300_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: { labIds: ['lab1', 'lab2', 'lab3', 'lab4', 'lab5', 'lab6'] } };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // Hub always uses the 15k floor — unchanged from before this fix.
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+  });
+});
+
 describe('hauler lab logistics', () => {
   beforeEach(() => {
     resetGameGlobals();
@@ -3422,5 +3544,65 @@ describe('pickupTerminalEnergyToStorage', () => {
       RESOURCE_ENERGY,
       expect.any(Number),
     );
+  });
+
+  it('non-hub surplus room: withdraws down to the 15k floor, not the old 5k floor', () => {
+    // RCL8 upgradeBuffer (100k) gives storage headroom to stay "in deficit"
+    // (70k < 100k) while combined storage+terminal (126.5k) still comfortably
+    // clears HOME_SURPLUS_FLOOR (80k), so the surplus-aware floor is 15k.
+    // Free capacity is generous (100k) so the withdrawal amount is NOT capacity-
+    // capped — it directly reveals which floor was used: 56500-15000=41500
+    // (new floor) vs 56500-5000=51500 (old floor).
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage(70_000);
+    const terminal = makeTerminal(56_500);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 100_000),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    const withdrawCall = (creep.withdraw as any).mock.calls.find(
+      (args: any[]) => args[0] === terminal && args[1] === RESOURCE_ENERGY,
+    );
+    expect(withdrawCall).toBeDefined();
+    expect(withdrawCall[2]).toBe(41_500);
+  });
+
+  it('non-hub surplus room: does not withdraw when terminal surplus above the 15k floor is below the min batch', () => {
+    // Same RCL8/storage-headroom setup, but terminal (16k) is only 1k above the
+    // new 15k floor — below TERMINAL_RESTOCK_MIN_BATCH (2k). A room still on the
+    // old 5k floor would see 16k-5k=11k surplus and withdraw; the new
+    // surplus-aware floor must not.
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage(70_000);
+    const terminal = makeTerminal(16_000);
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 100_000),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 });
