@@ -128,7 +128,7 @@ export function executeMove(
   }
 }
 
-// Cost applied to every tile in an unseen Source Keeper room to deter transit.
+// Cost applied to every non-wall tile in a Source Keeper room to deter transit.
 // At 15/tile, a 50-tile crossing costs 750 — PathFinder prefers any alternate
 // path shorter than ~750 extra tiles. Creeps whose destination IS inside the SK
 // room (miners, keeperKillers) still path there; PathFinder pays the inflated
@@ -136,35 +136,60 @@ export function executeMove(
 // roles from reaching their destination, so inflation is the correct primitive.
 const SK_ROOM_TRANSIT_COST = 15;
 
-// Module-level constant — value never changes so build it once and reuse.
-// Safe to return the same instance: PathFinder reads but does not mutate it.
-let _skTransitMatrix: CostMatrix | undefined;
-function skTransitMatrix(): CostMatrix {
-  if (!_skTransitMatrix) {
-    _skTransitMatrix = new PathFinder.CostMatrix();
+// Applied whenever scoutedHasKeepers is set, REGARDLESS of current vision.
+// v1.0.293 only inflated unseen rooms (the `!room` branch) — but a remote SK
+// room with an active miner has near-continuous vision, so it fell through to
+// the normal getRoomCostMatrix(room) path and the deterrence never fired at
+// all: scouts kept transiting straight through the lair zone at normal cost
+// and dying, producing the same 100+ attack notifications the fix was meant
+// to eliminate (observed live: W44N56, actively mined by W44N57, still
+// generating scout deaths). Applying this ahead of the visibility check
+// closes that gap for both the visible and unseen cases.
+//
+// Per-room cache, terrain-aware: walls are left unset (cost 0) so PathFinder
+// still applies the real terrain wall cost (255/impassable) instead of the
+// flat override silently making them traversable. The original matrix set
+// literally every one of the 2500 tiles — including walls — to 15, which for
+// an unseen room told PathFinder unseen walls were walkable at a discount.
+// Terrain is queryable (and unchanging) for any room via Game.map without
+// vision, so this is safe to build once per room name and reuse.
+const skTransitMatrixCache = new Map<string, CostMatrix>();
+
+export function resetSkTransitMatrixCache(): void {
+  skTransitMatrixCache.clear();
+}
+
+function skTransitMatrix(roomName: string): CostMatrix {
+  let matrix = skTransitMatrixCache.get(roomName);
+  if (!matrix) {
+    matrix = new PathFinder.CostMatrix();
+    const terrain = Game.map.getRoomTerrain(roomName);
     for (let x = 0; x < 50; x++) {
       for (let y = 0; y < 50; y++) {
-        _skTransitMatrix.set(x, y, SK_ROOM_TRANSIT_COST);
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        matrix.set(x, y, SK_ROOM_TRANSIT_COST);
       }
     }
+    skTransitMatrixCache.set(roomName, matrix);
   }
-  return _skTransitMatrix;
+  return matrix;
 }
 
 export function pathRoomCallback(roomName: string): boolean | CostMatrix {
+  const rmem = Memory.rooms?.[roomName];
+  // SK rooms: inflate all non-wall tile costs to deter transit routing, before
+  // the visibility check — see skTransitMatrix() for why this must not be
+  // gated on `!room`. Scouts and other non-combat creeps end up attacked by
+  // Source Keepers when PathFinder picks an SK room as a shortcut.
+  if (rmem?.scoutedHasKeepers) return skTransitMatrix(roomName);
   const room = Game.rooms[roomName];
   if (!room) {
     // Unseen room: skip if known to be owned by another player — their towers
     // will one-shot our creeps. Owned rooms we have vision into fall through
     // to the cost-matrix path below; if we lose vision briefly, the scoutedOwner
     // comparison against our username keeps our own rooms traversable.
-    const rmem = Memory.rooms?.[roomName];
     const owner = rmem?.scoutedOwner;
     if (owner && owner !== getMyUsername()) return false;
-    // SK rooms: inflate all tile costs to deter transit routing. Scouts and
-    // other non-combat creeps end up attacked by Source Keepers when PathFinder
-    // picks an SK room as a shortcut to another destination.
-    if (rmem?.scoutedHasKeepers) return skTransitMatrix();
     // Return an empty CostMatrix (not `true` or `undefined`) so terrain falls
     // through. Mixing `true`/`undefined` returns with real CostMatrix returns
     // for visible rooms confuses PathFinder when the visible room has 255
@@ -185,12 +210,12 @@ export function pathRoomCallback(roomName: string): boolean | CostMatrix {
 let activeCreepAvoidCost = 50;
 
 export function pathRoomCallbackAvoidCreeps(roomName: string): boolean | CostMatrix {
+  const rmem = Memory.rooms?.[roomName];
+  if (rmem?.scoutedHasKeepers) return skTransitMatrix(roomName);
   const room = Game.rooms[roomName];
   if (!room) {
-    const rmem = Memory.rooms?.[roomName];
     const owner = rmem?.scoutedOwner;
     if (owner && owner !== getMyUsername()) return false;
-    if (rmem?.scoutedHasKeepers) return skTransitMatrix();
     return new PathFinder.CostMatrix();
   }
   return getRoomCostMatrixAvoidCreeps(room, activeCreepAvoidCost);

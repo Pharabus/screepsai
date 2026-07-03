@@ -2,6 +2,7 @@ import {
   registerStationary,
   resetTraffic,
   resetBaseMatrixCache,
+  resetSkTransitMatrixCache,
   executeMove,
   getRoomCostMatrix,
   getRoomCostMatrixAvoidCreeps,
@@ -24,6 +25,7 @@ describe('trafficManager', () => {
     resetTickCache();
     resetBaseMatrixCache();
     resetTunnelWallCache();
+    resetSkTransitMatrixCache();
   });
 
   describe('getRoomCostMatrix', () => {
@@ -343,6 +345,43 @@ describe('trafficManager', () => {
 
       const result = pathRoomCallback('W5N5');
       expect(result).toBeInstanceOf(PathFinder.CostMatrix);
+    });
+
+    it('inflates SK room tile costs even when the room is currently visible', () => {
+      // Regression: v1.0.293 only inflated the `!room` (unseen) branch. A
+      // remote SK room with an active miner has near-continuous vision, so it
+      // fell through to the normal visible-room matrix and the deterrence
+      // never fired — scouts kept transiting through and dying.
+      Memory.rooms['W5N5'] = { scoutedHasKeepers: true } as any;
+      const room = mockRoom({
+        name: 'W5N5',
+        find: vi.fn((type: number) => {
+          if (type === FIND_STRUCTURES) {
+            return [{ structureType: STRUCTURE_ROAD, pos: { x: 10, y: 10 } }];
+          }
+          return [];
+        }),
+      });
+      Game.rooms['W5N5'] = room;
+
+      const result = pathRoomCallback('W5N5') as CostMatrix;
+      expect(result.get(25, 25)).toBe(15);
+      // The road at (10,10) is not honored — the flat SK deterrent matrix
+      // replaces the structure-aware matrix entirely for this room.
+      expect(result.get(10, 10)).toBe(15);
+    });
+
+    it('inflates SK room tile costs when unseen, without blocking walls', () => {
+      Memory.rooms['W5N5'] = { scoutedHasKeepers: true } as any;
+      (Game.map.getRoomTerrain as any) = () => ({
+        get: (x: number, y: number) => (x === 5 && y === 5 ? TERRAIN_MASK_WALL : 0),
+      });
+
+      const result = pathRoomCallback('W5N5') as CostMatrix;
+      expect(result.get(25, 25)).toBe(15);
+      // Wall tile left unset (0) so PathFinder still applies the real
+      // terrain wall cost instead of the flat override making it walkable.
+      expect(result.get(5, 5)).toBe(0);
     });
   });
 
