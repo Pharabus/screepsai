@@ -41,6 +41,19 @@ export function findScoutTarget(homeRoom: string): string | undefined {
       visited.add(neighbor);
 
       const rmem = Memory.rooms[neighbor];
+      // Never scout through (or into) a known Source Keeper room. A scout has
+      // no combat or flee capability, and SK rooms are frequently the ONLY
+      // route to whatever lies beyond them (observed live: W44N56 is the sole
+      // corridor from W44N57 to W44N55 — no alternate path exists). Transit
+      // cost inflation in the path callback only steers PathFinder away from
+      // an SK room when a cheaper alternative exists; it can't route around a
+      // mandatory chokepoint, so a scout ever assigned a target past one is
+      // forced straight through Keeper range and dies repeatedly (100+ attack
+      // notifications live). Treat a keeper room as a scouting frontier
+      // boundary: stop BFS expansion there entirely. Anything only reachable
+      // through an SK-room chokepoint stays unscouted until a keeperKiller
+      // clears the way or another route opens.
+      if (rmem?.scoutedHasKeepers) continue;
       // Never re-scout owned rooms. Ownership rarely changes, and a scout has
       // zero threat-score so its death doesn't increment the neighbor record —
       // without this skip, scouts loop into the same hostile capital forever

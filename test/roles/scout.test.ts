@@ -195,6 +195,34 @@ describe('scout', () => {
       expect(findScoutTarget('W1N1')).toBe('W3N1');
     });
 
+    it('does not expand BFS past a known Source Keeper room', () => {
+      // W1N1 → W2N1 (SK room) → W3N1 (unscouted, only reachable via W2N1)
+      Game.map.describeExits = (room: string) => {
+        if (room === 'W1N1') return { '1': 'W2N1' } as any;
+        if (room === 'W2N1') return { '1': 'W3N1' } as any;
+        return {} as any;
+      };
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedHasKeepers: true,
+      } as any;
+
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
+    it('never re-targets a known Source Keeper room directly, even when stale', () => {
+      Game.time = 100_000;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedHasKeepers: true,
+      } as any;
+
+      expect(findScoutTarget('W1N1')).toBeUndefined();
+    });
+
     it('marks idle when no scout targets available', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
