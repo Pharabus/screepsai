@@ -670,6 +670,69 @@ describe('remotePlanner', () => {
       selectRemoteRooms(room);
       expect(Memory.rooms['W1N1'].remoteRooms).toHaveLength(1);
     });
+
+    it('clears a dead-miner reference in a remote room dropped from selection', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N2'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        sources: [{ id: 'src1', x: 10, y: 10, minerName: 'longDeadMiner' }],
+      } as any;
+      // No Game.creeps entry for 'longDeadMiner' — it's dead.
+
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room); // cap 2 — both selected, W1N2's stale name untouched
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1', 'W1N2']);
+      expect((Memory.rooms['W1N2'].sources as any)[0].minerName).toBe('longDeadMiner');
+
+      // Storage drops below 70k — cap drops to 1, W1N2 (fewer sources) is dropped
+      (room.storage as any).store.getUsedCapacity = () => 69_999;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
+      expect((Memory.rooms['W1N2'].sources as any)[0].minerName).toBeUndefined();
+    });
+
+    it('leaves a live miner assignment alone when its room drops from selection', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2 } as any;
+      Memory.rooms['W1N2'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        sources: [{ id: 'src1', x: 10, y: 10, minerName: 'stillAlive' }],
+      } as any;
+      (Game as any).creeps = { stillAlive: { memory: { role: 'miner' } } };
+
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+      (room.storage as any).store.getUsedCapacity = () => 69_999;
+      selectRemoteRooms(room);
+
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
+      expect((Memory.rooms['W1N2'].sources as any)[0].minerName).toBe('stillAlive');
+    });
+
+    it('clears dead-miner references in all remotes when own storage disappears', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 1,
+        sources: [{ id: 'src1', x: 10, y: 10, minerName: 'longDeadMiner' }],
+      } as any;
+
+      const room = mockRoom({ name: 'W1N1', storage: mockStorage(100_000) });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual(['W2N1']);
+
+      // Own storage gone (e.g. reclaimed-room de-confliction) — everything drops.
+      (room as any).storage = undefined;
+      selectRemoteRooms(room);
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+      expect((Memory.rooms['W2N1'].sources as any)[0].minerName).toBeUndefined();
+    });
   });
 
   describe('remoteDistance caching', () => {

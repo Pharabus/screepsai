@@ -74,6 +74,29 @@ export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = fa
   return rmem.scoutedSources ?? 0;
 }
 
+/**
+ * Clear dead-miner references in rooms just dropped from remoteRooms selection.
+ * ensureRemoteRoomPlan (spawner.ts) only re-validates minerName for rooms
+ * currently IN remoteRooms — once a room is dropped (e.g. rejected as an SK
+ * chokepoint, or de-conflicted to a sibling colony) nothing ever revisits its
+ * memory again, so a dead miner's name freezes there indefinitely (observed
+ * live: W44N56's minerName pointed at a creep dead for 1M+ ticks after the
+ * room was dropped). Only clears an already-dead assignment — a miner still
+ * alive and working mid-transition keeps its slot, since miner.ts reclaims
+ * ownership via this same field after a visibility-loss targetId wipe.
+ */
+function clearDeadMinerAssignments(roomNames: string[]): void {
+  for (const name of roomNames) {
+    const rmem = Memory.rooms[name];
+    if (!rmem?.sources) continue;
+    for (const entry of rmem.sources) {
+      if (!entry.minerName) continue;
+      const creep = Game.creeps[entry.minerName];
+      if (!creep || creep.memory.role !== 'miner') entry.minerName = undefined;
+    }
+  }
+}
+
 function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'keeperRoom' {
   const rmem = Memory.rooms[targetRoomName];
   if (rmem?.scoutedHasKeepers) return 'keeperRoom';
@@ -187,6 +210,7 @@ export function selectRemoteRooms(homeRoom: Room): void {
   // cannot afford. Clear any stale selection so those remotes are freed for
   // sibling colonies (de-confliction).
   if (!myStorage(homeRoom)) {
+    clearDeadMinerAssignments(mem.remoteRooms ?? []);
     mem.remoteRooms = [];
     return;
   }
@@ -226,7 +250,9 @@ export function selectRemoteRooms(homeRoom: Room): void {
   // Auto-scale with hysteresis (see remoteRoomCap).
   const cap = remoteRoomCap(homeRoom);
   const selected = scored.slice(0, cap);
+  const previousRemotes = mem.remoteRooms ?? [];
   mem.remoteRooms = selected.map((r) => r.name);
+  clearDeadMinerAssignments(previousRemotes.filter((name) => !mem.remoteRooms!.includes(name)));
 
   // Classify each selected remote room and set default defense policy
   for (const { name } of selected) {
