@@ -1231,6 +1231,178 @@ describe('runTerminal — colony energy send', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Broadened auto-ship for mineral-priority receivers
+// ---------------------------------------------------------------------------
+
+describe('runTerminal — broadened auto-ship for mineral-priority receivers', () => {
+  const SEND_TICK = 100;
+
+  function makeTerminalStore(resources: Record<string, number>): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        if (r) return resources[r] ?? 0;
+        return Object.values(resources).reduce((a, b) => a + b, 0);
+      }),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((_r?: string) => 300_000),
+    });
+    return store;
+  }
+
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonyScoreCache();
+    resetColonySendCache();
+    resetReceiversThisTick();
+    (Game as any).time = SEND_TICK;
+    (Game as any).map = { ...Game.map, getRoomLinearDistance: (_a: string, _b: string) => 1 };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+  });
+
+  it('lets a surplus room auto-ship to a mineral-priority receiver homed to a different room', () => {
+    const homeTerminal: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const home = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) } },
+      terminal: homeTerminal,
+    });
+
+    const outpostTerminal: any = { store: makeTerminalStore({ energy: 2_000 }), cooldown: 0 };
+    const outpostRoom: any = {
+      name: 'W3N1',
+      controller: { my: true, level: 6 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 1_000 : 0) } },
+      terminal: outpostTerminal,
+    };
+    (Game as any).rooms = { W1N1: home, W3N1: outpostRoom };
+
+    // W3N1's designated home is a DIFFERENT (unmodeled) room — proves the send
+    // is reachable only via the broadened mineralPriority path, not the normal
+    // coloniesForHome(W1N1) list.
+    seedColony('W3N1', { homeRoom: 'W9N9', status: 'active' });
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true },
+      W3N1: {
+        mineralPriority: true,
+        sources: [{ id: 's3', x: 10, y: 10, containerId: 'c3', minerName: 'm3' }],
+      },
+    };
+    (Game as any).creeps = { m3: { name: 'm3', memory: { role: 'miner' } } };
+
+    runTerminal();
+
+    expect(homeTerminal.send).toHaveBeenCalledWith(
+      RESOURCE_ENERGY,
+      10_000,
+      'W3N1',
+      'colony energy support',
+    );
+  });
+
+  it('does not reach a non-priority colony homed to a different room (scope stays narrow)', () => {
+    const homeTerminal: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const home = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) } },
+      terminal: homeTerminal,
+    });
+
+    const otherTerminal: any = { store: makeTerminalStore({ energy: 2_000 }), cooldown: 0 };
+    const otherRoom: any = {
+      name: 'W3N1',
+      controller: { my: true, level: 6 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 1_000 : 0) } },
+      terminal: otherTerminal,
+    };
+    (Game as any).rooms = { W1N1: home, W3N1: otherRoom };
+
+    // Same shape as the previous test, but WITHOUT mineralPriority — and homed
+    // to a different room, so it must not be an eligible receiver for W1N1.
+    seedColony('W3N1', { homeRoom: 'W9N9', status: 'active' });
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true },
+      W3N1: {
+        sources: [{ id: 's3', x: 10, y: 10, containerId: 'c3', minerName: 'm3' }],
+      },
+    };
+    (Game as any).creeps = { m3: { name: 'm3', memory: { role: 'miner' } } };
+
+    runTerminal();
+
+    expect(homeTerminal.send).not.toHaveBeenCalled();
+  });
+
+  it('suppresses a same-tick double-send from two different senders to one priority receiver', () => {
+    const terminalA: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const homeA: any = {
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) } },
+      terminal: terminalA,
+    };
+    const terminalB: any = {
+      store: makeTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const homeB: any = {
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 90_000 : 0) } },
+      terminal: terminalB,
+    };
+    const outpostTerminal: any = { store: makeTerminalStore({ energy: 2_000 }), cooldown: 0 };
+    const outpostRoom: any = {
+      name: 'W4N1',
+      controller: { my: true, level: 6 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 1_000 : 0) } },
+      terminal: outpostTerminal,
+    };
+    (Game as any).rooms = { W1N1: homeA, W3N3: homeB, W4N1: outpostRoom };
+
+    // Homed to neither W1N1 nor W3N3 — both senders reach it only via the
+    // broadened mineralPriority path, exercising the per-tick dedupe guard.
+    seedColony('W4N1', { homeRoom: 'W9N9', status: 'active' });
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: {},
+      W4N1: {
+        mineralPriority: true,
+        sources: [{ id: 's4', x: 10, y: 10, containerId: 'c4', minerName: 'm4' }],
+      },
+    };
+    (Game as any).creeps = { m4: { name: 'm4', memory: { role: 'miner' } } };
+
+    runTerminal();
+
+    const totalSends = terminalA.send.mock.calls.length + terminalB.send.mock.calls.length;
+    expect(totalSends).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Per-tick receiver-dedupe guard
 // ---------------------------------------------------------------------------
 

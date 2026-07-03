@@ -11,8 +11,8 @@ import {
 } from '../utils/thresholds';
 import { buildAvailableMap, getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
 import { getChainIntermediates, GOAL_CAPS } from '../utils/reactions';
-import { coloniesForHome, getColonyScore } from '../utils/colonyPlanner';
-import { colonyEnergy } from '../utils/economy';
+import { coloniesForHome, allColonies, getColonyScore } from '../utils/colonyPlanner';
+import { colonyEnergy, isMineralPriorityRoom } from '../utils/economy';
 import { myStorage } from '../utils/ownership';
 
 /**
@@ -330,7 +330,23 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     dist: number;
   }> = [];
 
-  for (const { room: colonyRoom, state } of coloniesForHome(home.name)) {
+  // Normally only a colony's own designated home may auto-ship to it. Mineral-
+  // priority outposts (e.g. W44N59) are a deliberate, narrow exception: they're
+  // added as candidates for EVERY owned room's sendEnergyToColonies call, not
+  // just their own home, so whichever owned room currently has surplus can top
+  // them up automatically instead of relying on a manual deliverEnergy courier.
+  // This is intentionally scoped to mineralPriority receivers only — not a
+  // general "any surplus room helps any colony" empire-logistics rework.
+  const homeReceivers = coloniesForHome(home.name);
+  const priorityReceivers = allColonies().filter(
+    ({ room, state }) =>
+      state.status !== 'claiming' &&
+      room !== home.name &&
+      isMineralPriorityRoom(room) &&
+      !homeReceivers.some((h) => h.room === room),
+  );
+
+  for (const { room: colonyRoom, state } of [...homeReceivers, ...priorityReceivers]) {
     if (state.status === 'claiming') continue; // no terminal exists yet
     const target = Game.rooms[colonyRoom];
     if (!target?.controller?.my) continue;

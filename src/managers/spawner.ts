@@ -36,7 +36,13 @@ import {
   syncTransportMission,
 } from '../utils/missions';
 import { getNeighbor } from '../utils/neighbors';
-import { energyBudget, colonyEnergy, upgradePower, upgraderWorkParts } from '../utils/economy';
+import {
+  energyBudget,
+  colonyEnergy,
+  upgradePower,
+  upgraderWorkParts,
+  isMineralPriorityRoom,
+} from '../utils/economy';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
 const RESOURCE_KHO2 = 'KHO2' as ResourceConstant;
@@ -242,10 +248,18 @@ export function haulersNeeded(room: Room): number {
 
   let count = linked.length > 0 ? 1 : 0;
 
+  // Lean profile for single-source mineral-priority outposts (e.g. W44N59):
+  // the two bumps below are sized for a mature multi-extension core's
+  // distribution bandwidth, not a thin outpost whose whole income this crew
+  // would otherwise consume before it can ever accumulate enough to spawn
+  // the mineralMiner it actually exists for. The base link-drain/unlinked
+  // calc and the Math.max(count, 2) floor below are untouched.
+  const leanProfile = isMineralPriorityRoom(room.name);
+
   // Distribution bandwidth: filling the spawn + extensions scales with extension count (~RCL),
   // not source count. Linked sources only contribute link-drain (1) above; without this a large
   // mature core under-haulers its extensions and the spawn starves (see HAULER_DIST_BUMP_BY_RCL).
-  if (linked.length > 0 && room.controller) {
+  if (linked.length > 0 && room.controller && !leanProfile) {
     count += HAULER_DIST_BUMP_BY_RCL[room.controller.level] ?? 0;
   }
 
@@ -263,7 +277,7 @@ export function haulersNeeded(room: Room): number {
   count = Math.max(count, 2);
 
   // +1 when mineral mining is active so the mineral container doesn't overflow
-  if (mem.mineralId && mem.mineralContainerId) {
+  if (mem.mineralId && mem.mineralContainerId && !leanProfile) {
     const mineral = Game.getObjectById(mem.mineralId as Id<Mineral>);
     if (mineral && mineral.mineralAmount > 0) count += 1;
   }
@@ -301,6 +315,12 @@ export function haulersNeeded(room: Room): number {
 export function upgradersNeeded(room: Room): number {
   const mem = Memory.rooms[room.name];
   if (!mem?.minerEconomy) return 2;
+
+  // Lean profile: a mineral-priority outpost's controller advances at a fixed,
+  // slow pace (never 0) and deliberately does NOT react to storage the way
+  // production rooms do — the user does not want this room racing RCL at the
+  // expense of the mineralMiner it actually exists to support.
+  if (isMineralPriorityRoom(room.name)) return 1;
 
   const rcl = room.controller?.level ?? 0;
   const stored = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
@@ -387,6 +407,9 @@ export function buildersNeeded(room: Room): number {
     () => room.find(FIND_MY_CONSTRUCTION_SITES).length,
   );
   if (sites === 0) return 0;
+  // Lean profile: a mineral-priority outpost still advances, but never bursts
+  // to 3 concurrent builders competing with the mineralMiner for spawn time.
+  if (isMineralPriorityRoom(room.name)) return 1;
   return Math.min(Math.ceil(sites / 3), 3);
 }
 
@@ -395,6 +418,10 @@ export function buildersNeeded(room: Room): number {
  * upgrading), up to 2 when there's significant damage.
  */
 export function repairersNeeded(room: Room): number {
+  // Lean profile: mirror buildersNeeded's affordability gate — a mineral-priority
+  // outpost shouldn't spend its thin income on repairs before it can afford to.
+  if (isMineralPriorityRoom(room.name) && colonyEnergy(room) < STORAGE_ENERGY_FLOOR) return 0;
+
   const damaged = cached('spawner:damaged:' + room.name, () => {
     const structs = getStructuresByType(room);
     let count = 0;
@@ -407,7 +434,7 @@ export function repairersNeeded(room: Room): number {
     return count;
   });
   if (damaged === 0) return 0;
-  if (damaged > 5) return 2;
+  if (damaged > 5) return isMineralPriorityRoom(room.name) ? 1 : 2;
   return 1;
 }
 
@@ -846,6 +873,22 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         minCount: miners + countCreepsByRole('miner', room.name),
       });
     }
+    // Mineral-priority outposts (e.g. W44N59) exist to mine their deposit, not
+    // to run a full production-room economy — promote mineralMiner ahead of
+    // harvester/hauler/upgrader/builder/repairer instead of its normal
+    // dead-last slot below, so the single spawn reaches it even while other
+    // quotas (haulers especially, under short-TTL churn) are still unmet.
+    // Computed once and reused at the normal push site further down, which is
+    // itself gated to skip this room so it's never queued twice.
+    const leanMineralMiners = isMineralPriorityRoom(room.name) ? mineralMinersNeeded(room) : 0;
+    if (leanMineralMiners > 0) {
+      queue.push({
+        role: 'mineralMiner',
+        pattern: [WORK, WORK, MOVE],
+        maxRepeats: 5,
+        minCount: leanMineralMiners,
+      });
+    }
     // Emergency bootstrap harvester: queued before hauler so the first creep
     // spawned during recovery has WORK parts and can actually harvest from
     // sources. A hauler alone cannot generate energy. Gated on BOTH a
@@ -931,7 +974,8 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       maxRepeats: 4,
       minCount: repairersNeeded(room),
     });
-    const mineralMiners = mineralMinersNeeded(room);
+    // Skip for mineral-priority rooms — already queued early above.
+    const mineralMiners = isMineralPriorityRoom(room.name) ? 0 : mineralMinersNeeded(room);
     if (mineralMiners > 0) {
       queue.push({
         role: 'mineralMiner',

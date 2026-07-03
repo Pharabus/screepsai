@@ -101,6 +101,17 @@ export const MINERAL_RESERVE_MARGIN = 15_000;
  */
 export const MINERAL_PRIORITY_ENERGY_FLOOR = 15_000;
 
+/**
+ * True when a room is flagged as a single-source mineral-priority outpost.
+ * Consumed by allowMineralMining (below) and by the lean spawn profile in
+ * spawner.ts (haulersNeeded/repairersNeeded/buildersNeeded/upgradersNeeded/
+ * buildSpawnQueue) and the broadened receiver set in terminal.ts's
+ * sendEnergyToColonies — single source of truth for the flag check.
+ */
+export function isMineralPriorityRoom(roomName: string): boolean {
+  return Memory.rooms[roomName]?.mineralPriority === true;
+}
+
 /** Overmind-style threshold above which a room is considered saturated and
  *  upgrade power is doubled to accelerate RCL8 progress. */
 export const SATURATED_THRESHOLD = 500_000;
@@ -262,7 +273,7 @@ export function energyBudget(room: Room): EnergyBudget {
     const buffer = upgradeBuffer(room);
     const surplus = Math.max(0, total - buffer);
     const rcl = room.controller?.level ?? 0;
-    const mineralPriority = Memory.rooms[room.name]?.mineralPriority === true;
+    const mineralPriority = isMineralPriorityRoom(room.name);
 
     return {
       stage,

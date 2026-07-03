@@ -6,6 +6,7 @@ import {
   haulersNeeded,
   upgradersNeeded,
   repairersNeeded,
+  buildersNeeded,
   remoteBuilderNeeded,
   defenderComposition,
   defenderBoostsWanted,
@@ -421,6 +422,63 @@ describe('buildSpawnQueue', () => {
   });
 });
 
+describe('buildSpawnQueue — mineral-priority spawn ordering', () => {
+  function makeRoom(mineralPriority: boolean) {
+    const extractor = { structureType: STRUCTURE_EXTRACTOR };
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        mineralPriority,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+      },
+    };
+    (Game as any).creeps = { miner_1: { memory: { role: 'miner' } } };
+    (Game as any).getObjectById = (id: string) =>
+      id === 'min1' ? { mineralAmount: 10_000 } : undefined;
+    return mockRoom({
+      name: 'W1N1',
+      controller: { level: 6 },
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 60_000 : 0) },
+      },
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_STRUCTURES) {
+          return opts?.filter ? [extractor].filter(opts.filter) : [extractor];
+        }
+        return [];
+      }),
+    });
+  }
+
+  it('promotes mineralMiner ahead of hauler/upgrader/builder/repairer for a priority room', () => {
+    const queue = buildSpawnQueue(makeRoom(true));
+    const roles = queue.map((r) => r.role);
+    const mmIdx = roles.indexOf('mineralMiner');
+
+    expect(mmIdx).toBeGreaterThan(-1);
+    expect(mmIdx).toBeLessThan(roles.indexOf('hauler'));
+    expect(mmIdx).toBeLessThan(roles.indexOf('upgrader'));
+    expect(mmIdx).toBeLessThan(roles.indexOf('builder'));
+    expect(mmIdx).toBeLessThan(roles.indexOf('repairer'));
+  });
+
+  it('leaves mineralMiner in its normal late position for a non-priority room', () => {
+    const queue = buildSpawnQueue(makeRoom(false));
+    const roles = queue.map((r) => r.role);
+    const mmIdx = roles.indexOf('mineralMiner');
+
+    expect(mmIdx).toBeGreaterThan(-1);
+    expect(mmIdx).toBeGreaterThan(roles.indexOf('hauler'));
+    expect(mmIdx).toBeGreaterThan(roles.indexOf('upgrader'));
+    expect(mmIdx).toBeGreaterThan(roles.indexOf('builder'));
+  });
+});
+
 describe('minersNeeded', () => {
   it('returns 0 when no sources', () => {
     (Memory as any).rooms = { W1N1: {} };
@@ -716,6 +774,52 @@ describe('haulersNeeded', () => {
   });
 });
 
+describe('haulersNeeded — mineral-priority lean profile', () => {
+  it('skips the RCL distribution bump and mineral bump when mineralPriority is set', () => {
+    (Game as any).getObjectById = (id: string) => {
+      if (id === 'link1') return { id: 'link1' };
+      if (id === 'min1') return { mineralAmount: 10_000 };
+      return undefined;
+    };
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+        mineralPriority: true,
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+    });
+    // Without the flag this would be 1 (link) + 2 (RCL6 bump) + 1 (mineral bump) = 4.
+    expect(haulersNeeded(room)).toBe(2);
+  });
+
+  it('an otherwise-identical non-priority room still applies both bumps', () => {
+    (Game as any).getObjectById = (id: string) => {
+      if (id === 'link1') return { id: 'link1' };
+      if (id === 'min1') return { mineralAmount: 10_000 };
+      return undefined;
+    };
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+    });
+    expect(haulersNeeded(room)).toBe(4);
+  });
+});
+
 describe('upgradersNeeded', () => {
   it('returns 2 in bootstrap economy', () => {
     (Memory as any).rooms = { W1N1: {} };
@@ -818,6 +922,32 @@ describe('upgradersNeeded', () => {
     (Memory as any).rooms = { W1N1: { minerEconomy: true } };
     const room = mockRoom({ name: 'W1N1' });
     expect(upgradersNeeded(room)).toBe(1);
+  });
+});
+
+describe('upgradersNeeded — mineral-priority lean profile', () => {
+  it('stays at exactly 1 regardless of storage level, unlike a normal mature room', () => {
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, mineralPriority: true },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      storage: { store: { getUsedCapacity: () => 600_000 } },
+    });
+    // A non-priority room at 600k would return 4 (see "returns 3 at 250k and
+    // 4 at 600k" above) — the priority flag overrides the ramp entirely.
+    expect(upgradersNeeded(room)).toBe(1);
+  });
+
+  it('an otherwise-identical non-priority room still ramps normally', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7 },
+      storage: { store: { getUsedCapacity: () => 600_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(4);
   });
 });
 
@@ -1290,6 +1420,57 @@ describe('repairersNeeded', () => {
       }),
     });
     expect(repairersNeeded(room)).toBe(0);
+  });
+});
+
+describe('repairersNeeded — mineral-priority lean profile', () => {
+  const sixDamaged = Array(6).fill({ structureType: STRUCTURE_ROAD, hits: 100, hitsMax: 1000 });
+  const findDamaged = vi.fn((type: number, opts?: any) => {
+    if (type === FIND_STRUCTURES) return opts?.filter ? sixDamaged.filter(opts.filter) : sixDamaged;
+    return [];
+  });
+
+  it('returns 0 when colonyEnergy is below STORAGE_ENERGY_FLOOR, even with heavy damage', () => {
+    (Memory as any).rooms = { W1N1: { mineralPriority: true } };
+    const room = mockRoom({ name: 'W1N1', find: findDamaged }); // no storage/terminal → colonyEnergy 0
+    expect(repairersNeeded(room)).toBe(0);
+  });
+
+  it('caps at 1 (not 2) once affordable, even with heavy damage', () => {
+    (Memory as any).rooms = { W1N1: { mineralPriority: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: findDamaged,
+      storage: { my: true, store: { getUsedCapacity: () => 20_000 } },
+    });
+    expect(repairersNeeded(room)).toBe(1);
+  });
+
+  it('an otherwise-identical non-priority room still returns 2 for heavy damage', () => {
+    (Memory as any).rooms = { W1N1: {} };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: findDamaged,
+      storage: { my: true, store: { getUsedCapacity: () => 20_000 } },
+    });
+    expect(repairersNeeded(room)).toBe(2);
+  });
+});
+
+describe('buildersNeeded — mineral-priority lean profile', () => {
+  const oneSite = [{ id: 'site1' }];
+  const findOneSite = vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? oneSite : []));
+
+  it('caps at 1 regardless of site count when mineralPriority is set', () => {
+    (Memory as any).rooms = { W1N1: { mineralPriority: true } };
+    const room = mockRoom({ name: 'W1N1', find: findOneSite });
+    expect(buildersNeeded(room)).toBe(1);
+  });
+
+  it('returns 0 with no construction sites, same as a non-priority room', () => {
+    (Memory as any).rooms = { W1N1: { mineralPriority: true } };
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    expect(buildersNeeded(room)).toBe(0);
   });
 });
 
