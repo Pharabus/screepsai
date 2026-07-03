@@ -58,6 +58,50 @@ describe('remotePlanner', () => {
       expect(evaluateRemoteRoom('W2N1')).toBe(2);
     });
 
+    it('still rejects a fresh Invader Core reservation (within the NPC decay window)', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+      Game.time = 1200;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedReservation: 'Invader',
+        scoutedSources: 1,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+    });
+
+    it('re-accepts a room once a stale Invader Core reservation ages past the NPC window', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS + 1;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedReservation: 'Invader',
+        scoutedSources: 1,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(1);
+    });
+
+    it('keeps rejecting a stale player reservation past the (shorter) NPC window', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+      Game.time = 1000 + NPC_SCOUT_REJECT_TICKS + 1;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedReservation: 'SomePlayer',
+        scoutedSources: 1,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(-1);
+    });
+
+    it('re-accepts a room once a stale player reservation ages past the (longer) player window', () => {
+      Game.spawns = { Spawn1: { owner: { username: 'Me' } } } as any;
+      Game.time = 1000 + PLAYER_SCOUT_REJECT_TICKS + 1;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 1000,
+        scoutedReservation: 'SomePlayer',
+        scoutedSources: 1,
+      } as any;
+      expect(evaluateRemoteRoom('W2N1')).toBe(1);
+    });
+
     it('returns -1 for rooms with recent hostiles', () => {
       Game.time = 2000;
       Memory.rooms['W2N1'] = {

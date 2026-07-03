@@ -30,6 +30,14 @@ export const REMOTE_MAX_PATH_TILES = 120;
 /** Recompute a cached remote path distance when older than this many ticks. */
 const REMOTE_DISTANCE_STALE_TICKS = 5000;
 
+/** NPC reservation owners — mirrors remoteThreat.ts's copy (kept local to avoid a
+ *  utils→utils import purely for a 2-entry set). An Invader Core auto-despawns on
+ *  its own after a few thousand ticks, unlike a real player's Reserve Controller
+ *  activity, so its reservation deserves the same short NPC decay window as an
+ *  NPC hostile sighting below — not the unconditional block a player reservation
+ *  still gets. */
+const NPC_USERNAMES = new Set(['Invader', 'Source Keeper']);
+
 export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = false): number {
   const rmem = Memory.rooms[targetRoomName];
   if (!rmem?.scoutedAt) return -1;
@@ -37,7 +45,23 @@ export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = fa
   // Reject owned rooms or rooms reserved by other players
   if (rmem.scoutedOwner) return -1;
   const myUsername = getMyUsername();
-  if (rmem.scoutedReservation && rmem.scoutedReservation !== myUsername) return -1;
+  if (rmem.scoutedReservation && rmem.scoutedReservation !== myUsername) {
+    // The reservation snapshot is only as fresh as the last scout visit — an
+    // Invader Core (NPC) despawns on its own well before a room is likely to be
+    // re-scouted (findScoutTarget always prefers never-scouted frontier rooms
+    // over stale re-visits, so a stale re-visit can be delayed indefinitely).
+    // Without a decay window here, a room an Invader Core once reserved stayed
+    // permanently unselectable even after the core was long gone (observed
+    // live: W42N58 still rejected ~3000+ ticks after its last scout, despite
+    // the Core having since despawned). A real player's reservation gets the
+    // long window — we can't observe a live reserver leaving, so caution stays
+    // high there.
+    const scoutAge = Game.time - (rmem.scoutedAt ?? 0);
+    const window = NPC_USERNAMES.has(rmem.scoutedReservation)
+      ? NPC_SCOUT_REJECT_TICKS
+      : PLAYER_SCOUT_REJECT_TICKS;
+    if (scoutAge < window) return -1;
+  }
 
   // Reject rooms with recent hostile presence. NPC-only sightings get a short
   // window (hunters clear invaders fast); player sightings get a long one.
