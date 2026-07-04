@@ -1793,13 +1793,13 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     consoleSpy.mockRestore();
   });
 
-  it('skips when the energy guard fails (terminal energy < cost + ENERGY_TERMINAL_BUFFER)', () => {
+  it('skips when the energy guard fails (terminal energy < cost + MINERAL_SHIP_ENERGY_BUFFER)', () => {
     (Game as any).time = SHIP_TICK;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // energy: 4000 — calcTransactionCost returns 1000, buffer is 5000 → 4000 < 1000+5000
+    // energy: 1000 — calcTransactionCost returns 1000, buffer is 200 → 1000 < 1000+200
     const feederTerminal: any = {
-      store: makeFullTerminalStore({ O: 6000, energy: 4_000 }),
+      store: makeFullTerminalStore({ O: 6000, energy: 1_000 }),
       cooldown: 0,
       send: vi.fn(() => OK),
     };
@@ -1822,7 +1822,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       W1N1: {},
       W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
     };
-    // calcTransactionCost returns 1000 → 4000 < 1000 + 5000 (ENERGY_TERMINAL_BUFFER) → skip
+    // calcTransactionCost returns 1000 → 1000 < 1000 + 200 (MINERAL_SHIP_ENERGY_BUFFER) → skip
     (Game as any).market = {
       getAllOrders: vi.fn(() => []),
       calcTransactionCost: vi.fn(() => 1_000),
@@ -1832,6 +1832,101 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     runTerminal();
 
     expect(feederTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('stays silent about a routine energy-guard skip unless Memory.terminalDebug is on', () => {
+    // Regression test for the log-spam bug: sendMineralsToHub's skip branches
+    // used raw console.log (unconditional) instead of verboseTerminalLog (the
+    // convention every other routine "why we skipped" message in this file
+    // follows), so a feeder room stuck below threshold logged every single
+    // tick indefinitely.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 1_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 1_000),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+    expect(consoleSpy).not.toHaveBeenCalled();
+
+    Memory.terminalDebug = true;
+    runTerminal();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('insufficient energy'));
+
+    consoleSpy.mockRestore();
+  });
+
+  it('sends when the feeder terminal sits at only TERMINAL_ENERGY_FLOOR_COLONY (5000) — the floor is enough to cover a realistic shipment fee', () => {
+    // Regression test for the bug that caused W42N59 to skip every tick:
+    // a feeder terminal maintained at its normal 5000 colony floor previously
+    // could never clear cost + ENERGY_TERMINAL_BUFFER (5000), i.e. ~10k total.
+    // MINERAL_SHIP_ENERGY_BUFFER (200) makes 5000 actually sufficient, as the
+    // colony floor's own doc comment always intended.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 5_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    // A realistic nearby-room fee (a few hundred energy) — 5000 >= 270 + 200.
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 270),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
     consoleSpy.mockRestore();
   });
 

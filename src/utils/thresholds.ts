@@ -82,6 +82,23 @@ export const TERMINAL_ENERGY_FLOOR_COLONY = 5_000;
  * Only active under Memory.holisticEconomy.
  */
 export const TERMINAL_RESTOCK_MIN_BATCH = 2_000;
+/**
+ * Safety margin for sendMineralsToHub's energy guard — deliberately much
+ * smaller than ENERGY_TERMINAL_BUFFER (5000). That buffer is sized for guards
+ * where energy IS the payload being drained (sendEnergyToColonies, buyForLabs,
+ * sellSurplus), so a full reserve on top of the spend makes sense there.
+ * sendMineralsToHub ships a MINERAL — energy only pays the market transaction
+ * fee (a few hundred for a nearby hub) — so reusing the big buffer required
+ * `cost + 5000`, i.e. ~10k total, from a feeder terminal that's only ever
+ * maintained at TERMINAL_ENERGY_FLOOR_COLONY (5000, whose own doc comment
+ * says that floor is "enough to cover the energy cost of a single mineral
+ * shipment"). The mismatch meant sendMineralsToHub could never fire for any
+ * feeder room sitting at its normal colony floor (observed live: W42N59
+ * skipped every tick, "insufficient energy" needing ~10k while holding ~5k).
+ * This buffer only needs to keep the fee payment from draining terminal
+ * energy to exactly 0.
+ */
+export const MINERAL_SHIP_ENERGY_BUFFER = 200;
 
 // Market buying thresholds.
 // Base mineral prices vary wildly by shard: shard0 trades at ~0.05-0.5cr,

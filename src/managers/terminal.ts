@@ -1,5 +1,6 @@
 import {
   ENERGY_TERMINAL_BUFFER,
+  MINERAL_SHIP_ENERGY_BUFFER,
   BATTERY_TERMINAL_SELL_FLOOR,
   MINERAL_TERMINAL_SELL_FLOOR,
   INTERMEDIATE_SATURATION,
@@ -437,7 +438,9 @@ export function resetColonySendCache(): void {
  * - The hub terminal has insufficient free capacity for the chosen resource
  *   (hub is full — it will sell/consume to make room; retry next interval).
  * - The feeder terminal doesn't hold enough energy to cover the transaction
- *   cost plus ENERGY_TERMINAL_BUFFER (mirror of sendEnergyToColonies guard).
+ *   cost plus MINERAL_SHIP_ENERGY_BUFFER (v1.0.304 — previously reused the
+ *   much larger ENERGY_TERMINAL_BUFFER, which made this guard nearly
+ *   unsatisfiable for a feeder terminal sitting at its normal 5k colony floor).
  */
 function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
   const hubName = getLabHubName();
@@ -446,7 +449,9 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
   const hub = Game.rooms[hubName];
   const hubTerminal = hub?.terminal;
   if (!hubTerminal) {
-    console.log(`[terminal] ${room.name}: sendMineralsToHub skip — hub ${hubName} has no terminal`);
+    verboseTerminalLog(
+      `[terminal] ${room.name}: sendMineralsToHub skip — hub ${hubName} has no terminal`,
+    );
     return;
   }
 
@@ -470,7 +475,7 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
   // Clamp to hub terminal's free capacity for this resource.
   const hubFree = hubTerminal.store.getFreeCapacity(bestResource);
   if (hubFree < MIN_MINERAL_SHIP) {
-    console.log(
+    verboseTerminalLog(
       `[terminal] ${room.name}: sendMineralsToHub skip — hub full for ${bestResource} (free=${hubFree})`,
     );
     return;
@@ -478,13 +483,16 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 
   const amount = Math.min(bestAmount, hubFree);
 
-  // Energy guard: mirror of sendEnergyToColonies. Only send if the feeder
-  // terminal can cover the transaction cost plus the standing energy buffer.
+  // Energy guard: only send if the feeder terminal can cover the transaction
+  // cost plus a small safety margin. Deliberately NOT ENERGY_TERMINAL_BUFFER
+  // (5000, sized for guards where energy itself is the drained payload) — the
+  // mineral is the payload here, energy only pays the market fee, so a much
+  // smaller buffer suffices (see MINERAL_SHIP_ENERGY_BUFFER's doc comment).
   const cost = Game.market.calcTransactionCost(amount, room.name, hubName);
   const termEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
-  if (termEnergy < cost + ENERGY_TERMINAL_BUFFER) {
-    console.log(
-      `[terminal] ${room.name}: sendMineralsToHub skip — insufficient energy (need ${cost + ENERGY_TERMINAL_BUFFER}, have ${termEnergy})`,
+  if (termEnergy < cost + MINERAL_SHIP_ENERGY_BUFFER) {
+    verboseTerminalLog(
+      `[terminal] ${room.name}: sendMineralsToHub skip — insufficient energy (need ${cost + MINERAL_SHIP_ENERGY_BUFFER}, have ${termEnergy})`,
     );
     return;
   }
