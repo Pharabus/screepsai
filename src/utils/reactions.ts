@@ -17,14 +17,18 @@ export function getReactionProduct(
 }
 
 // Priority-ordered target compounds. GH2O (tier-2 upgrade boost, +50%, no
-// catalyst) is first — it's the strongest upgrade boost we can actually source,
-// since the catalysed X-tier (XGH2O etc.) needs catalyst X, which has no market
-// orders at our price cap on shard3 (cheapest ~747 vs 150 cap). The X-tier goals
-// remain below as aspirational fallbacks, active only if an X supply appears.
-// The chain builder works backward from these through the REACTIONS table.
+// catalyst) is first — it was the strongest upgrade boost we could source while
+// catalyst X had no market orders at our price cap on shard3 (cheapest ~747 vs
+// 150 cap). That blocker is gone: W44N59 (a self-owned single-source mineral
+// outpost) mines X and ships it to the hub, so the catalysed X-tier goals below
+// are now genuinely reachable, not just aspirational — selectReaction rotates
+// to XGH2O once GH2O hits its GOAL_CAPS cap (4000), and spawner.ts's
+// upgraderBoostCompound prefers XGH2O over GH2O for the upgrader boost itself
+// once it's stocked (v1.0.303). The chain builder works backward from these
+// through the REACTIONS table.
 export const REACTION_GOALS: ResourceConstant[] = [
   'GH2O' as ResourceConstant, // UPGRADE boost (+50%, no catalyst) — PRIMARY, achievable now
-  'XGH2O' as ResourceConstant, // UPGRADE +100% — needs catalyst X (unbuyable on shard3 at our cap)
+  'XGH2O' as ResourceConstant, // UPGRADE +100% — catalyst X now self-supplied via W44N59
   'XGHO2' as ResourceConstant, // TOUGH boost (50% dmg reduction)
   'XLHO2' as ResourceConstant, // HEAL boost
   'XKHO2' as ResourceConstant, // RANGED_ATTACK boost

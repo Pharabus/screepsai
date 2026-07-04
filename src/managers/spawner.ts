@@ -45,6 +45,9 @@ import {
 } from '../utils/economy';
 
 const RESOURCE_GHODIUM_ACID = 'GH2O' as ResourceConstant;
+// Catalyzed tier — GH2O + X, doubles the upgrade bonus (+100% vs +50%). Preferred
+// over GH2O whenever stock allows; see upgraderBoostCompound below.
+const RESOURCE_CATALYZED_GHODIUM_ACID = 'XGH2O' as ResourceConstant;
 const RESOURCE_KHO2 = 'KHO2' as ResourceConstant;
 const RESOURCE_LHO2 = 'LHO2' as ResourceConstant;
 
@@ -606,65 +609,85 @@ export function keeperKillersNeeded(home: Room): number {
   ).length;
 }
 
+/** Preference order for upgrader boosting — the catalyzed tier (+100%) beats the
+ *  plain tier (+50%), so it's always tried first. */
+const UPGRADER_BOOST_PREFERENCE: ResourceConstant[] = [
+  RESOURCE_CATALYZED_GHODIUM_ACID,
+  RESOURCE_GHODIUM_ACID,
+];
+
+/** Total stock of `compound` this room can draw on for boosting: storage +
+ *  terminal + the reserved boost lab (only if it actually holds this compound)
+ *  + in-transit (compound already carried by a hauler en route to the lab).
+ *  Counting in-transit + lab-held stock keeps the sum invariant across the
+ *  storage→lab move — without it, filling the lab moves stock out of storage,
+ *  dips the storage-only sum below threshold, unreserves the lab mid-fill, and
+ *  the lab can never actually be filled (observed live: W43N58 upgraders never
+ *  boosted because filling the lab tripped its own reservation gate). */
+function totalBoostCompoundStock(room: Room, mem: RoomMemory, compound: ResourceConstant): number {
+  const inStorage = room.storage?.store.getUsedCapacity(compound) ?? 0;
+  const inTerminal = room.terminal?.store.getUsedCapacity(compound) ?? 0;
+  let inBoostLab = 0;
+  if (mem.boostLabId) {
+    const boostLab = Game.getObjectById(mem.boostLabId);
+    if (boostLab && boostLab.mineralType === compound) {
+      inBoostLab = boostLab.store.getUsedCapacity(compound) ?? 0;
+    }
+  }
+  const inTransit = compoundInTransit(room, compound);
+  return inStorage + inTerminal + inBoostLab + inTransit;
+}
+
 /**
- * Returns true when all conditions for boosting upgraders with GH2O are met:
+ * Picks which compound (if any) upgraders should be boosted with this tick:
  *  1. RCL 7+ (at RCL 6, reserving the only output lab would halt reactions)
  *  2. At least 2 output labs available (inputLabIds has 2, labIds has ≥2 non-input labs)
- *  3. GH2O stock ≥ threshold. The stock sums storage + terminal + reserved boost
- *     lab + in-transit (compound carried by haulers en route to the lab). The
- *     threshold is HYSTERETIC: BOOST_LAB_MINERAL_TARGET (1500) to first reserve,
- *     but only BOOST_LAB_MINERAL_MAINTAIN (500) to keep an existing reservation.
- *  4. Storage energy > STORAGE_ENERGY_FLOOR (10k) — don't boost while energy-starved
+ *  3. Storage energy > STORAGE_ENERGY_FLOOR (10k) — don't boost while energy-starved
+ *  4. Walks UPGRADER_BOOST_PREFERENCE (XGH2O then GH2O) and returns the first
+ *     whose stock clears its threshold. The threshold is HYSTERETIC per compound:
+ *     BOOST_LAB_MINERAL_TARGET (1500) to switch onto it, but only
+ *     BOOST_LAB_MINERAL_MAINTAIN (500) to keep it once it's the reserved one —
+ *     a single boost consumes ~450 units (30/part × ~15 work), which would
+ *     otherwise unreserve the lab after every boost and strand the next upgrader.
+ *     Requiring the full TARGET to switch (not just MAINTAIN) means we only
+ *     upgrade from GH2O to XGH2O once XGH2O is genuinely well-stocked, not the
+ *     instant a trickle of it appears.
  *
- * Why both the in-transit term and the hysteresis matter — two distinct flip-flops:
- *  - In-transit: filling the lab moves up to 1500 GH2O out of storage into haulers
- *    then the lab. A storage-only sum dips below 1500 the instant a hauler grabs the
- *    compound, unreserving the lab mid-fill so it can never be filled (observed live
- *    W43N58: upgraders never boosted because filling the lab tripped its own gate).
- *    Counting in-transit + lab keeps the sum invariant across the storage→lab move.
- *  - Hysteresis: a single boost consumes ~450 GH2O from the lab (30/part × ~15 work),
- *    which permanently reduces the total. Without a lower maintain floor that drop
- *    would unreserve the lab after every boost, stranding the next upgrader. The 500
- *    floor sits just above one boost's worth so boosting continues until stock is
- *    genuinely depleted, then resumes once reactions/market rebuild it past 1500.
+ * Returns undefined when no compound is currently sustainable — callers should
+ * spawn/keep the upgrader unboosted.
  */
-export function upgraderBoostWanted(room: Room): boolean {
-  if (!room.controller || room.controller.level < 7) return false;
+export function upgraderBoostCompound(room: Room): ResourceConstant | undefined {
+  if (!room.controller || room.controller.level < 7) return undefined;
 
   const mem = Memory.rooms[room.name];
-  if (!mem) return false;
+  if (!mem) return undefined;
 
   const inputLabCount = mem.inputLabIds?.length ?? 0;
   const totalLabCount = mem.labIds?.length ?? 0;
   const outputLabCount = totalLabCount - inputLabCount;
-  if (inputLabCount < 2 || outputLabCount < 2) return false;
-
-  const gh2oInStorage = room.storage?.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
-  const gh2oInTerminal = room.terminal?.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
-  let gh2oInBoostLab = 0;
-  if (mem.boostLabId) {
-    const boostLab = Game.getObjectById(mem.boostLabId);
-    if (boostLab && boostLab.mineralType === RESOURCE_GHODIUM_ACID) {
-      gh2oInBoostLab = boostLab.store.getUsedCapacity(RESOURCE_GHODIUM_ACID) ?? 0;
-    }
-  }
-  const gh2oInTransit = compoundInTransit(room, RESOURCE_GHODIUM_ACID);
-  const totalGh2o = gh2oInStorage + gh2oInTerminal + gh2oInBoostLab + gh2oInTransit;
-  // Hysteresis: keep an already-reserved lab down to the maintain floor; only
-  // require the full target to (re)reserve from scratch.
-  const threshold = mem.boostLabId ? BOOST_LAB_MINERAL_MAINTAIN : BOOST_LAB_MINERAL_TARGET;
-  if (totalGh2o < threshold) return false;
+  if (inputLabCount < 2 || outputLabCount < 2) return undefined;
 
   const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  if (storedEnergy <= STORAGE_ENERGY_FLOOR) return false;
+  if (storedEnergy <= STORAGE_ENERGY_FLOOR) return undefined;
 
-  return true;
+  for (const compound of UPGRADER_BOOST_PREFERENCE) {
+    const threshold =
+      mem.boostCompound === compound ? BOOST_LAB_MINERAL_MAINTAIN : BOOST_LAB_MINERAL_TARGET;
+    if (totalBoostCompoundStock(room, mem, compound) >= threshold) return compound;
+  }
+  return undefined;
+}
+
+/** Backward-compatible boolean form of upgraderBoostCompound. */
+export function upgraderBoostWanted(room: Room): boolean {
+  return upgraderBoostCompound(room) !== undefined;
 }
 
 /**
- * Reserves or releases the boost lab for upgrader GH2O boosting.
- * When upgraderBoostWanted: ensures boostLabId points to a valid output lab and
- * sets boostCompound = GH2O.
+ * Reserves or releases the boost lab for upgrader boosting (XGH2O preferred,
+ * GH2O fallback — see upgraderBoostCompound).
+ * When a compound is wanted: ensures boostLabId points to a valid output lab and
+ * sets boostCompound to whichever compound was chosen.
  * When not wanted: clears both fields so the lab rejoins reactions.
  * Must be called every tick so the hauler keeps the lab topped.
  */
@@ -672,7 +695,8 @@ export function reserveBoostLab(room: Room): void {
   const mem = Memory.rooms[room.name];
   if (!mem) return;
 
-  if (!upgraderBoostWanted(room)) {
+  const compound = upgraderBoostCompound(room);
+  if (!compound) {
     delete mem.boostLabId;
     delete mem.boostCompound;
     return;
@@ -685,24 +709,27 @@ export function reserveBoostLab(room: Room): void {
   if (mem.boostLabId) {
     const existing = Game.getObjectById(mem.boostLabId);
     if (existing && !inputLabSet.has(mem.boostLabId)) {
-      // Still valid — keep it and ensure compound is set
-      mem.boostCompound = RESOURCE_GHODIUM_ACID;
+      // Still valid — keep it and ensure compound is set. The hauler's
+      // pickupBoostLab flush guard handles withdrawing a stale mineral if the
+      // chosen compound just switched (e.g. GH2O -> XGH2O).
+      mem.boostCompound = compound;
       return;
     }
     // Invalid or became an input lab — fall through to pick a new one
     delete mem.boostLabId;
   }
 
-  // Pick a stable output lab — prefer one whose mineralType is null or already GH2O;
-  // otherwise the first output lab by id order (deterministic, avoid churn).
+  // Pick a stable output lab — prefer one whose mineralType is null or already
+  // the chosen compound; otherwise the first output lab by id order
+  // (deterministic, avoid churn).
   const sortedOutputLabIds = outputLabIds.slice().sort();
   let chosen: Id<StructureLab> | undefined;
 
-  // First pass: prefer a lab already loaded with GH2O or empty
+  // First pass: prefer a lab already loaded with the chosen compound or empty
   for (const id of sortedOutputLabIds) {
     const lab = Game.getObjectById(id as Id<StructureLab>);
     if (!lab) continue;
-    if (!lab.mineralType || lab.mineralType === RESOURCE_GHODIUM_ACID) {
+    if (!lab.mineralType || lab.mineralType === compound) {
       chosen = id as Id<StructureLab>;
       break;
     }
@@ -721,7 +748,7 @@ export function reserveBoostLab(room: Room): void {
 
   if (chosen) {
     mem.boostLabId = chosen;
-    mem.boostCompound = RESOURCE_GHODIUM_ACID;
+    mem.boostCompound = compound;
   }
 }
 
@@ -946,16 +973,17 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
               : room.energyCapacityAvailable, // full above 50k
       room.energyCapacityAvailable,
     );
+    const upgraderBoostCompoundWanted = upgraderBoostCompound(room);
     queue.push({
       role: 'upgrader',
       body: buildUpgraderBody(upgraderEnergyCap),
       minCount: upgradersNeeded(room),
-      ...(upgraderBoostWanted(room)
+      ...(upgraderBoostCompoundWanted
         ? {
             memory: {
               role: 'upgrader' as CreepRoleName,
               homeRoom: room.name,
-              boosts: [{ part: WORK, compound: RESOURCE_GHODIUM_ACID }],
+              boosts: [{ part: WORK, compound: upgraderBoostCompoundWanted }],
             },
           }
         : {}),

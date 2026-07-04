@@ -12,6 +12,7 @@ import {
   defenderBoostsWanted,
   remoteHaulersWanted,
   upgraderBoostWanted,
+  upgraderBoostCompound,
   reserveBoostLab,
   mineralMinersNeeded,
 } from '../../src/managers/spawner';
@@ -2111,7 +2112,9 @@ describe('upgraderBoostWanted', () => {
     // reserved the maintain floor (500) applies; the lab's GH2O must count so a
     // storage that has been drained into the lab does not unreserve it. Storage
     // alone (200) is below the maintain floor — only counting the lab keeps it open.
-    (Memory as any).rooms = { W1N1: { ...baseRoomMem(), boostLabId: 'lab3' } };
+    (Memory as any).rooms = {
+      W1N1: { ...baseRoomMem(), boostLabId: 'lab3', boostCompound: 'GH2O' },
+    };
     const boostLab = {
       id: 'lab3',
       mineralType: 'GH2O',
@@ -2146,7 +2149,9 @@ describe('upgraderBoostWanted', () => {
   it('keeps an already-reserved lab while GH2O stays above the maintain floor (hysteresis)', () => {
     // boostLabId set => maintain floor (500), not the 1500 start threshold. A single
     // boost consuming ~450 from the lab must not unreserve it mid-cycle.
-    (Memory as any).rooms = { W1N1: { ...baseRoomMem(), boostLabId: 'lab3' } };
+    (Memory as any).rooms = {
+      W1N1: { ...baseRoomMem(), boostLabId: 'lab3', boostCompound: 'GH2O' },
+    };
     const boostLab = {
       id: 'lab3',
       mineralType: 'GH2O',
@@ -2221,6 +2226,83 @@ describe('upgraderBoostWanted', () => {
   });
 });
 
+describe('upgraderBoostCompound', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  function baseRoomMem() {
+    return {
+      minerEconomy: true,
+      inputLabIds: ['lab1', 'lab2'] as any[],
+      labIds: ['lab1', 'lab2', 'lab3', 'lab4'] as any[],
+    };
+  }
+
+  function roomWithStock(gh2o: number, xgh2o: number, overrides: Record<string, any> = {}) {
+    return mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) =>
+            r === 'energy' ? 20_000 : r === 'GH2O' ? gh2o : r === 'XGH2O' ? xgh2o : 0,
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+      ...overrides,
+    });
+  }
+
+  it('prefers XGH2O over GH2O when both clear the start threshold', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    const room = roomWithStock(2000, 2000);
+    expect(upgraderBoostCompound(room)).toBe('XGH2O');
+  });
+
+  it('falls back to GH2O when XGH2O is below the start threshold', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    const room = roomWithStock(2000, 500);
+    expect(upgraderBoostCompound(room)).toBe('GH2O');
+  });
+
+  it('returns undefined when neither compound clears the start threshold', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    const room = roomWithStock(500, 500);
+    expect(upgraderBoostCompound(room)).toBeUndefined();
+  });
+
+  it('does not switch a reserved GH2O lab to XGH2O until XGH2O clears the full start threshold, not just the maintain floor', () => {
+    // GH2O is the currently-reserved compound (maintain floor 500 applies to it).
+    // XGH2O has some stock (800) but hasn't cleared its own start threshold (1500)
+    // yet, since it isn't the reserved compound — switching requires the full bar.
+    (Memory as any).rooms = {
+      W1N1: { ...baseRoomMem(), boostLabId: 'lab3', boostCompound: 'GH2O' },
+    };
+    const room = roomWithStock(600, 800);
+    expect(upgraderBoostCompound(room)).toBe('GH2O');
+  });
+
+  it('keeps a reserved XGH2O lab down to its own maintain floor (hysteresis)', () => {
+    (Memory as any).rooms = {
+      W1N1: { ...baseRoomMem(), boostLabId: 'lab3', boostCompound: 'XGH2O' },
+    };
+    const room = roomWithStock(0, 600);
+    expect(upgraderBoostCompound(room)).toBe('XGH2O');
+  });
+
+  it('drops a reserved XGH2O lab once it falls below its maintain floor, falling back to GH2O if available', () => {
+    (Memory as any).rooms = {
+      W1N1: { ...baseRoomMem(), boostLabId: 'lab3', boostCompound: 'XGH2O' },
+    };
+    const room = roomWithStock(2000, 200);
+    expect(upgraderBoostCompound(room)).toBe('GH2O');
+  });
+});
+
 describe('reserveBoostLab', () => {
   beforeEach(() => {
     resetGameGlobals();
@@ -2263,6 +2345,78 @@ describe('reserveBoostLab', () => {
     expect(['lab1', 'lab2']).not.toContain(mem.boostLabId);
     expect(['lab3', 'lab4']).toContain(mem.boostLabId);
     expect(mem.boostCompound).toBe('GH2O');
+  });
+
+  it('sets boostCompound to XGH2O when it is stocked and preferred over GH2O', () => {
+    const lab3 = { id: 'lab3', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    const lab4 = { id: 'lab4', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab3') return lab3;
+      if (id === 'lab4') return lab4;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3', 'lab4'],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) =>
+            r === 'energy' ? 20_000 : r === 'GH2O' ? 2000 : r === 'XGH2O' ? 2000 : 0,
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+    });
+
+    reserveBoostLab(room);
+
+    expect(Memory.rooms['W1N1'].boostCompound).toBe('XGH2O');
+  });
+
+  it('switches an already-reserved lab from GH2O to XGH2O once XGH2O clears the start threshold (hauler flushes the stale mineral)', () => {
+    const lab3 = {
+      id: 'lab3',
+      mineralType: 'GH2O',
+      store: { getUsedCapacity: (r: string) => (r === 'GH2O' ? 600 : 0) },
+    };
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'lab3' ? lab3 : null));
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3', 'lab4'],
+        boostLabId: 'lab3',
+        boostCompound: 'GH2O',
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) =>
+            r === 'energy' ? 20_000 : r === 'GH2O' ? 0 : r === 'XGH2O' ? 2000 : 0,
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+    });
+
+    reserveBoostLab(room);
+
+    // Same lab kept (avoid churn) — the compound switches, and the hauler-side
+    // flush guard (pickupBoostLab) handles withdrawing the stale GH2O.
+    expect(Memory.rooms['W1N1'].boostLabId).toBe('lab3');
+    expect(Memory.rooms['W1N1'].boostCompound).toBe('XGH2O');
   });
 
   it('never sets boostLabId to an input lab', () => {
@@ -2417,6 +2571,50 @@ describe('buildSpawnQueue — upgrader boost memory', () => {
 
     expect(upgraderEntry).toBeDefined();
     expect(upgraderEntry?.memory?.boosts).toEqual([{ part: WORK, compound: 'GH2O' }]);
+  });
+
+  it('stamps memory.boosts with XGH2O instead of GH2O when both are stocked', () => {
+    const lab3 = { id: 'lab3', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    const lab4 = { id: 'lab4', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab3') return lab3;
+      if (id === 'lab4') return lab4;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+        ],
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3', 'lab4'],
+      },
+    };
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner', homeRoom: 'W1N1', state: 'HARVEST' } },
+    };
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      energyCapacityAvailable: 2300,
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) =>
+            r === 'energy' ? 20_000 : r === 'GH2O' ? 2000 : r === 'XGH2O' ? 2000 : 0,
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+    });
+
+    const queue = buildSpawnQueue(room);
+    const upgraderEntry = queue.find((r) => r.role === 'upgrader');
+
+    expect(upgraderEntry).toBeDefined();
+    expect(upgraderEntry?.memory?.boosts).toEqual([{ part: WORK, compound: 'XGH2O' }]);
   });
 
   it('omits memory.boosts on the upgrader request when boost is not wanted (RCL 6)', () => {
