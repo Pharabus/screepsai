@@ -2,6 +2,7 @@ import {
   runTerminal,
   resetColonySendCache,
   resetReceiversThisTick,
+  resetBoostSendCache,
   formatMarketStatus,
 } from '../../src/managers/terminal';
 import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
@@ -1721,6 +1722,57 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     consoleSpy.mockRestore();
   });
 
+  it('never ships a boost compound (KHO2/LHO2/GH2O) back to the hub, even when it is the largest stack', () => {
+    // Regression test: sendBoostsToColonies deliberately parks these compounds
+    // in a colony's terminal for local boosting. Without an exclusion here,
+    // this scan would treat that stock as generic surplus and ship it right
+    // back to the hub the instant it arrived.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ KHO2: 5000, O: 600, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ energy: 20_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    // KHO2 (5000) is far larger than O (600), but must be skipped — O ships instead.
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 600, 'W3N3', 'mineral consolidation');
+    expect(feederTerminal.send).not.toHaveBeenCalledWith(
+      'KHO2',
+      expect.any(Number),
+      'W3N3',
+      expect.any(String),
+    );
+    consoleSpy.mockRestore();
+  });
+
   it('does NOT send when this room IS the hub', () => {
     (Game as any).time = SHIP_TICK;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -2114,6 +2166,173 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
 
     // No hub → fallback to selling surplus locally
     expect(Game.market.deal).toHaveBeenCalledWith('order1', expect.any(Number), 'W1N1');
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
+  /** Tick that satisfies MINERAL_SHIP_INTERVAL (10) without colliding with other intervals. */
+  const SEND_TICK = 10;
+
+  function makeBoostStore(resources: Record<string, number>, totalCapacity = 300_000): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        if (r) return resources[r] ?? 0;
+        return Object.values(resources).reduce((a, b) => a + b, 0);
+      }),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => {
+        const used = r ? (resources[r] ?? 0) : Object.values(resources).reduce((a, b) => a + b, 0);
+        return Math.max(0, totalCapacity - used);
+      }),
+    });
+    return store;
+  }
+
+  function makeSetup(hubStock: Record<string, number>, colonyStock: Record<string, number> = {}) {
+    const hubTerminal: any = {
+      store: makeBoostStore({ energy: 50_000, ...hubStock }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const hub = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: makeBoostStore({}) },
+      terminal: hubTerminal,
+    });
+
+    const colonyTerminal: any = {
+      store: makeBoostStore({ energy: 10_000, ...colonyStock }),
+      cooldown: 0,
+    };
+    const colony = mockRoom({
+      name: 'W2N1',
+      controller: { my: true, level: 6 },
+      storage: { store: makeBoostStore({}) },
+      terminal: colonyTerminal,
+    });
+
+    (Game as any).rooms = { W1N1: hub, W2N1: colony };
+    (Memory as any).rooms = {
+      W1N1: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] }, // most labs → the hub
+      W2N1: {},
+    };
+    seedColony('W2N1', { homeRoom: 'W1N1', status: 'active' });
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    return { hub, hubTerminal, colony, colonyTerminal };
+  }
+
+  beforeEach(() => {
+    resetGameGlobals();
+    resetColonySendCache();
+    resetBoostSendCache();
+  });
+
+  it('sends KHO2 (highest priority) to a colony that has neither KHO2 nor GH2O, when the hub has surplus of both', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000, GH2O: 4000 }); // both clear their cap*0.75
+
+    runTerminal();
+
+    expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
+    consoleSpy.mockRestore();
+  });
+
+  it('falls through to the next priority compound when the colony already holds enough of the first', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup(
+      { KHO2: 2000, GH2O: 4000 },
+      { KHO2: 500 }, // colony already at BOOST_COLONY_STASH_TARGET for KHO2
+    );
+
+    runTerminal();
+
+    expect(hubTerminal.send).toHaveBeenCalledWith('GH2O', 500, 'W2N1', 'boost distribution');
+    consoleSpy.mockRestore();
+  });
+
+  it('does not send any compound when the hub has no surplus (below cap * 0.75) for all candidates', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 500, LHO2: 500, GH2O: 1000 });
+
+    runTerminal();
+
+    expect(hubTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('does not run for a non-hub room', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const hubTerminal: any = {
+      store: makeBoostStore({ energy: 50_000, KHO2: 2000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const notHub = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 7 },
+      storage: { store: makeBoostStore({}) },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: notHub };
+    // No labIds anywhere → getLabHubName() returns undefined → isLabHub(W1N1) is false
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(hubTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('stays silent about a routine energy-guard skip unless Memory.terminalDebug is on', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 });
+    // Force the energy guard to fail: cost (mocked) + buffer > available energy.
+    (Game as any).market.calcTransactionCost = vi.fn(() => 100_000);
+
+    runTerminal();
+    expect(consoleSpy).not.toHaveBeenCalled();
+    expect(hubTerminal.send).not.toHaveBeenCalled();
+
+    Memory.terminalDebug = true;
+    runTerminal();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('insufficient energy'));
+
+    consoleSpy.mockRestore();
+  });
+
+  it('respects per-route hysteresis — no second send to the same colony within the window', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 });
+
+    runTerminal();
+    expect(hubTerminal.send).toHaveBeenCalledTimes(1);
+
+    (Game as any).time = SEND_TICK + 5; // well within COLONY_SEND_HYSTERESIS_TICKS (300)
+    runTerminal();
+    expect(hubTerminal.send).toHaveBeenCalledTimes(1); // still just the one call
+
     consoleSpy.mockRestore();
   });
 });

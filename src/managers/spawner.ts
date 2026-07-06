@@ -616,6 +616,12 @@ const UPGRADER_BOOST_PREFERENCE: ResourceConstant[] = [
   RESOURCE_GHODIUM_ACID,
 ];
 
+/** Preference order for defender boosting — matches todo.md's stated
+ *  "defensive first: KHO2, LHO2" priority. GHO2 (TOUGH) is deliberately
+ *  excluded: no current role has TOUGH parts, so reserving a lab for it would
+ *  never actually boost anything. */
+const DEFENDER_BOOST_PREFERENCE: ResourceConstant[] = [RESOURCE_KHO2, RESOURCE_LHO2];
+
 /** Total stock of `compound` this room can draw on for boosting: storage +
  *  terminal + the reserved boost lab (only if it actually holds this compound)
  *  + in-transit (compound already carried by a hauler en route to the lab).
@@ -639,43 +645,57 @@ function totalBoostCompoundStock(room: Room, mem: RoomMemory, compound: Resource
 }
 
 /**
- * Picks which compound (if any) upgraders should be boosted with this tick:
+ * Shared gate for reserving a room's single boost lab, regardless of which
+ * compound ends up occupying it:
  *  1. RCL 7+ (at RCL 6, reserving the only output lab would halt reactions)
  *  2. At least 2 output labs available (inputLabIds has 2, labIds has ≥2 non-input labs)
  *  3. Storage energy > STORAGE_ENERGY_FLOOR (10k) — don't boost while energy-starved
- *  4. Walks UPGRADER_BOOST_PREFERENCE (XGH2O then GH2O) and returns the first
- *     whose stock clears its threshold. The threshold is HYSTERETIC per compound:
- *     BOOST_LAB_MINERAL_TARGET (1500) to switch onto it, but only
- *     BOOST_LAB_MINERAL_MAINTAIN (500) to keep it once it's the reserved one —
- *     a single boost consumes ~450 units (30/part × ~15 work), which would
- *     otherwise unreserve the lab after every boost and strand the next upgrader.
- *     Requiring the full TARGET to switch (not just MAINTAIN) means we only
- *     upgrade from GH2O to XGH2O once XGH2O is genuinely well-stocked, not the
- *     instant a trickle of it appears.
- *
- * Returns undefined when no compound is currently sustainable — callers should
- * spawn/keep the upgrader unboosted.
  */
-export function upgraderBoostCompound(room: Room): ResourceConstant | undefined {
-  if (!room.controller || room.controller.level < 7) return undefined;
-
-  const mem = Memory.rooms[room.name];
-  if (!mem) return undefined;
+function boostLabGateOpen(room: Room, mem: RoomMemory): boolean {
+  if (!room.controller || room.controller.level < 7) return false;
 
   const inputLabCount = mem.inputLabIds?.length ?? 0;
   const totalLabCount = mem.labIds?.length ?? 0;
   const outputLabCount = totalLabCount - inputLabCount;
-  if (inputLabCount < 2 || outputLabCount < 2) return undefined;
+  if (inputLabCount < 2 || outputLabCount < 2) return false;
 
   const storedEnergy = room.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-  if (storedEnergy <= STORAGE_ENERGY_FLOOR) return undefined;
+  return storedEnergy > STORAGE_ENERGY_FLOOR;
+}
 
-  for (const compound of UPGRADER_BOOST_PREFERENCE) {
+/**
+ * Walks `preference` and returns the first compound whose stock clears its
+ * threshold. The threshold is HYSTERETIC per compound: BOOST_LAB_MINERAL_TARGET
+ * (1500) to switch onto it, but only BOOST_LAB_MINERAL_MAINTAIN (500) to keep
+ * it once it's the reserved one — a single boost consumes ~450 units (30/part
+ * × ~15 work), which would otherwise unreserve the lab after every boost and
+ * strand the next creep. Requiring the full TARGET to switch (not just
+ * MAINTAIN) means we only move to a higher-priority compound once it's
+ * genuinely well-stocked, not the instant a trickle of it appears.
+ */
+function pickBoostCompound(
+  room: Room,
+  mem: RoomMemory,
+  preference: ResourceConstant[],
+): ResourceConstant | undefined {
+  for (const compound of preference) {
     const threshold =
       mem.boostCompound === compound ? BOOST_LAB_MINERAL_MAINTAIN : BOOST_LAB_MINERAL_TARGET;
     if (totalBoostCompoundStock(room, mem, compound) >= threshold) return compound;
   }
   return undefined;
+}
+
+/**
+ * Picks which compound (if any) upgraders should be boosted with this tick —
+ * walks UPGRADER_BOOST_PREFERENCE (XGH2O then GH2O) via pickBoostCompound.
+ * Returns undefined when no compound is currently sustainable — callers should
+ * spawn/keep the upgrader unboosted.
+ */
+export function upgraderBoostCompound(room: Room): ResourceConstant | undefined {
+  const mem = Memory.rooms[room.name];
+  if (!mem || !boostLabGateOpen(room, mem)) return undefined;
+  return pickBoostCompound(room, mem, UPGRADER_BOOST_PREFERENCE);
 }
 
 /** Backward-compatible boolean form of upgraderBoostCompound. */
@@ -684,8 +704,29 @@ export function upgraderBoostWanted(room: Room): boolean {
 }
 
 /**
- * Reserves or releases the boost lab for upgrader boosting (XGH2O preferred,
- * GH2O fallback — see upgraderBoostCompound).
+ * Picks which compound should occupy the room's single boost-lab slot this
+ * tick. Defense preempts economy: a threatened room needs its defenders
+ * boosted more than its upgrader, since a defender that dies unboosted costs
+ * far more than a temporarily-unboosted upgrader. Falls through to the
+ * upgrader's own preference when there's no active defensive demand, or
+ * defensive demand exists but neither KHO2 nor LHO2 is stocked (keep the
+ * economy boost running rather than reserve nothing).
+ */
+export function roomBoostCompound(room: Room): ResourceConstant | undefined {
+  const mem = Memory.rooms[room.name];
+  if (!mem || !boostLabGateOpen(room, mem)) return undefined;
+
+  if (defenderBoostsWanted(room)) {
+    const defense = pickBoostCompound(room, mem, DEFENDER_BOOST_PREFERENCE);
+    if (defense) return defense;
+  }
+
+  return pickBoostCompound(room, mem, UPGRADER_BOOST_PREFERENCE);
+}
+
+/**
+ * Reserves or releases the boost lab for whichever compound roomBoostCompound
+ * currently picks (defensive KHO2/LHO2 preempting upgrader XGH2O/GH2O).
  * When a compound is wanted: ensures boostLabId points to a valid output lab and
  * sets boostCompound to whichever compound was chosen.
  * When not wanted: clears both fields so the lab rejoins reactions.
@@ -695,7 +736,7 @@ export function reserveBoostLab(room: Room): void {
   const mem = Memory.rooms[room.name];
   if (!mem) return;
 
-  const compound = upgraderBoostCompound(room);
+  const compound = roomBoostCompound(room);
   if (!compound) {
     delete mem.boostLabId;
     delete mem.boostCompound;

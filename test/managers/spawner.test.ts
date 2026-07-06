@@ -13,6 +13,7 @@ import {
   remoteHaulersWanted,
   upgraderBoostWanted,
   upgraderBoostCompound,
+  roomBoostCompound,
   reserveBoostLab,
   mineralMinersNeeded,
 } from '../../src/managers/spawner';
@@ -2522,6 +2523,55 @@ describe('reserveBoostLab', () => {
     expect(mem.boostLabId).toBe('lab3');
     expect(mem.boostCompound).toBe('GH2O');
   });
+
+  it('reserves KHO2 instead of GH2O when a defensive threat is present and both are stocked', () => {
+    const lab3 = { id: 'lab3', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    const lab4 = { id: 'lab4', mineralType: null, store: { getUsedCapacity: () => 0 } };
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab3') return lab3;
+      if (id === 'lab4') return lab4;
+      return null;
+    });
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        inputLabIds: ['lab1', 'lab2'],
+        labIds: ['lab1', 'lab2', 'lab3', 'lab4'],
+      },
+    };
+    (Game as any).time = 200;
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 200 + i;
+      recordHostile(
+        {
+          owner: { username: 'Bully' },
+          body: [{ type: ATTACK, hits: 100 }],
+          room: { name: 'W1N1' },
+        } as any,
+        { name: 'W1N1' } as any,
+      );
+      flushSegments();
+    }
+
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) =>
+            r === 'energy' ? 20_000 : r === 'GH2O' ? 2000 : r === 'KHO2' ? 2000 : 0,
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+    });
+
+    reserveBoostLab(room);
+
+    expect(Memory.rooms['W1N1'].boostCompound).toBe('KHO2');
+  });
 });
 
 describe('buildSpawnQueue — upgrader boost memory', () => {
@@ -2787,6 +2837,112 @@ describe('defenderBoostsWanted', () => {
       find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
     });
     expect(defenderBoostsWanted(room)).toBe(true);
+  });
+});
+
+describe('roomBoostCompound', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (Game as any).time = 200;
+  });
+
+  function baseRoomMem() {
+    return {
+      minerEconomy: true,
+      inputLabIds: ['lab1', 'lab2'] as any[],
+      labIds: ['lab1', 'lab2', 'lab3', 'lab4'] as any[],
+    };
+  }
+
+  /** Records enough aggressive-player activity that defenderBoostsWanted(room) returns true. */
+  function recordAggressivePlayer(username: string): void {
+    for (let i = 0; i < 3; i++) {
+      (Game as any).time = 200 + i;
+      const creep = {
+        owner: { username },
+        body: [{ type: ATTACK, hits: 100 }],
+        room: { name: 'W1N1' },
+      } as any;
+      recordHostile(creep, { name: 'W1N1' } as any);
+      // Flush after every call, not just once after the loop: resetIfNewTick
+      // (segments.ts) clears the unflushed in-memory segment cache whenever
+      // Game.time changes, so an un-flushed record from a prior iteration
+      // would be silently lost the instant the next iteration bumps the tick.
+      flushSegments();
+    }
+  }
+
+  function roomWithStock(stocks: Record<string, number>, overrides: Record<string, any> = {}): any {
+    return mockRoom({
+      name: 'W1N1',
+      controller: { level: 7, my: true },
+      find: vi.fn(() => []),
+      storage: {
+        store: {
+          getUsedCapacity: (r: string) => (r === 'energy' ? 20_000 : (stocks[r] ?? 0)),
+        },
+      },
+      terminal: {
+        store: { getUsedCapacity: (_r: string) => 0 },
+      },
+      ...overrides,
+    });
+  }
+
+  it('returns the upgrader compound when no defensive threat is present', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    const room = roomWithStock({ GH2O: 2000, KHO2: 2000, LHO2: 2000 });
+    expect(roomBoostCompound(room)).toBe('GH2O');
+  });
+
+  it('prefers KHO2 over the upgrader compound when a defensive threat is present and KHO2 is stocked', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 2000, LHO2: 2000 },
+      {
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBe('KHO2');
+  });
+
+  it('falls back to LHO2 when a threat is present but KHO2 is short', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 500, LHO2: 2000 },
+      {
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBe('LHO2');
+  });
+
+  it('falls through to the upgrader compound when a threat is present but neither KHO2 nor LHO2 is stocked', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 0, LHO2: 0 },
+      {
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBe('GH2O');
+  });
+
+  it('returns undefined when the boost-lab gate is closed (RCL 6) even with a threat present', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 2000, LHO2: 2000 },
+      {
+        controller: { level: 6, my: true },
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBeUndefined();
   });
 });
 

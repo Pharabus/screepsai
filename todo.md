@@ -321,7 +321,7 @@ The first big RCL gate. Unlock the 2nd spawn (doubles throughput), expand labs t
 
 #### Hub-to-colony boost distribution
 
-- [ ] **`sendBoostsToColonies` in `terminal.ts`** — Hub (W43N58) accumulates all T2/T3 compounds but feeders have no way to boost their own defenders or upgraders. Add a reverse-direction send: after reactions produce a compound above its cap, ship a small stash (e.g. 500–1000 units) to each colony's terminal so local boost labs can serve locally-spawned creeps. Mirror the `sendMineralsToHub` pattern in reverse — score by compound priority (defensive first: KHO2, LHO2; then GH2O for upgraders) and gate on hub surplus above `GOAL_CAPS[compound] × 0.75` so the hub never strips its own reserve. Prerequisite: T3 compound production running and colonies at RCL 6+ (terminal available). Blocked until X (catalyst) is mined from W44N59 and T3 chain is active.
+- [x] **`sendBoostsToColonies` in `terminal.ts`** — Implemented (v1.0.305). Ships `BOOST_SHIP_PRIORITY = [KHO2, LHO2, GH2O]` (defensive first) from the hub to each colony's terminal, gated on hub surplus above `GOAL_CAPS[compound] × 0.75`, mirroring `sendMineralsToHub`. Also required extending the boost-lab reservation system: `roomBoostCompound` (`spawner.ts`) now lets a colony's defense demand (`defenderBoostsWanted`) preempt its upgrader-boost slot for KHO2/LHO2, since nothing previously ever assigned a room's boost lab to a defensive compound (see `CLAUDE.md`). GHO2/XGH2O deliberately excluded (no consumer role / no `GOAL_CAPS` entry yet).
 
 #### Factory pipeline
 

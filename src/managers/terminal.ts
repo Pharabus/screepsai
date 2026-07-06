@@ -463,6 +463,12 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 
   for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
+    // Boost compounds sendBoostsToColonies (below) deliberately parks here are
+    // a colony-owned reserve, not generic surplus — without this exclusion a
+    // colony would ship KHO2/LHO2/GH2O straight back to the hub the instant it
+    // arrived, since this scan has no way to distinguish "just received for
+    // local boosting" from "locally mined, ship it out."
+    if (BOOST_SHIP_PRIORITY.includes(resource)) continue;
     const amount = terminal.store.getUsedCapacity(resource);
     if (amount > bestAmount) {
       bestAmount = amount;
@@ -509,6 +515,109 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Hub-to-colony boost distribution
+// ---------------------------------------------------------------------------
+// The structural MIRROR of sendMineralsToHub, in the opposite direction: the
+// hub accumulates all boost-tier compounds via its reaction goal chain, but a
+// feeder colony has no way to boost its own locally-spawned defenders/
+// upgraders unless some of that stock is pushed out to it.
+
+/**
+ * Boost compounds worth pre-positioning in each colony's terminal, in priority
+ * order (defensive first, matching this feature's origin in todo.md). This
+ * pre-positions a standing buffer rather than reacting to an active threat —
+ * the terminal→lab→boost round trip is too slow to help once a hostile has
+ * already arrived, so a colony needs the stock on hand *before* it's needed
+ * (see roomBoostCompound in spawner.ts, which decides how a colony actually
+ * uses whatever arrives). Only compounds with (a) a defined GOAL_CAPS ceiling
+ * — used below as the "hub has genuine surplus" gate — and (b) an actual
+ * creep-boost consumer today. GHO2 (TOUGH) is excluded: no current role has
+ * TOUGH parts, so shipping it would be pure waste. XGH2O is excluded too: it
+ * has no GOAL_CAPS entry yet (still uncapped/aspirational), so there's nothing
+ * to measure "surplus" against.
+ */
+const BOOST_SHIP_PRIORITY: ResourceConstant[] = ['KHO2', 'LHO2', 'GH2O'] as ResourceConstant[];
+/** Per-shipment payload — matches the todo's "500-1000 units" suggestion. */
+const BOOST_SHIP_AMOUNT = 500;
+/** Stop topping a colony up once its stash of a compound reaches this. */
+const BOOST_COLONY_STASH_TARGET = 500;
+/** Hub must hold at least this fraction of a compound's GOAL_CAPS ceiling before donating any of it — keeps its own reservation intact. */
+const BOOST_SHIP_SURPLUS_FRACTION = 0.75;
+const _lastBoostSend = new Map<string, number>();
+
+function sendBoostsToColonies(home: Room, terminal: StructureTerminal): void {
+  if (!isLabHub(home)) return; // only the hub accumulates these compounds
+
+  const candidates: Array<{ colonyRoom: string; compound: ResourceConstant; hubStock: number }> =
+    [];
+
+  for (const { room: colonyRoom, state } of coloniesForHome(home.name)) {
+    if (state.status === 'claiming') continue; // no terminal exists yet
+    const target = Game.rooms[colonyRoom];
+    if (!target?.controller?.my) continue;
+    const colonyTerminal = target.terminal;
+    if (!colonyTerminal) continue; // RCL < 6 — no terminal yet
+
+    const routeKey = `${home.name}->${colonyRoom}`;
+    const lastSent = _lastBoostSend.get(routeKey) ?? 0;
+    if (lastSent > 0 && Game.time - lastSent < COLONY_SEND_HYSTERESIS_TICKS) continue;
+
+    for (const compound of BOOST_SHIP_PRIORITY) {
+      const cap = GOAL_CAPS[compound];
+      if (!cap) continue; // only ship compounds with a defined surplus ceiling
+      const hubStock =
+        terminal.store.getUsedCapacity(compound) +
+        (home.storage?.store.getUsedCapacity(compound) ?? 0);
+      if (hubStock < cap * BOOST_SHIP_SURPLUS_FRACTION) continue;
+
+      const colonyStock =
+        (colonyTerminal.store.getUsedCapacity(compound) ?? 0) +
+        (target.storage?.store.getUsedCapacity(compound) ?? 0);
+      if (colonyStock >= BOOST_COLONY_STASH_TARGET) continue;
+      if (colonyTerminal.store.getFreeCapacity(compound) < BOOST_SHIP_AMOUNT) continue;
+
+      candidates.push({ colonyRoom, compound, hubStock });
+      break; // priority order already applied — one candidate per colony
+    }
+  }
+
+  if (candidates.length === 0) return;
+
+  // Deepest hub surplus first — least risk to the hub's own reserve.
+  candidates.sort((a, b) => b.hubStock - a.hubStock);
+  const best = candidates[0]!;
+
+  const amount = Math.min(BOOST_SHIP_AMOUNT, terminal.store.getUsedCapacity(best.compound));
+  if (amount < MIN_MINERAL_SHIP) return;
+
+  const cost = Game.market.calcTransactionCost(amount, home.name, best.colonyRoom);
+  const homeEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+  if (homeEnergy < cost + MINERAL_SHIP_ENERGY_BUFFER) {
+    verboseTerminalLog(
+      `[terminal] ${home.name}: sendBoostsToColonies skip — insufficient energy (need ${cost + MINERAL_SHIP_ENERGY_BUFFER}, have ${homeEnergy})`,
+    );
+    return;
+  }
+
+  const result = terminal.send(best.compound, amount, best.colonyRoom, 'boost distribution');
+  if (result === OK) {
+    _lastBoostSend.set(`${home.name}->${best.colonyRoom}`, Game.time);
+    console.log(
+      `[terminal] ${home.name}: sent ${amount} ${best.compound} to ${best.colonyRoom} (cost ${cost} energy)`,
+    );
+  } else {
+    console.log(
+      `[terminal] ${home.name}: boost send to ${best.colonyRoom} failed for ${best.compound}, error=${result}`,
+    );
+  }
+}
+
+/** Clears the boost-shipment hysteresis tracker — call in tests' beforeEach to prevent cross-test contamination. */
+export function resetBoostSendCache(): void {
+  _lastBoostSend.clear();
+}
+
 /** Clears the per-tick receiver set — call in tests' beforeEach to prevent cross-test contamination. */
 export function resetReceiversThisTick(): void {
   _receiversThisTick.clear();
@@ -546,6 +655,13 @@ export function runTerminal(): void {
     // there just burns credits on stranded tier-1 compounds.
     if (amHub) {
       buyForLabs(room, terminal);
+    }
+
+    // Hub-to-colony boost distribution: push surplus boost compound out to
+    // each colony's terminal so its own defenders/upgraders can be boosted
+    // locally. Hub-only — a colony has no reaction surplus to push.
+    if (amHub && terminal.cooldown === 0) {
+      sendBoostsToColonies(room, terminal);
     }
 
     // Feeder mineral consolidation: ship accumulated minerals to the hub so it
