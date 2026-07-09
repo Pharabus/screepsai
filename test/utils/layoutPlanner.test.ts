@@ -956,6 +956,72 @@ describe('flood-fill prune integration (via computeLayout)', () => {
   });
 });
 
+describe('isAccessible filter protects built structures from tower/spawn/extension placement', () => {
+  it('extension stamp loop rejects a stamp position that would seal an already-built extension', () => {
+    // Live W43N58 regression: at RCL8 the 2nd/3rd spawn, a new tower, and an
+    // extension jointly sealed an already-built extension on all 8 sides — none
+    // of those placement steps checked whether they'd strand a neighbour.
+    //
+    // Spawn (25,25). EXTENSION_STAMP[0] = (-1,-2) → (24,23), Chebyshev 2 — below
+    // both the tower ring (3-6) and spawn ring (3-8) minimums, so only the
+    // extension stamp loop itself can ever claim this tile; isolates the check.
+    // Built extension at (23,23), west of (24,23), walled on its other 3 sides
+    // so (24,23) is its ONLY opening.
+    const walls = new Set<string>(['23,22', '23,24', '22,23']);
+    const room = makeRoom({ terrain: makeTerrain(walls) });
+    room.find = (type: number) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_STRUCTURES)
+        return [{ structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(23, 23, 'W1N1') }];
+      if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+      return [];
+    };
+
+    const plan = computeLayout(room)!;
+    const extKeys = new Set(plan.extensionPositions.map((p) => `${p.x},${p.y}`));
+
+    // Must not seal the built extension's only opening.
+    expect(extKeys.has('24,23')).toBe(false);
+    // The built extension itself is kept in-place (still has its one opening).
+    expect(extKeys.has('23,23')).toBe(true);
+  });
+
+  it('tower and spawn candidate selection reject a position that would seal an already-built extension', () => {
+    // Spawn (25,25), storage placed far away so terminal/factory/labs cluster
+    // elsewhere and don't interfere. (22,22) is the literal first candidate both
+    // the tower ring (range 3-6) and spawn ring (range 3-8) scans generate
+    // (range=3, dx=-3, dy=-3 is first in iteration order) — without the fix this
+    // is exactly the tile that would get greedily chosen first.
+    // Built extension at (21,22), east of (22,22), walled on its other 3 sides
+    // so (22,22) is its ONLY opening.
+    const walls = new Set<string>(['21,21', '21,23', '20,22']);
+    const room = makeRoom({
+      terrain: makeTerrain(walls),
+      storage: { my: true, pos: new RoomPosition(5, 5, 'W1N1') },
+    });
+    room.find = (type: number) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+      if (type === FIND_STRUCTURES)
+        return [{ structureType: STRUCTURE_EXTENSION, pos: new RoomPosition(21, 22, 'W1N1') }];
+      if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+      return [];
+    };
+
+    const plan = computeLayout(room)!;
+    // No planned structure of any kind may occupy the extension's only opening.
+    const allPlanned = new Set<string>([
+      `${plan.storagePos.x},${plan.storagePos.y}`,
+      `${plan.terminalPos.x},${plan.terminalPos.y}`,
+      ...(plan.factoryPos ? [`${plan.factoryPos.x},${plan.factoryPos.y}`] : []),
+      ...plan.towerPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.labPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.extensionPositions.map((p) => `${p.x},${p.y}`),
+      ...plan.spawnPositions.map((p) => `${p.x},${p.y}`),
+    ]);
+    expect(allPlanned.has('22,22')).toBe(false);
+  });
+});
+
 describe('findStrandedExtensions', () => {
   it('reports a built extension whose all 8 neighbours are obstacles', () => {
     // Build a room fixture: spawn at (25,25); one built extension at (30,9) whose

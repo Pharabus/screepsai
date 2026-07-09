@@ -82,7 +82,7 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 7;
+export const LAYOUT_PLAN_VERSION = 8;
 
 /**
  * Minimum walkable tiles to keep open around the storage. The storage is the
@@ -560,18 +560,21 @@ function pickTowerPositions(
 
   const chosen: { x: number; y: number }[] = [];
   const remaining = [...candidates];
+  // Grows as towers are chosen so isAccessible catches two new towers picked in
+  // the same call sealing each other, not just sealing already-built structures.
+  const localReserved = new Set(reserved);
 
   while (chosen.length < needed && remaining.length > 0) {
     const allPlaced = [...seeded, ...chosen];
-    if (allPlaced.length === 0) {
-      chosen.push(remaining.shift()!);
-      continue;
-    }
-    // Maximize minimum Manhattan distance from already-placed towers (live + chosen)
-    let bestIdx = 0;
+    // Maximize minimum Manhattan distance from already-placed towers (live + chosen),
+    // restricted to candidates that won't seal an existing built/reserved neighbour
+    // with zero remaining open cardinals (W43N58 live case: an RCL8 tower slot
+    // sealed an already-built extension that had one opening left).
+    let bestIdx = -1;
     let bestMinDist = -1;
     for (let j = 0; j < remaining.length; j++) {
       const c = remaining[j]!;
+      if (!isAccessible(c.x, c.y, terrain, liveMap, localReserved)) continue;
       let minDist = Infinity;
       for (const t of allPlaced) {
         const d = Math.abs(c.x - t.x) + Math.abs(c.y - t.y);
@@ -582,7 +585,9 @@ function pickTowerPositions(
         bestIdx = j;
       }
     }
+    if (bestIdx === -1) break; // no remaining candidate is accessible — fail open
     chosen.push(remaining[bestIdx]!);
+    localReserved.add(`${remaining[bestIdx]!.x},${remaining[bestIdx]!.y}`);
     remaining.splice(bestIdx, 1);
   }
 
@@ -653,10 +658,20 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
         }
       }
     }
-    for (let i = 0; i < needed && i < spawnCandidates.length; i++) {
+    // isAccessible rejects a candidate that would seal an already-built (or
+    // already-reserved) neighbour with zero remaining open cardinals — e.g. a
+    // 2nd/3rd spawn slot landing flush against an existing extension. Checked
+    // against `reserved` as it grows so two new spawn slots picked in the same
+    // pass can't seal each other either (W43N58 live case: RCL8's spawn 3 and a
+    // new tower jointly sealed an extension that had one opening left after
+    // spawn 2 alone).
+    let picked = 0;
+    for (let i = 0; i < spawnCandidates.length && picked < needed; i++) {
       const p = spawnCandidates[i]!;
+      if (!isAccessible(p.x, p.y, terrain, liveMap, reserved)) continue;
       spawnPositions.push(p);
       reserved.add(`${p.x},${p.y}`);
+      picked++;
     }
   }
 
@@ -782,6 +797,11 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
     if (reserved.has(`${x},${y}`)) continue;
     if (!isTileBuildable(liveMap, x, y, STRUCTURE_EXTENSION)) continue;
+    // Rejects a stamp position that would seal an already-built or already-reserved
+    // neighbour (storage/spawn/tower/lab/terminal/factory) with zero remaining open
+    // cardinals. Mutual sealing between two NEW extensions in this same stamp is
+    // still caught by the transitive flood-fill in Step 6 below.
+    if (!isAccessible(x, y, terrain, liveMap, reserved)) continue;
     extensionPositions.push({ x, y });
   }
 
@@ -839,6 +859,9 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
             return openAfter <= 1;
           });
           if (wouldTrap) continue;
+          // Same built/reserved-neighbour seal check as the main stamp loop above —
+          // wouldTrap only guards against other overflow slots in `inPlan`.
+          if (!isAccessible(x, y, terrain, liveMap, reserved)) continue;
           extensionPositions.push({ x, y });
           inPlan.add(key);
         }

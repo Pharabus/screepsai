@@ -1,4 +1,9 @@
-import { EXTENSION_STAMP, LAB_STAMP, findBestSpawnPosition } from '../utils/layoutPlanner';
+import {
+  EXTENSION_STAMP,
+  LAB_STAMP,
+  findBestSpawnPosition,
+  findStrandedExtensions,
+} from '../utils/layoutPlanner';
 import {
   applyTunnelWalls,
   getBaseCostMatrixForRoom,
@@ -940,6 +945,8 @@ export function clearBlockingExtensions(room: Room): void {
   const spawn = room.find(FIND_MY_SPAWNS)[0];
   if (!spawn) return;
 
+  const terrain = room.getTerrain();
+
   const cardinals: [number, number][] = [
     [-1, 0],
     [1, 0],
@@ -956,6 +963,12 @@ export function clearBlockingExtensions(room: Room): void {
       const x = ext.pos.x + dx;
       const y = ext.pos.y + dy;
       if (x < 0 || x > 49 || y < 0 || y > 49) return false;
+      // A natural wall tile has no structure on it, so lookForAt returns [] and
+      // .every() on an empty array is vacuously true — without this check a
+      // rock-walled cardinal was silently counted as "open" and the function
+      // skipped the extension every tick without ever reaching the fix logic
+      // below (live W43N58 case: 1 of the 4 cardinals is natural wall).
+      if (terrain.get(x, y) === TERRAIN_MASK_WALL) return false;
       const here = room.lookForAt(LOOK_STRUCTURES, x, y);
       return here.every(
         (s) =>
@@ -986,6 +999,26 @@ export function clearBlockingExtensions(room: Room): void {
         blocker.destroy();
         return;
       }
+    }
+
+    // No fixable overflow-extension blocker — every cardinal neighbour is a spawn,
+    // tower, lab, or a core-stamp extension we must not destroy just to free this
+    // one. Confirm with the authoritative transitive flood-fill (8-directional, so
+    // it also catches an open cardinal that only leads into a sealed pocket) rather
+    // than trusting the cached layout plan, which may predate whatever sealed this
+    // extension. If truly stranded with no path back to the spawn at all, this
+    // extension provides zero value sealed — destroy it outright so the freed RCL
+    // structure-count slot gets rebuilt at a reachable position by placeExtensions()
+    // instead of sitting dead until someone notices and does the destroy manually
+    // (observed live in W43N58 at RCL8: an extension sealed on all 8 sides by the
+    // 2nd/3rd spawn, a new tower, and two neighbouring extensions).
+    const stranded = findStrandedExtensions(room);
+    if (stranded.some((s) => s.built && s.x === ext.pos.x && s.y === ext.pos.y)) {
+      console.log(
+        `[construction] ${room.name}: destroying stranded extension at (${ext.pos.x},${ext.pos.y}) — no reachable path from spawn`,
+      );
+      ext.destroy();
+      return;
     }
   }
 }

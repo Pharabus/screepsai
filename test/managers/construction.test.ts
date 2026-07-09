@@ -18,6 +18,7 @@ import {
   placeRemoteRoads,
   placeColonyBootstrapRoads,
   clearLabBlockers,
+  clearBlockingExtensions,
   getPlannedReserved,
   applyRoadSiteOverlay,
   countStructuresAndSites,
@@ -1765,5 +1766,129 @@ describe('countStructuresAndSites — reclaimed room foreign structure exclusion
 
     // Must count 1 (own only), not 3 (including foreign).
     expect(count).toBe(1);
+  });
+});
+
+describe('clearBlockingExtensions', () => {
+  beforeEach(() => resetGameGlobals());
+
+  function mkExt(x: number, y: number): any {
+    return {
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(x, y, 'W1N1'),
+      destroy: vi.fn(),
+    };
+  }
+
+  it('destroys a fully-sealed extension with no destroyable blocker (stranded fallback)', () => {
+    // Live W43N58 regression: an extension whose every one of its 8 neighbours
+    // (cardinal AND diagonal) is either a natural wall, a spawn, a tower, or
+    // another core-stamp extension — nothing an overflow-blocker destroy can
+    // fix. Spawn kept close (Chebyshev ≤ 4 to the blocking extension) so that
+    // extension reads as a core-stamp position, not a destroyable overflow slot.
+    const spawn = { pos: new RoomPosition(17, 17, 'W1N1') };
+    const target = mkExt(15, 15); // sealed extension under test
+    const southExt = mkExt(15, 16); // core-stamp neighbour — must NOT be destroyed
+    const tower = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(14, 15, 'W1N1') };
+    const spawn2 = { structureType: STRUCTURE_SPAWN, pos: new RoomPosition(16, 15, 'W1N1') };
+
+    const wallSet = new Set(['15,14', '14,14', '16,14', '14,16', '16,16']);
+    const lookMap = new Map<string, any[]>([
+      ['16,15', [spawn2]],
+      ['14,15', [tower]],
+      ['15,16', [southExt]],
+      ['15,15', [target]],
+    ]);
+
+    const room = roomAt(8, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_MY_STRUCTURES) {
+          const structs = [target, southExt];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_STRUCTURES) return [target, southExt, tower, spawn2];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+      getTerrain: vi.fn(() => ({
+        get: (x: number, y: number) => (wallSet.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+      })),
+      lookForAt: vi.fn((_look: string, x: number, y: number) => lookMap.get(`${x},${y}`) ?? []),
+    });
+    Memory.rooms = { W1N1: {} };
+
+    clearBlockingExtensions(room);
+
+    expect(target.destroy).toHaveBeenCalledTimes(1);
+    expect(southExt.destroy).not.toHaveBeenCalled();
+  });
+
+  it('does not destroy anything when the extension has an open cardinal, even if one neighbour is a natural wall', () => {
+    // Regression for the vacuous-truth bug: lookForAt returns [] for a wall tile
+    // (no structure there), and [].every(...) is true — without checking terrain
+    // directly, a wall cardinal used to be silently counted as "open".
+    const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
+    const target = mkExt(30, 30);
+    const wallSet = new Set(['30,29']); // north cardinal is a natural wall
+
+    const room = roomAt(8, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_MY_STRUCTURES) {
+          const structs = [target];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_STRUCTURES) return [target];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+      getTerrain: vi.fn(() => ({
+        get: (x: number, y: number) => (wallSet.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+      })),
+      lookForAt: vi.fn(() => []), // south/east/west are open — nothing built there
+    });
+    Memory.rooms = { W1N1: {} };
+
+    clearBlockingExtensions(room);
+
+    expect(target.destroy).not.toHaveBeenCalled();
+  });
+
+  it('prefers destroying a reachable overflow-extension blocker over the sealed extension itself', () => {
+    const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
+    const target = mkExt(25, 20);
+    const farBlocker = mkExt(25, 19); // Chebyshev 6 from spawn — a destroyable overflow slot
+    const towerW = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(24, 20, 'W1N1') };
+    const towerE = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(26, 20, 'W1N1') };
+    const towerS = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(25, 21, 'W1N1') };
+
+    const lookMap = new Map<string, any[]>([
+      ['25,19', [farBlocker]],
+      ['24,20', [towerW]],
+      ['26,20', [towerE]],
+      ['25,21', [towerS]],
+    ]);
+
+    const room = roomAt(8, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_MY_STRUCTURES) {
+          const structs = [target, farBlocker];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_STRUCTURES) return [target, farBlocker, towerW, towerE, towerS];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+      getTerrain: vi.fn(() => ({ get: () => 0 })),
+      lookForAt: vi.fn((_look: string, x: number, y: number) => lookMap.get(`${x},${y}`) ?? []),
+    });
+    Memory.rooms = { W1N1: {} };
+
+    clearBlockingExtensions(room);
+
+    expect(farBlocker.destroy).toHaveBeenCalledTimes(1);
+    expect(target.destroy).not.toHaveBeenCalled();
   });
 });
