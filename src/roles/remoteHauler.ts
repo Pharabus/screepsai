@@ -4,6 +4,7 @@ import { PRIORITY_HAULER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { handleRemoteThreat } from '../utils/remoteThreat';
+import { cached, getStructuresByType } from '../utils/tickCache';
 
 function pickLootResource(target: Ruin | Tombstone): ResourceConstant | undefined {
   // Only pick up energy — the DELIVER state only transfers energy, so picking up
@@ -74,6 +75,55 @@ function continueCommittedPickup(creep: Creep): boolean {
   return false;
 }
 
+interface PickupCandidates {
+  dropped: Resource[];
+  containers: StructureContainer[];
+  ruins: Ruin[];
+  tombs: Tombstone[];
+}
+
+// The pickup-reselection scan below (4 find() calls) is position-independent —
+// the set of qualifying objects in the remote room is the same for every
+// hauler assigned there. Multiple haulers commonly share one remote room (3-4
+// is typical), and each used to re-run all 4 scans independently the instant
+// it lacked a committed target, the single biggest driver of role.remoteHauler
+// CPU (live: main.loop spiking to 24-33 CPU against the 20 limit, one hauler's
+// single-tick cost as high as 10.2 — the redundant re-scan multiplied by
+// however many haulers reselected on the same tick). Cached once per remote
+// room per tick; each hauler still does its own cheap "closest to my position"
+// pass over the small cached array.
+function getPickupCandidates(targetRoom: string): PickupCandidates {
+  return cached(`remoteHauler:pickupCandidates:${targetRoom}`, () => {
+    const room = Game.rooms[targetRoom];
+    if (!room) return { dropped: [], containers: [], ruins: [], tombs: [] };
+    const dropped = room
+      .find(FIND_DROPPED_RESOURCES)
+      .filter((r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50);
+    const containers = (
+      (getStructuresByType(room)[STRUCTURE_CONTAINER] ?? []) as StructureContainer[]
+    ).filter((s) => s.store.getUsedCapacity(RESOURCE_ENERGY) > 0);
+    const ruins = room.find(FIND_RUINS).filter((r) => r.store.getUsedCapacity() > 0);
+    const tombs = room.find(FIND_TOMBSTONES).filter((t) => t.store.getUsedCapacity() > 0);
+    return { dropped, containers, ruins, tombs };
+  });
+}
+
+function closestByRange<T extends { pos: RoomPosition }>(
+  pos: RoomPosition,
+  candidates: T[],
+): T | undefined {
+  let best: T | undefined;
+  let bestRange = Infinity;
+  for (const c of candidates) {
+    const range = pos.getRangeTo(c.pos);
+    if (range < bestRange) {
+      bestRange = range;
+      best = c;
+    }
+  }
+  return best;
+}
+
 const states: StateMachineDefinition = {
   PICKUP: {
     onEnter(creep) {
@@ -101,10 +151,12 @@ const states: StateMachineDefinition = {
       // dropped/container/ruin/tombstone scan below entirely.
       if (continueCommittedPickup(creep)) return undefined;
 
-      // In the remote room — pick up dropped energy or withdraw from containers
-      const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-        filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-      });
+      // In the remote room — pick up dropped energy or withdraw from containers.
+      // The candidate lists are cached per room per tick (see getPickupCandidates);
+      // only the "closest to me" pass below is per-creep.
+      const candidates = getPickupCandidates(targetRoom);
+
+      const dropped = closestByRange(creep.pos, candidates.dropped);
       if (dropped) {
         creep.memory.targetId = dropped.id;
         if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
@@ -116,10 +168,7 @@ const states: StateMachineDefinition = {
         return undefined;
       }
 
-      const container = creep.pos.findClosestByRange(FIND_STRUCTURES, {
-        filter: (s): s is StructureContainer =>
-          s.structureType === STRUCTURE_CONTAINER && s.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
-      });
+      const container = closestByRange(creep.pos, candidates.containers);
       if (container) {
         creep.memory.targetId = container.id;
         if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -134,13 +183,9 @@ const states: StateMachineDefinition = {
       // Abandoned loot in the remote room — invader ruins, dead-creep tombstones.
       // Lower priority than energy pickup since this is opportunistic, but better
       // than waiting idle when there's no source energy to grab.
-      const ruin = creep.pos.findClosestByRange(FIND_RUINS, {
-        filter: (r) => r.store.getUsedCapacity() > 0,
-      });
-      const tomb = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
-        filter: (t) => t.store.getUsedCapacity() > 0,
-      });
-      const lootTarget: Ruin | Tombstone | null =
+      const ruin = closestByRange(creep.pos, candidates.ruins);
+      const tomb = closestByRange(creep.pos, candidates.tombs);
+      const lootTarget: Ruin | Tombstone | undefined =
         ruin && tomb
           ? creep.pos.getRangeTo(ruin) <= creep.pos.getRangeTo(tomb)
             ? ruin

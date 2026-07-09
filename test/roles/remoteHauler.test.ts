@@ -18,19 +18,30 @@ describe('remoteHauler', () => {
     vi.clearAllMocks();
   });
 
+  // The PICKUP-reselection scan now reads Game.rooms[targetRoom].find(...) /
+  // getStructuresByType(room) (cached per room per tick) instead of
+  // creep.pos.findClosestByRange — register the mock room under Game.rooms
+  // and dispatch its find() by FIND type.
+  function makeRemoteRoom(byType: Partial<Record<number, any[]>>): any {
+    const room = mockRoom({
+      name: 'W2N1',
+      find: vi.fn((type: number) => byType[type] ?? []),
+    });
+    Game.rooms['W2N1'] = room;
+    return room;
+  }
+
   it('picks up from container in remote room', () => {
     const container = {
       id: 'c1' as Id<StructureContainer>,
       structureType: STRUCTURE_CONTAINER,
+      pos: new RoomPosition(11, 10, 'W2N1'),
       hits: 200000,
       hitsMax: 250000,
       store: { getUsedCapacity: () => 500 },
     };
 
-    const remoteRoom = mockRoom({
-      name: 'W2N1',
-      find: vi.fn(() => []),
-    });
+    const remoteRoom = makeRemoteRoom({ [FIND_STRUCTURES]: [container] });
 
     const creep = mockCreep({
       memory: { role: 'remoteHauler', state: 'PICKUP', targetRoom: 'W2N1', homeRoom: 'W1N1' },
@@ -38,10 +49,6 @@ describe('remoteHauler', () => {
       pos: new RoomPosition(10, 10, 'W2N1'),
       store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
       withdraw: vi.fn(() => OK),
-    });
-    creep.pos.findClosestByRange = vi.fn((_type: number, opts?: any) => {
-      if (opts?.filter?.(container)) return container;
-      return undefined;
     });
 
     remoteHauler.run(creep);
@@ -52,12 +59,13 @@ describe('remoteHauler', () => {
   it('picks up energy from tombstone in remote room', () => {
     const tomb = {
       id: 'tomb1' as Id<Tombstone>,
+      pos: new RoomPosition(11, 10, 'W2N1'),
       store: {
         getUsedCapacity: (r?: string) => (r === undefined ? 100 : r === RESOURCE_ENERGY ? 100 : 0),
       },
     };
 
-    const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+    const remoteRoom = makeRemoteRoom({ [FIND_TOMBSTONES]: [tomb] });
 
     const creep = mockCreep({
       memory: { role: 'remoteHauler', state: 'PICKUP', targetRoom: 'W2N1', homeRoom: 'W1N1' },
@@ -66,13 +74,6 @@ describe('remoteHauler', () => {
       store: { getFreeCapacity: () => 800, getUsedCapacity: () => 0 },
       withdraw: vi.fn(() => OK),
     });
-    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
-      if (type === FIND_TOMBSTONES) {
-        const items = [tomb];
-        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
-      }
-      return null;
-    }) as any;
 
     remoteHauler.run(creep);
 
@@ -82,12 +83,13 @@ describe('remoteHauler', () => {
   it('skips non-energy minerals from tombstones in remote room', () => {
     const mineralTomb = {
       id: 'tomb2' as Id<Tombstone>,
+      pos: new RoomPosition(11, 10, 'W2N1'),
       store: {
         getUsedCapacity: (r?: string) => (r === undefined ? 5 : r === RESOURCE_ENERGY ? 0 : 5),
       },
     };
 
-    const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+    const remoteRoom = makeRemoteRoom({ [FIND_TOMBSTONES]: [mineralTomb] });
     Memory.rooms['W2N1'] = { sources: [{ id: 's1' as Id<Source>, x: 10, y: 20 }] } as any;
 
     const creep = mockCreep({
@@ -97,17 +99,46 @@ describe('remoteHauler', () => {
       store: { getFreeCapacity: () => 800, getUsedCapacity: () => 0 },
       withdraw: vi.fn(() => OK),
     });
-    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
-      if (type === FIND_TOMBSTONES) {
-        const items = [mineralTomb];
-        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
-      }
-      return null;
-    }) as any;
 
     remoteHauler.run(creep);
 
     expect(creep.withdraw).not.toHaveBeenCalled();
+  });
+
+  it('shares one room scan across multiple haulers assigned to the same remote room in one tick', () => {
+    // Regression for the live CPU squeeze: role.remoteHauler was re-running 4
+    // full find() scans per hauler per tick during pickup reselection, and
+    // remote rooms commonly have 3-4 haulers assigned. getPickupCandidates
+    // caches the result per room per tick so N haulers cost 1 scan, not N.
+    const container = {
+      id: 'c1' as Id<StructureContainer>,
+      structureType: STRUCTURE_CONTAINER,
+      pos: new RoomPosition(11, 10, 'W2N1'),
+      store: { getUsedCapacity: () => 500 },
+    };
+    const findSpy = vi.fn((type: number) => (type === FIND_STRUCTURES ? [container] : []));
+    const remoteRoom = mockRoom({ name: 'W2N1', find: findSpy });
+    Game.rooms['W2N1'] = remoteRoom;
+
+    const makeHauler = (x: number, y: number) =>
+      mockCreep({
+        memory: { role: 'remoteHauler', state: 'PICKUP', targetRoom: 'W2N1', homeRoom: 'W1N1' },
+        room: remoteRoom,
+        pos: new RoomPosition(x, y, 'W2N1'),
+        store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
+        withdraw: vi.fn(() => OK),
+      });
+    const haulerA = makeHauler(10, 10);
+    const haulerB = makeHauler(20, 20);
+
+    remoteHauler.run(haulerA);
+    remoteHauler.run(haulerB);
+
+    expect(haulerA.withdraw).toHaveBeenCalled();
+    expect(haulerB.withdraw).toHaveBeenCalled();
+    // 4 find types (dropped/structures/ruins/tombstones) called once total,
+    // not once per hauler — 8 calls would mean the cache isn't sharing.
+    expect(findSpy).toHaveBeenCalledTimes(4);
   });
 
   it('paths toward remote room when not there yet', () => {
@@ -141,7 +172,13 @@ describe('remoteHauler', () => {
       };
       Game.getObjectById = vi.fn(() => drop) as any;
 
-      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const remoteRoom = mockRoom({
+        name: 'W2N1',
+        find: vi.fn(() => {
+          throw new Error('should not re-scan while a committed target is still valid');
+        }),
+      });
+      Game.rooms['W2N1'] = remoteRoom;
       const creep = mockCreep({
         memory: {
           role: 'remoteHauler',
@@ -154,9 +191,6 @@ describe('remoteHauler', () => {
         pos: new RoomPosition(10, 10, 'W2N1'),
         store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
         pickup: vi.fn(() => OK),
-      });
-      creep.pos.findClosestByRange = vi.fn(() => {
-        throw new Error('should not re-scan while a committed target is still valid');
       });
 
       remoteHauler.run(creep);
@@ -173,7 +207,7 @@ describe('remoteHauler', () => {
       };
       Game.getObjectById = vi.fn(() => staleContainer) as any;
 
-      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const remoteRoom = makeRemoteRoom({});
       const creep = mockCreep({
         memory: {
           role: 'remoteHauler',
@@ -187,7 +221,6 @@ describe('remoteHauler', () => {
         store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
         withdraw: vi.fn(() => OK),
       });
-      creep.pos.findClosestByRange = vi.fn(() => undefined);
 
       remoteHauler.run(creep);
 
@@ -198,7 +231,7 @@ describe('remoteHauler', () => {
     it('clears a committed target that no longer exists and falls back to a fresh scan', () => {
       Game.getObjectById = vi.fn(() => undefined) as any;
 
-      const remoteRoom = mockRoom({ name: 'W2N1', find: vi.fn(() => []) });
+      const remoteRoom = makeRemoteRoom({});
       const creep = mockCreep({
         memory: {
           role: 'remoteHauler',
@@ -211,7 +244,6 @@ describe('remoteHauler', () => {
         pos: new RoomPosition(10, 10, 'W2N1'),
         store: { getFreeCapacity: () => 200, getUsedCapacity: () => 0 },
       });
-      creep.pos.findClosestByRange = vi.fn(() => undefined);
 
       remoteHauler.run(creep);
 
