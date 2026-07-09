@@ -589,6 +589,20 @@ interface Memory {
    * sampling Game.market.credits over time.
    */
   creditHistory?: CreditHistoryEntry[];
+  /**
+   * Ring-buffer of the tick number at every global reset (code deploy, or an
+   * engine-triggered IVM recycle), appended by initMemory() — the one place
+   * in the codebase already guaranteed to run exactly once per reset. Capped
+   * at RESET_HISTORY_MAX (20). Exists to empirically answer "how often does
+   * a reset actually happen" (`scripts/screeps-query.mjs mem _resets`) before
+   * deciding whether it's worth persisting more heap-cached state (per-creep
+   * paths, cost matrices — all wiped on reset today) across resets: those
+   * caches are heap-only by design (Memory access costs a JSON round-trip
+   * every tick, heap access doesn't), so migrating them only pays off if
+   * resets are frequent enough that the resulting synchronized re-path/
+   * re-scan storm is a real recurring cost rather than a rare one-off.
+   */
+  _resets?: number[];
 }
 
 /** One sample in {@link Memory.creditHistory}. */

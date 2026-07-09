@@ -12,6 +12,8 @@ import { getMissionRegistry } from './missions';
 
 let initialised = false;
 
+const RESET_HISTORY_MAX = 20;
+
 export function initMemory(): void {
   if (initialised) return;
   initialised = true;
@@ -24,4 +26,11 @@ export function initMemory(): void {
   // getMissionRegistry() initialises Memory.missions with all registered
   // sub-maps if absent — the single source of truth for registry shape.
   getMissionRegistry();
+
+  // Records this reset's tick — see Memory._resets doc comment (types.d.ts)
+  // for why: this function running is itself the reset signal, so it's the
+  // one correct place to observe reset frequency.
+  const resets = (Memory._resets ??= []);
+  resets.push(Game.time);
+  if (resets.length > RESET_HISTORY_MAX) resets.shift();
 }
