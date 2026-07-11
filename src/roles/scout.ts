@@ -3,14 +3,11 @@ import { moveTo } from '../utils/movement';
 import { PRIORITY_DEFAULT } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { markIdle } from '../utils/idle';
-import { getStructuresByType } from '../utils/tickCache';
+import { recordRoomIntel } from '../utils/roomIntel';
 
 function pickScoutTarget(creep: Creep): string | undefined {
   return findScoutTarget(creep.memory.homeRoom ?? creep.room.name);
 }
-
-/** NPC hostile owner usernames — sightings of only these get the short rejection window. */
-const NPC_USERNAMES = new Set(['Invader', 'Source Keeper']);
 
 const SCOUT_MAX_DEPTH = 3;
 const SCOUT_STALE_TICKS = 5000;
@@ -88,63 +85,6 @@ function markUnreachable(targetRoom: string): void {
   rmem.scoutUnreachable = true;
 }
 
-// 1000 energy drops survive ~1000t at base decay (1/1000 per tick rounded up),
-// long enough for a hauler to be dispatched. Smaller drops are noise — they
-// either get cleared by the local hauler before scout returns, or decay before
-// a remote dispatch could collect them.
-const LOOT_DROP_THRESHOLD = 1000;
-
-function recordLoot(room: Room, rmem: RoomMemory): void {
-  const ruinEntries: NonNullable<RoomMemory['scoutedLoot']>['ruins'] = [];
-  for (const ruin of room.find(FIND_RUINS)) {
-    const total = ruin.store.getUsedCapacity();
-    if (!total) continue;
-    ruinEntries.push({
-      id: ruin.id,
-      x: ruin.pos.x,
-      y: ruin.pos.y,
-      energy: ruin.store.getUsedCapacity(RESOURCE_ENERGY),
-      total,
-    });
-  }
-
-  const tombstoneEntries: NonNullable<RoomMemory['scoutedLoot']>['tombstones'] = [];
-  for (const tomb of room.find(FIND_TOMBSTONES)) {
-    const total = tomb.store.getUsedCapacity();
-    if (!total) continue;
-    tombstoneEntries.push({
-      id: tomb.id,
-      x: tomb.pos.x,
-      y: tomb.pos.y,
-      energy: tomb.store.getUsedCapacity(RESOURCE_ENERGY),
-      total,
-    });
-  }
-
-  const dropEntries: NonNullable<RoomMemory['scoutedLoot']>['drops'] = [];
-  for (const drop of room.find(FIND_DROPPED_RESOURCES)) {
-    if (drop.amount < LOOT_DROP_THRESHOLD) continue;
-    dropEntries.push({
-      id: drop.id,
-      x: drop.pos.x,
-      y: drop.pos.y,
-      resourceType: drop.resourceType,
-      amount: drop.amount,
-    });
-  }
-
-  if (ruinEntries.length === 0 && tombstoneEntries.length === 0 && dropEntries.length === 0) {
-    delete rmem.scoutedLoot;
-    return;
-  }
-  rmem.scoutedLoot = {
-    recordedAt: Game.time,
-    ...(ruinEntries.length ? { ruins: ruinEntries } : {}),
-    ...(tombstoneEntries.length ? { tombstones: tombstoneEntries } : {}),
-    ...(dropEntries.length ? { drops: dropEntries } : {}),
-  };
-}
-
 const states: StateMachineDefinition = {
   SCOUT: {
     run(creep) {
@@ -184,42 +124,7 @@ const states: StateMachineDefinition = {
       const targetRoom = creep.memory.targetRoom as string;
 
       if (creep.room.name === targetRoom) {
-        const rmem = (Memory.rooms[targetRoom] ??= {});
-        const sources = creep.room.find(FIND_SOURCES);
-        rmem.scoutedSources = sources.length;
-        rmem.scoutedSourceData = sources.map((s) => ({ id: s.id, x: s.pos.x, y: s.pos.y }));
-        rmem.scoutedAt = Game.time;
-        delete rmem.scoutAttempted;
-        delete rmem.scoutUnreachable;
-
-        const controller = creep.room.controller;
-        rmem.scoutedHasController = !!controller;
-        if (controller) {
-          rmem.scoutedOwner = controller.owner?.username;
-          rmem.scoutedReservation = controller.reservation?.username;
-          rmem.scoutedControllerPos = { x: controller.pos.x, y: controller.pos.y };
-        }
-
-        const mineral = creep.room.find(FIND_MINERALS)[0];
-        if (mineral) {
-          rmem.scoutedMineral = {
-            type: mineral.mineralType,
-            x: mineral.pos.x,
-            y: mineral.pos.y,
-          };
-        }
-
-        const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-        rmem.scoutedHostiles = hostiles.length;
-        rmem.scoutedHostileIsPlayer = hostiles.some((h) => {
-          const u = h.owner?.username;
-          return !!u && !NPC_USERNAMES.has(u);
-        });
-
-        const keeperLairs = getStructuresByType(creep.room)[STRUCTURE_KEEPER_LAIR] ?? [];
-        rmem.scoutedHasKeepers = keeperLairs.length > 0;
-
-        recordLoot(creep.room, rmem);
+        recordRoomIntel(creep.room);
 
         creep.memory.targetRoom = undefined;
         delete creep.memory._scoutTick;

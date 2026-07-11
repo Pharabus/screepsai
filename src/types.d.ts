@@ -235,6 +235,14 @@ interface RoomMemory {
    * `PERIMETER_PLAN_VERSION` bumps or remote-room changes.
    */
   perimeterPlan?: PerimeterPlanData;
+  // Observer scan queue (src/managers/observer.ts) — owned by whichever room
+  // has a built StructureObserver. v1 scope: cycles this room's own
+  // remoteRooms only, one room requested per tick (observeRoom() grants
+  // vision starting the NEXT tick, so requestedRoom tracks what to harvest).
+  observerQueue?: string[];
+  observerQueueIdx?: number;
+  observerQueueBuiltAt?: number;
+  observerRequestedRoom?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -390,11 +390,12 @@ Full build-out of the RCL 8 structure set: Observer (eyes everywhere), Power Spa
 
 #### Observer (prerequisite for all highway work)
 
-- [ ] **Observer placement and scanning** — Place observer at RCL 8. Scan a queue of rooms each tick (`observer.observeRoom()`). Use for: scouting highway rooms for deposits/power banks, monitoring hostile neighbors, checking remote room status without sending creeps. Add `src/managers/observer.ts` with a scan queue in Memory. Prerequisite for deposit and power bank detection.
+- [x] **Observer placement** — `placeObserver(room)` in `construction.ts` builds the observer at RCL 8 (anchored near spawn, not link-gated) and is wired into `runConstruction`.
+- [x] **Observer scanning (v1 — remote rooms only)** — `src/managers/observer.ts` `runObserver()` cycles one room per tick from a queue built off `RoomMemory.remoteRooms`, sharing intel-recording logic with `scout.ts` via the new `src/utils/roomIntel.ts`. Checking remote-room status without sending creeps: done. **Not yet covered** (separate future work, only worth adding once this proves valuable): monitoring hostile neighbors, and highway-room scanning for deposits/power banks (still the prerequisite for those two items below).
 
 #### Power mining
 
-- [ ] **Place Power Spawn** — Construction manager at RCL 8, adjacent to storage (needs energy + power input).
+- [x] **Place Power Spawn** — `placePowerSpawn(room)` in `construction.ts` builds it at RCL 8, anchored range 2-5 from storage, link-gated like terminal/factory.
 - [ ] **Scan highway rooms for Power Banks** — Via Observer. Filter by `power >= 2000`, `ticksToDecay >= 3000`, and 2+ free adjacent tiles (banks need multiple attackers).
 - [ ] **Power squad: `powerAttacker` + `powerHealer` + `powerHauler`** — Attacker is pure ATTACK + MOVE; healer sticks on range 1 with HEAL + MOVE; hauler arrives as the bank breaks to scoop the drop and run it home. All three scale bodies to room `energyCapacityAvailable`.
 - [ ] **Power processing loop** — Once power is in storage, feed `powerSpawn.processPower()` (100 energy + 1 power per call, up to 50/tick) to convert into global power level (GPL).
@@ -423,7 +424,8 @@ End-game military capability. Requires full structure set and compound stockpile
 
 #### Offensive operations
 
-- [ ] **Nuker placement and targeting** — Place nuker at RCL 8 near storage (needs 300k energy + 5k G to load). Add `src/managers/nuker.ts`: auto-load when resources available, select targets via console command (`nuke(roomName, x, y)`). 50k tick cooldown (~14 hours). Primary use: break walls/ramparts in hostile rooms before sending an attack squad.
+- [x] **Nuker placement** — `placeNuker(room)` in `construction.ts` builds it at RCL 8 near storage (range 2-6, link-gated).
+- [ ] **Nuker auto-load and targeting** — Add `src/managers/nuker.ts`: auto-load when resources available (needs 300k energy + 5k G), select targets via console command (`nuke(roomName, x, y)`). 50k tick cooldown (~14 hours). Primary use: break walls/ramparts in hostile rooms before sending an attack squad. **The built nuker sits empty/unused until this ships.**
 - [ ] **Scout/harass role** — Cheap `[MOVE]` creep sent to hostile rooms to gather intel: layout, tower positions, wall HP, creep composition. Store in Memory for attack planning. Can also be `[MOVE, MOVE, WORK]` to dismantle undefended structures.
 - [ ] **Drain attack** — Send a single boosted `[TOUGH×N, MOVE×N]` creep to sit at a hostile room's edge, tanking tower damage while healing. Towers drain energy faster than the room can refill. Cheap, effective against rooms with limited tower count or poor energy income. Retreat and re-send when HP drops.
 - [ ] **Dismantler role** — `[WORK×N, MOVE×N]` body. Targets hostile walls/ramparts with `creep.dismantle()` (50 HP per WORK per tick, ignores rampart protection). Used after nukes soften walls. Needs healer support to survive tower fire.
