@@ -1857,11 +1857,27 @@ describe('remoteHaulersWanted', () => {
     expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
   });
 
-  it('preserves lower bound (3) for short distance (~30 tiles) reserved room', () => {
-    // roundTripTicks = 30 tiles × 4 = 120
+  it('uses the close-remote floor (2), not the flat fallback (3), for short distance (~30 tiles) reserved room', () => {
+    // roundTripTicks = 30 tiles × 4 = 120, below CLOSE_REMOTE_ROUND_TRIP_TICKS (150)
     // haulerBody at 2300e: [CARRY×2, MOVE×2] × 8 = 16 CARRY → 800 carry capacity
-    // ceil(120 × 10 / 800) = ceil(1.5) = 2; Math.max(3, 2) = 3 (lower bound wins)
+    // ceil(120 × 10 / 800) = ceil(1.5) = 2; close-remote floor = 2; Math.max(2, 2) = 2
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(2);
+  });
+
+  it('keeper room keeps the flat floor (3) even at short distance — close-remote floor excludes keeper rooms', () => {
+    // Same 120 round-trip as above, but isKeeperRoom=true: SK guard risk keeps
+    // the higher floor regardless of distance.
+    (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 120 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'SK1', 1, true, true)).toBe(3);
+  });
+
+  it('reserved room at or above CLOSE_REMOTE_ROUND_TRIP_TICKS (150) keeps the flat floor (3)', () => {
+    // roundTripTicks = 150 (boundary, not < 150) → flat floor (3), not the close floor
+    // ceil(150 × 10 / 800) = ceil(1.875) = 2; Math.max(3, 2) = 3
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 150 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
   });
@@ -1897,12 +1913,13 @@ describe('remoteHaulersWanted', () => {
     expect(remoteHaulersWanted(room, 'W2N1', 1, false)).toBe(2);
   });
 
-  it('SK room (isHighCapacity=true) 3 sources at short distance hits flat floor of 9', () => {
+  it('SK room (isHighCapacity=true, isKeeperRoom=true) 3 sources at short distance hits flat floor of 9', () => {
     // roundTripTicks = 100, sourceRate = 10, carryCapacity = 800 at 2300e
-    // ceil(100 × 10 / 800) = ceil(1.25) = 2; Math.max(3, 2) = 3 per source → 3 × 3 = 9
+    // ceil(100 × 10 / 800) = ceil(1.25) = 2; isKeeperRoom excludes the close-remote
+    // floor reduction, so Math.max(3, 2) = 3 per source → 3 × 3 = 9
     (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 100 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
-    expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(9);
+    expect(remoteHaulersWanted(room, 'SK1', 3, true, true)).toBe(9);
   });
 
   it('SK room scales above floor for long distance (remoteDistance=320)', () => {
@@ -1930,10 +1947,10 @@ describe('remoteHaulersWanted', () => {
 
   it('cap does not affect short-distance remotes (normal result preserved)', () => {
     // roundTripTicks = 120, sourceRate = 10, carryCapacity = 800
-    // ceil(120 × 10 / 800) = 2; Math.max(3, 2) = 3 (lower bound wins) — well below cap
+    // ceil(120 × 10 / 800) = 2; close-remote floor = 2; Math.max(2, 2) = 2 — well below cap
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
-    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(2);
   });
 });
 

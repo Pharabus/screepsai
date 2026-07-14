@@ -95,6 +95,20 @@ const YOUNG_COLONY_MIN_SCORE = 20;
 // shortens the path.
 const MAX_HAULERS_PER_SOURCE = 5;
 
+// remoteHaulersWanted's flatPerSource (3 for reserved rooms) is meant as the
+// FALLBACK value for when remoteDistance isn't cached yet, but Math.max also
+// used it as a hard floor even once accurate distance data existed — so a
+// close reserved room got clamped up to 3/source regardless of what the
+// round-trip math actually justified. Live: W44N58 (round-trip 112, 2
+// sources) computed ceil(112*10/800)=2 per source but was floored to 3,
+// costing 2 extra haulers for no reason (CPU-margin investigation, 2026-07).
+// Below this round-trip threshold, a reserved (non-keeper) room's floor
+// drops to CLOSE_REMOTE_HAULER_FLOOR instead. Keeper rooms are excluded —
+// SK guard risk/reaction time justifies keeping their higher floor regardless
+// of distance, and that's a separate concern from plain over-provisioning.
+const CLOSE_REMOTE_ROUND_TRIP_TICKS = 150;
+const CLOSE_REMOTE_HAULER_FLOOR = 2;
+
 // Extra haulers for storage->spawn/extension DISTRIBUTION in linked-source rooms. Linked sources
 // need only 1 hauler for link-drain, but filling the spawn + extensions scales with extension
 // count (~RCL), not source count — the base count starves a large mature core (live W44N57:
@@ -531,6 +545,7 @@ export function remoteHaulersWanted(
   remoteRoom: string,
   sourceCount: number,
   isHighCapacity: boolean,
+  isKeeperRoom = false,
 ): number {
   const flatPerSource = isHighCapacity ? 3 : 2;
   const roundTripTicks = Memory.rooms[room.name]?.remoteDistance?.[remoteRoom];
@@ -541,9 +556,15 @@ export function remoteHaulersWanted(
   const haulerBody = buildBody([CARRY, CARRY, MOVE, MOVE], room.energyCapacityAvailable, 8);
   const carryCapacity = haulerBody.filter((p) => p === CARRY).length * 50;
   if (carryCapacity === 0) return sourceCount * flatPerSource;
+  // Once distance is cached, a close reserved (non-keeper) room's floor drops
+  // below the uncached fallback — see CLOSE_REMOTE_ROUND_TRIP_TICKS above.
+  const floor =
+    isHighCapacity && !isKeeperRoom && roundTripTicks < CLOSE_REMOTE_ROUND_TRIP_TICKS
+      ? CLOSE_REMOTE_HAULER_FLOOR
+      : flatPerSource;
   const haulersPerSource = Math.min(
     MAX_HAULERS_PER_SOURCE,
-    Math.max(flatPerSource, Math.ceil((roundTripTicks * sourceRate) / carryCapacity)),
+    Math.max(floor, Math.ceil((roundTripTicks * sourceRate) / carryCapacity)),
   );
   return haulersPerSource * sourceCount;
 }
@@ -1173,7 +1194,13 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         });
       }
 
-      const haulersWanted = remoteHaulersWanted(room, remoteRoom, sourceCount, isHighCapacity);
+      const haulersWanted = remoteHaulersWanted(
+        room,
+        remoteRoom,
+        sourceCount,
+        isHighCapacity,
+        isKeeperRoom,
+      );
       // Don't spawn remote haulers until the remote miner has built at least one
       // source container. Before that the miner spends its output building the
       // container (1 CARRY) and produces little to haul — pre-spawned haulers
