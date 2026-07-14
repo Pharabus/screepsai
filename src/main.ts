@@ -360,6 +360,15 @@ export const loop = ErrorMapper.wrapLoop(() => {
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('terminal', runTerminal);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('observer', runObserver);
+    // v1.0.311 briefly reverted this to THROTTLE_LOW after live profiling showed
+    // runConstruction costing ~20 CPU/call (nearly the whole tick budget) right
+    // after W43N58 hit RCL8 — clearBlockingExtensions was calling the room-wide
+    // findStrandedExtensions flood-fill once per blocked extension per call with
+    // no caching, so several simultaneously-blocked extensions multiplied an
+    // already-expensive whole-room scan. v1.0.312 fixes that at the source
+    // (findStrandedExtensions result now cached per room per tick — see
+    // construction.ts) rather than permanently hiding the manager behind a
+    // higher bucket floor, so THROTTLE_NORMAL is back.
     if (shouldRun({ interval: 5, priority: THROTTLE_NORMAL }))
       profile('construction', runConstruction);
     if (shouldRun({ priority: THROTTLE_LOW })) profile('visuals', runVisuals);

@@ -10,7 +10,8 @@ import {
   TUNNEL_WALL_COST,
 } from '../utils/trafficManager';
 import { myStorage } from '../utils/ownership';
-import { getMyStructuresByType, getMySitesByType } from '../utils/tickCache';
+import { cached, getMyStructuresByType, getMySitesByType } from '../utils/tickCache';
+import { profile } from '../utils/profiler';
 
 // Max extensions per RCL level (from Screeps CONTROLLER_STRUCTURES).
 // At RCL 7 each extension holds 100 energy (up from 50), at RCL 8 it's 200,
@@ -1012,7 +1013,21 @@ export function clearBlockingExtensions(room: Room): void {
     // instead of sitting dead until someone notices and does the destroy manually
     // (observed live in W43N58 at RCL8: an extension sealed on all 8 sides by the
     // 2nd/3rd spawn, a new tower, and two neighbouring extensions).
-    const stranded = findStrandedExtensions(room);
+    //
+    // Cached per room per tick (v1.0.312): findStrandedExtensions is a full
+    // room-wide flood-fill (uncached room.find(FIND_STRUCTURES) + BFS over
+    // ~2500 tiles), and this loop calls it again for EVERY blocked extension
+    // that doesn't get destroyed by the cheaper overflow-blocker branch above.
+    // A mature RCL8 layout can have several extensions with 0 open cardinals
+    // at once without any being genuinely stranded (e.g. mid-reorganization
+    // after an RCL jump), so this recomputed the same room-wide flood-fill
+    // many times in a single call — live profiling measured runConstruction
+    // at ~20 CPU/call (nearly the entire tick budget) immediately after
+    // W43N58 hit RCL8, which single-handedly drove the bucket from ~8000 down
+    // to ~4600 once the manager's throttle gate was lowered enough to let it
+    // actually run. The result is identical either way; this only avoids
+    // redundant recomputation within one tick.
+    const stranded = cached(`strandedExtensions:${room.name}`, () => findStrandedExtensions(room));
     if (stranded.some((s) => s.built && s.x === ext.pos.x && s.y === ext.pos.y)) {
       console.log(
         `[construction] ${room.name}: destroying stranded extension at (${ext.pos.x},${ext.pos.y}) — no reachable path from spawn`,
@@ -1907,6 +1922,17 @@ export function placeColonySpawn(room: Room): void {
   }
 }
 
+// Temporary fine-grained breakdown (v1.0.310+, gated behind the existing
+// zero-cost-when-off profile() wrapper): runConstruction's overall cost jumped
+// to ~20 CPU/call the moment its throttle gate was lowered enough to actually
+// run (see main.ts THROTTLE_NORMAL change) — this pinpoints which sub-step is
+// responsible instead of guessing. Safe to leave in permanently (matches the
+// top-level profile('construction', ...) convention in main.ts); remove only
+// if the per-step labels are no longer useful once the hot step is fixed.
+function profiledPerRoom(room: Room, label: string, fn: (room: Room) => void): void {
+  profile(`construction.${label}`, () => fn(room));
+}
+
 export function runConstruction(): void {
   if (Object.keys(Game.constructionSites).length >= 90) return;
 
@@ -1915,36 +1941,36 @@ export function runConstruction(): void {
 
     // Destroy empty foreign obstacle structures and record any loot target.
     // Runs every 5 ticks (same cadence as runConstruction) and is idempotent.
-    cleanupClaimedRoom(room);
+    profiledPerRoom(room, 'cleanupClaimedRoom', cleanupClaimedRoom);
 
     // Colony-bootstrap rooms get their first spawn placed before anything else —
     // until a spawn exists the room has no economy at all.
-    placeColonySpawn(room);
+    profiledPerRoom(room, 'placeColonySpawn', placeColonySpawn);
 
-    placeSourceContainers(room);
-    placeControllerContainer(room);
-    placeStorage(room);
-    clearSpawnBlockers(room);
-    placeSecondSpawn(room);
-    placeLinks(room);
-    placeExtensions(room);
-    placeTowers(room);
-    placeRoads(room);
-    placeColonyBootstrapRoads(room);
-    placeCorridorRoads(room);
-    placeRemoteRoads(room);
-    placeTerminal(room);
-    placeFactory(room);
-    placeObserver(room);
-    placePowerSpawn(room);
-    placeNuker(room);
-    placeExtractor(room);
-    placeMineralContainer(room);
-    clearBlockingExtensions(room);
-    clearLabBlockers(room);
-    placeLabs(room);
-    placeRamparts(room);
-    placePerimeterWalls(room);
-    placePerimeterRamparts(room);
+    profiledPerRoom(room, 'placeSourceContainers', placeSourceContainers);
+    profiledPerRoom(room, 'placeControllerContainer', placeControllerContainer);
+    profiledPerRoom(room, 'placeStorage', placeStorage);
+    profiledPerRoom(room, 'clearSpawnBlockers', clearSpawnBlockers);
+    profiledPerRoom(room, 'placeSecondSpawn', placeSecondSpawn);
+    profiledPerRoom(room, 'placeLinks', placeLinks);
+    profiledPerRoom(room, 'placeExtensions', placeExtensions);
+    profiledPerRoom(room, 'placeTowers', placeTowers);
+    profiledPerRoom(room, 'placeRoads', placeRoads);
+    profiledPerRoom(room, 'placeColonyBootstrapRoads', placeColonyBootstrapRoads);
+    profiledPerRoom(room, 'placeCorridorRoads', placeCorridorRoads);
+    profiledPerRoom(room, 'placeRemoteRoads', placeRemoteRoads);
+    profiledPerRoom(room, 'placeTerminal', placeTerminal);
+    profiledPerRoom(room, 'placeFactory', placeFactory);
+    profiledPerRoom(room, 'placeObserver', placeObserver);
+    profiledPerRoom(room, 'placePowerSpawn', placePowerSpawn);
+    profiledPerRoom(room, 'placeNuker', placeNuker);
+    profiledPerRoom(room, 'placeExtractor', placeExtractor);
+    profiledPerRoom(room, 'placeMineralContainer', placeMineralContainer);
+    profiledPerRoom(room, 'clearBlockingExtensions', clearBlockingExtensions);
+    profiledPerRoom(room, 'clearLabBlockers', clearLabBlockers);
+    profiledPerRoom(room, 'placeLabs', placeLabs);
+    profiledPerRoom(room, 'placeRamparts', placeRamparts);
+    profiledPerRoom(room, 'placePerimeterWalls', placePerimeterWalls);
+    profiledPerRoom(room, 'placePerimeterRamparts', placePerimeterRamparts);
   }
 }
