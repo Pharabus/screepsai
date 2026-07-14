@@ -360,7 +360,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('terminal', runTerminal);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('observer', runObserver);
-    if (shouldRun({ interval: 5, priority: THROTTLE_LOW }))
+    if (shouldRun({ interval: 5, priority: THROTTLE_NORMAL }))
       profile('construction', runConstruction);
     if (shouldRun({ priority: THROTTLE_LOW })) profile('visuals', runVisuals);
 

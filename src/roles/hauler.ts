@@ -58,6 +58,57 @@ const LARGE_DROP_THRESHOLD = 1000;
 // a round trip chasing the tail sliver.
 const HAULER_EFFECTIVELY_FULL_FREE = 50;
 
+interface HaulerRoomScan {
+  droppedEnergy: Resource[];
+  droppedMineral: Resource[];
+  ruins: Ruin[];
+  tombs: Tombstone[];
+  towersNeedingEnergy: StructureTower[];
+}
+
+// Mirrors remoteHauler.ts's getPickupCandidates: the qualifying-object lists
+// below are position-independent (same for every hauler in the room), but
+// were previously re-scanned via findClosestByRange by EACH hauler on EVERY
+// call to pickup()/deliver() that reached them — with 16 haulers in one room
+// that's up to ~5 duplicate room.find()-class scans per hauler per tick.
+// Cached once per room per tick; each hauler still does its own cheap
+// "closest to me" pass over the small cached arrays via closestByRange.
+function getRoomScan(room: Room): HaulerRoomScan {
+  return cached(`hauler:roomScan:${room.name}`, () => {
+    const dropped = room.find(FIND_DROPPED_RESOURCES);
+    const droppedEnergy = dropped.filter(
+      (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+    );
+    const droppedMineral = dropped.filter(
+      (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
+    );
+    const ruins = room.find(FIND_RUINS).filter((r) => r.store.getUsedCapacity() > 0);
+    const tombs = room.find(FIND_TOMBSTONES).filter((t) => t.store.getUsedCapacity() > 0);
+    const towersNeedingEnergy = (
+      (getStructuresByType(room)[STRUCTURE_TOWER] ?? []) as StructureTower[]
+    ).filter(
+      (s) => s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
+    );
+    return { droppedEnergy, droppedMineral, ruins, tombs, towersNeedingEnergy };
+  });
+}
+
+function closestByRange<T extends { pos: RoomPosition }>(
+  pos: RoomPosition,
+  candidates: T[],
+): T | undefined {
+  let best: T | undefined;
+  let bestRange = Infinity;
+  for (const c of candidates) {
+    const range = pos.getRangeTo(c.pos);
+    if (range < bestRange) {
+      bestRange = range;
+      best = c;
+    }
+  }
+  return best;
+}
+
 const states: StateMachineDefinition = {
   PICKUP: {
     onEnter(creep) {
@@ -401,9 +452,7 @@ function pickup(creep: Creep): boolean {
   if (pickupBoostLab(creep, mem)) return true;
 
   // Dropped energy — decay-sensitive
-  const dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-  });
+  const dropped = closestByRange(creep.pos, getRoomScan(creep.room).droppedEnergy);
   if (dropped) {
     creep.memory.targetId = dropped.id;
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
@@ -420,10 +469,8 @@ function pickup(creep: Creep): boolean {
   // valid deposit target for minerals picked up by a hauler.
   const droppedMineral =
     myStorage(creep.room) || myTerminal(creep.room)
-      ? creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-          filter: (r) => r.resourceType !== RESOURCE_ENERGY && r.amount >= 50,
-        })
-      : null;
+      ? closestByRange(creep.pos, getRoomScan(creep.room).droppedMineral)
+      : undefined;
   if (droppedMineral) {
     creep.memory.targetId = droppedMineral.id;
     if (creep.pickup(droppedMineral) === ERR_NOT_IN_RANGE) {
@@ -573,14 +620,11 @@ function pickup(creep: Creep): boolean {
 }
 
 function pickupAbandonedLoot(creep: Creep): boolean {
-  const ruin = creep.pos.findClosestByRange(FIND_RUINS, {
-    filter: (r) => r.store.getUsedCapacity() > 0,
-  });
-  const tomb = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
-    filter: (t) => t.store.getUsedCapacity() > 0,
-  });
+  const scan = getRoomScan(creep.room);
+  const ruin = closestByRange(creep.pos, scan.ruins);
+  const tomb = closestByRange(creep.pos, scan.tombs);
   // Prefer whichever is closer — both decay, but the closer trip costs less.
-  const target: Ruin | Tombstone | null =
+  const target: Ruin | Tombstone | undefined =
     ruin && tomb
       ? creep.pos.getRangeTo(ruin) <= creep.pos.getRangeTo(tomb)
         ? ruin
@@ -605,9 +649,12 @@ function pickupAbandonedLoot(creep: Creep): boolean {
 }
 
 function pickupLargeDrop(creep: Creep): boolean {
-  const drop = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= LARGE_DROP_THRESHOLD,
-  });
+  // LARGE_DROP_THRESHOLD (1000) is a subset of the >=50 droppedEnergy scan —
+  // filter the cached list rather than re-scanning.
+  const large = getRoomScan(creep.room).droppedEnergy.filter(
+    (r) => r.amount >= LARGE_DROP_THRESHOLD,
+  );
+  const drop = closestByRange(creep.pos, large);
   if (!drop) return false;
   creep.memory.targetId = drop.id;
   if (creep.pickup(drop) === ERR_NOT_IN_RANGE) {
@@ -970,11 +1017,7 @@ function deliver(creep: Creep): void {
 
   if (deliverToSpawnOrExtension(creep)) return;
 
-  const tower = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
-    filter: (s): s is StructureTower =>
-      s.structureType === STRUCTURE_TOWER &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > s.store.getCapacity(RESOURCE_ENERGY) * 0.25,
-  });
+  const tower = closestByRange(creep.pos, getRoomScan(creep.room).towersNeedingEnergy);
   if (tower) {
     if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       moveTo(creep, tower, {

@@ -7,6 +7,7 @@ import {
   buildUpgraderBody,
 } from '../utils/body';
 import { cached, getStructuresByType } from '../utils/tickCache';
+import { nameHash } from '../utils/idle';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
@@ -1306,8 +1307,13 @@ export function runSpawner(): void {
   for (const room of Object.values(Game.rooms)) {
     if (room.controller?.my) {
       ensureRoomPlan(room);
-      // Periodically re-evaluate remote room selection
-      if (Game.time % 100 === 0) {
+      // Periodically re-evaluate remote room selection. Phased per-room (hash of
+      // room name mod 100, not a flat `% 100 === 0`) so all owned rooms don't run
+      // their PathFinder-heavy selectRemoteRooms/ensureRemotePathLength pass on the
+      // same tick — that synchronized spike was observed pushing main.loop CPU well
+      // past the 20 limit (spawner max ~12 CPU in one tick), draining the bucket
+      // faster than its slow per-tick recovery could offset.
+      if (Game.time % 100 === nameHash(room.name) % 100) {
         selectRemoteRooms(room);
         // Retire missions for any remotes that selectRemoteRooms just removed
         syncAllMissions(room.name, Memory.rooms[room.name]?.remoteRooms ?? []);

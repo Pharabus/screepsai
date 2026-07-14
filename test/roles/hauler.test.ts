@@ -901,7 +901,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [makeSpawn()]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [makeSpawn()] : [])),
     });
 
     const nearHauler = mockCreep({
@@ -935,7 +935,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [makeSpawn()]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [makeSpawn()] : [])),
     });
 
     const nearHauler = mockCreep({
@@ -974,7 +974,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [fullSpawn]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [fullSpawn] : [])),
     });
 
     const creep = mockCreep({
@@ -1002,7 +1002,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [makeSpawn()]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [makeSpawn()] : [])),
     });
 
     const creep = mockCreep({
@@ -1029,7 +1029,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [makeSpawn()]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [makeSpawn()] : [])),
     });
 
     // Creep already carrying 700/800 energy — the urgent-responder check should
@@ -1059,7 +1059,7 @@ describe('hauler urgent responder', () => {
     const room = mockRoom({
       name: 'W1N1',
       storage,
-      find: vi.fn(() => [makeSpawn()]),
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [makeSpawn()] : [])),
     });
 
     // Creep carrying nothing — condition (1) must not fire (used = 0),
@@ -1090,7 +1090,11 @@ describe('hauler urgent responder', () => {
       name: 'W1N1',
       storage,
       // No spawn need → getUrgentResponder returns undefined, so no creep is the responder.
-      find: vi.fn(() => [{ structureType: STRUCTURE_SPAWN, store: { getFreeCapacity: () => 0 } }]),
+      find: vi.fn((type: number) =>
+        type === FIND_MY_STRUCTURES
+          ? [{ structureType: STRUCTURE_SPAWN, store: { getFreeCapacity: () => 0 } }]
+          : [],
+      ),
     });
 
     // Hauler at 760/800 — free capacity is 40, below the HAULER_EFFECTIVELY_FULL_FREE (50)
@@ -1598,7 +1602,7 @@ describe('hauler pickup priority', () => {
     };
     const room = mockRoom({
       name: 'W1N1',
-      find: vi.fn(() => []),
+      find: vi.fn((type: number) => (type === FIND_DROPPED_RESOURCES ? [mineralDrop] : [])),
       storage,
     });
 
@@ -1613,15 +1617,6 @@ describe('hauler pickup priority', () => {
       store: mockStore({}),
       pos: new RoomPosition(25, 25, 'W1N1'),
     });
-    // First call returns null (no energy drops), second returns mineralDrop
-    creep.pos.findClosestByRange = vi.fn((_type: number, opts?: any) => {
-      if (opts?.filter) {
-        const drops = [mineralDrop];
-        const filtered = drops.filter(opts.filter);
-        return filtered[0] ?? null;
-      }
-      return null;
-    }) as any;
 
     hauler.run(creep);
 
@@ -1648,6 +1643,7 @@ describe('hauler pickup priority', () => {
           const all = [fullSourceContainer];
           return opts?.filter ? all.filter(opts.filter) : all;
         }
+        if (type === FIND_RUINS) return [ruin];
         return [];
       }),
     });
@@ -1663,13 +1659,6 @@ describe('hauler pickup priority', () => {
       store: mockStore({}),
       pos: new RoomPosition(13, 14, 'W1N1'),
     });
-    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
-      if (type === FIND_RUINS) {
-        const items = [ruin];
-        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
-      }
-      return null;
-    }) as any;
 
     hauler.run(creep);
 
@@ -1690,7 +1679,14 @@ describe('hauler pickup priority', () => {
       store: mockStore({ energy: 100 }, 1000),
     };
 
-    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) => {
+        if (type === FIND_RUINS) return [farRuin];
+        if (type === FIND_TOMBSTONES) return [closeTomb];
+        return [];
+      }),
+    });
 
     Game.getObjectById = vi.fn(() => null) as any;
     Game.creeps = { hauler_1: {} } as any;
@@ -1703,17 +1699,6 @@ describe('hauler pickup priority', () => {
       store: mockStore({}),
       pos: new RoomPosition(25, 25, 'W1N1'),
     });
-    creep.pos.findClosestByRange = vi.fn((type: number, opts?: any) => {
-      if (type === FIND_RUINS) {
-        const items = [farRuin];
-        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
-      }
-      if (type === FIND_TOMBSTONES) {
-        const items = [closeTomb];
-        return (opts?.filter ? items.filter(opts.filter) : items)[0] ?? null;
-      }
-      return null;
-    }) as any;
 
     hauler.run(creep);
 
