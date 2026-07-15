@@ -630,7 +630,9 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(2); // baseline, no bonus
   });
 
-  it('adds +1 hauler when 1 remote room is active', () => {
+  it('adds no remote bonus for exactly 1 active remote room (first remote is absorbed by existing bandwidth)', () => {
+    // The first remote's energy influx is covered by the room's own distribution
+    // capacity — only a 2nd+ remote adds genuinely new dedicated demand.
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
@@ -638,10 +640,10 @@ describe('haulersNeeded', () => {
       },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
-    expect(haulersNeeded(room)).toBe(3); // 2 baseline + 1 remote
+    expect(haulersNeeded(room)).toBe(2); // 2 baseline, no bonus for the first remote
   });
 
-  it('adds +2 haulers when 2 remote rooms are active', () => {
+  it('adds +1 hauler when 2 remote rooms are active (bonus applies beyond the first)', () => {
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
@@ -649,7 +651,7 @@ describe('haulersNeeded', () => {
       },
     };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 800 });
-    expect(haulersNeeded(room)).toBe(4); // 2 baseline + 2 remotes
+    expect(haulersNeeded(room)).toBe(3); // 2 baseline + max(0, 2-1) = 1
   });
 
   it('caps per-source contribution at MAX_HAULERS_PER_SOURCE (5) for very distant source (pathDist=100)', () => {
@@ -694,13 +696,14 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(3);
   });
 
-  it('applies RCL6 bump plus remote room bonus (1 link + 2 bump + 1 remote = 4)', () => {
-    // Same setup as above but with 1 remote room active
+  it('applies RCL6 bump plus remote room bonus for 2 remotes (1 link + 2 bump + 1 remote-beyond-first = 4)', () => {
+    // A single remote adds no bonus (see the dedicated haulersNeeded remote-room
+    // tests above) — use 2 remotes here so the "beyond the first" bonus applies.
     (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
     (Memory as any).rooms = {
       W1N1: {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
-        remoteRooms: ['W1N2'],
+        remoteRooms: ['W1N2', 'W1N3'],
       },
     };
     const room = mockRoom({

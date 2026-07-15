@@ -300,9 +300,20 @@ export function haulersNeeded(room: Room): number {
     if (mineral && mineral.mineralAmount > 0) count += 1;
   }
 
-  // +1 per active remote room: energy from remotes arrives in bulk and needs
-  // dedicated bandwidth to distribute before the source containers fill up.
-  count += mem.remoteRooms?.length ?? 0;
+  // +1 per remote room BEYOND THE FIRST: energy from remotes arrives in bulk
+  // and needs dedicated bandwidth to distribute before the source containers
+  // fill up. The first remote's influx is already covered by the room's own
+  // distribution bump above (HAULER_DIST_BUMP_BY_RCL) — that headroom was
+  // sized for extension-count bandwidth in a mature linked core, which is
+  // more than a single remote's trickle needs on top. Only a SECOND (or
+  // further) remote genuinely adds dedicated demand beyond what's already
+  // provisioned. Live: every current owned room (non-lean) runs exactly 1
+  // remote, so this drops the bump to 0 for all of them without touching the
+  // 2-remote case this was originally sized for (CPU-margin fleet trim,
+  // 2026-07-15 — see remoteHaulersWanted's close-remote floor fix for the
+  // sibling bug this doesn't share: this bump was already computing a
+  // reasonable number for its stated purpose, just conservatively so).
+  count += Math.max(0, (mem.remoteRooms?.length ?? 0) - 1);
 
   return count;
 }
