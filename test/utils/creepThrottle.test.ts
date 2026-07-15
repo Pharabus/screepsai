@@ -110,8 +110,8 @@ describe('shouldThrottleCreep — threshold edges', () => {
     Memory.creepThrottle = true;
   });
 
-  it('TIER_LIGHT: bucket >= throttleAt (2500) never throttles', () => {
-    setCpu(2500, 500, 0);
+  it('TIER_LIGHT: bucket >= throttleAt (4500) never throttles', () => {
+    setCpu(4500, 500, 0);
     const creep = interiorCreep('hauler');
     expect(shouldThrottleCreep(creep)).toBe(false);
   });
@@ -122,8 +122,8 @@ describe('shouldThrottleCreep — threshold edges', () => {
     expect(shouldThrottleCreep(creep)).toBe(true);
   });
 
-  it('TIER_HEAVY: bucket >= throttleAt (4000) never throttles', () => {
-    setCpu(4000, 500, 0);
+  it('TIER_HEAVY: bucket >= throttleAt (6000) never throttles', () => {
+    setCpu(6000, 500, 0);
     const creep = interiorCreep('upgrader');
     expect(shouldThrottleCreep(creep)).toBe(false);
   });
@@ -141,7 +141,7 @@ describe('shouldThrottleCreep — in-band determinism and even spread', () => {
   });
 
   it('same (Game.time, creep.name, bucket) yields a stable result', () => {
-    setCpu(3000, 500, 0); // mid-band for TIER_HEAVY (1500..4000)
+    setCpu(3000, 500, 0); // mid-band for TIER_HEAVY (1500..6000)
     Game.time = 12345;
     const creep = interiorCreep('upgrader');
     const first = shouldThrottleCreep(creep);
@@ -150,9 +150,9 @@ describe('shouldThrottleCreep — in-band determinism and even spread', () => {
   });
 
   it('sweeping Game.time across SPREAD.length yields a skip-rate ~= 1 - ratio', () => {
-    const throttleAt = 4000;
+    const throttleAt = 6000;
     const stopAt = 1500;
-    const bucket = 2750; // ratio = (2750-1500)/(4000-1500) = 0.5
+    const bucket = 3750; // ratio = (3750-1500)/(6000-1500) = 0.5
     const ratio = (bucket - stopAt) / (throttleAt - stopAt);
     setCpu(bucket, 500, 0);
 
@@ -177,8 +177,8 @@ describe('shouldThrottleCreep — tier separation', () => {
     Memory.creepThrottle = true;
   });
 
-  it('at bucket 3000, a HEAVY role can throttle while a LIGHT role never does', () => {
-    setCpu(3000, 500, 0);
+  it('at bucket 5000, a HEAVY role can throttle while a LIGHT role never does', () => {
+    setCpu(5000, 500, 0);
 
     const heavy = interiorCreep('upgrader', 'heavy1');
     const light = interiorCreep('hauler', 'light1');
@@ -192,10 +192,10 @@ describe('shouldThrottleCreep — tier separation', () => {
       if (shouldThrottleCreep(light)) lightThrottledAtLeastOnce = true;
     }
 
-    // HEAVY: bucket (3000) is between stopAt (1500) and throttleAt (4000) ->
+    // HEAVY: bucket (5000) is between stopAt (1500) and throttleAt (6000) ->
     // probabilistic, throttles on at least some slots (e.g. slot with SPREAD=1).
     expect(heavyThrottledAtLeastOnce).toBe(true);
-    // LIGHT: bucket (3000) >= throttleAt (2500) -> never throttles, ever.
+    // LIGHT: bucket (5000) >= throttleAt (4500) -> never throttles, ever.
     expect(lightThrottledAtLeastOnce).toBe(false);
   });
 });

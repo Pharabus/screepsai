@@ -23,13 +23,28 @@
  * returns false unconditionally, so behaviour is byte-for-byte unchanged until
  * enabled from the console — matches the Memory.holisticEconomy convention.
  *
- * Threshold tuning is the load-bearing decision. Our bucket idles ~5500. Both
- * tiers' throttleAt sit BELOW that (4000 / 2500) on purpose, so at normal
- * operation nothing throttles — throttling only engages once a drain pushes
- * the bucket into the danger band, arresting the slide and settling at a new
- * equilibrium inside the band. Do NOT raise throttleAt toward the manager
- * THROTTLE_LOW floor (8000, src/utils/throttle.ts) — that would throttle
- * continuously at our normal bucket and permanently degrade the colony.
+ * Threshold tuning is the load-bearing decision, and it must track the
+ * colony's ACTUAL operating bucket, not a stale assumption. Originally tuned
+ * assuming a ~5500 idle bucket (throttleAt 4000/2500, both below it, so
+ * nothing throttled at "normal"). That assumption broke down 2026-07-14: a
+ * CPU-margin investigation (fleet growth to 50+ creeps, main.loop avg
+ * ~18-19/20) left the colony's real operating bucket sitting at ~3000-5100
+ * even after fixing an actual bug (an uncached room-wide flood-fill in
+ * runConstruction) — live-observed main.loop consistently AT or ABOVE the
+ * 20-CPU limit. At the old thresholds TIER_LIGHT (hauler/remoteHauler/
+ * courier/reserver/mineralMiner/harvester — the largest role population)
+ * never engaged in that range at all, so the single biggest lever provided
+ * zero relief exactly when it was needed. Raised both tiers' throttleAt to
+ * actually cover the current range (see below) — this is a deliberate
+ * recalibration to the new normal, not a one-off patch; revisit again if the
+ * operating baseline shifts (fleet trimmed back down, more CPU-per-creep
+ * savings land, etc.) rather than assuming these values are permanent. The
+ * historical warning about not raising toward the *construction* manager's
+ * gate no longer applies at the same value — that gate moved from 8000
+ * (THROTTLE_LOW) to 5000 (THROTTLE_NORMAL) in the same investigation — but
+ * the underlying principle holds: don't raise these into the range where the
+ * colony is genuinely CPU-healthy, only into the range that's actually
+ * distressed.
  */
 
 import { isInRoomInterior } from './movement';
@@ -43,15 +58,19 @@ interface ThrottleTier {
 
 /**
  * Income-adjacent logistics. Only throttled once the bucket is genuinely low —
- * skipping these directly reduces income/delivery throughput.
+ * skipping these directly reduces income/delivery throughput. throttleAt
+ * raised 2500 -> 4500 (2026-07-14) to actually reach the colony's current
+ * ~3000-5100 operating range — see module header.
  */
-const TIER_LIGHT: ThrottleTier = { throttleAt: 2500, stopAt: 500 };
+const TIER_LIGHT: ThrottleTier = { throttleAt: 4500, stopAt: 500 };
 
 /**
  * Discretionary work — shed first. Skipping an upgrade/repair/build tick for
  * one creep on one tick is the least harmful place to claw back CPU.
+ * throttleAt raised 4000 -> 6000 (2026-07-14), keeping it comfortably above
+ * TIER_LIGHT's new threshold so heavy work still sheds first as bucket falls.
  */
-const TIER_HEAVY: ThrottleTier = { throttleAt: 4000, stopAt: 1500 };
+const TIER_HEAVY: ThrottleTier = { throttleAt: 6000, stopAt: 1500 };
 
 /**
  * Role -> throttle tier. `null` = NEVER throttled.
