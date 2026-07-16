@@ -278,13 +278,16 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 const COLONY_SEND_AMOUNT = 10_000;
 /** Home storage must hold at least this much before we'll donate energy. */
 export const HOME_SURPLUS_FLOOR = 80_000;
-/** Stop topping a colony up once its storage clears this bar. */
+/**
+ * Stop topping a colony up once its combined storage+terminal energy clears
+ * this bar (colonyEnergy() under holisticEconomy; storage-only otherwise).
+ */
 const COLONY_STORAGE_TARGET = 30_000;
 /**
  * Minimum ticks between sends on the same home→colony route. Prevents the
  * same shipment from being repeated every 100 ticks before the previous one
- * has been absorbed (hysteresis). The receiver's storage must also drop back
- * below COLONY_STORAGE_TARGET for a subsequent send to trigger.
+ * has been absorbed (hysteresis). The receiver's combined energy must also
+ * drop back below COLONY_STORAGE_TARGET for a subsequent send to trigger.
  */
 const COLONY_SEND_HYSTERESIS_TICKS = 300;
 
@@ -323,11 +326,12 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     return;
 
   // Collect all eligible receivers and rank by investment priority.
-  // Eligible = colony room with terminal, storage below target, enough free capacity.
+  // Eligible = colony room with terminal, combined storage+terminal energy
+  // below target, enough free capacity.
   const candidates: Array<{
     colonyRoom: string;
     score: number;
-    colonyStorage: number;
+    colonyEnergyTotal: number;
     dist: number;
   }> = [];
 
@@ -353,8 +357,16 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     if (!target?.controller?.my) continue;
     const colonyTerminal = target.terminal;
     if (!colonyTerminal) continue; // RCL < 6 — no terminal yet; auto-engages when it builds one
-    const colonyStorage = target.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
-    if (colonyStorage >= COLONY_STORAGE_TARGET) continue; // already well-stocked
+    // Combined storage+terminal energy — a storage-only check missed energy
+    // piling up in the terminal itself (exactly where these shipments land),
+    // letting a receiver accumulate far past COLONY_STORAGE_TARGET while its
+    // storage alone still read as "needs more" (observed live: W44N59 terminal
+    // energy climbed past 200k while storage sat under the 30k target, because
+    // this gate never looked at the terminal at all).
+    const colonyEnergyTotal = Memory.holisticEconomy
+      ? colonyEnergy(target)
+      : (target.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0);
+    if (colonyEnergyTotal >= COLONY_STORAGE_TARGET) continue; // already well-stocked
     if (colonyTerminal.store.getFreeCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT) continue;
 
     // Hysteresis: skip if a shipment on this route already landed recently.
@@ -368,15 +380,15 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     // Geographic distance — used as a tie-breaker so the closest eligible
     // sender routes to each receiver (Harabi "geographically closest source").
     const dist = Game.map.getRoomLinearDistance(home.name, colonyRoom);
-    candidates.push({ colonyRoom, score, colonyStorage, dist });
+    candidates.push({ colonyRoom, score, colonyEnergyTotal, dist });
   }
 
   if (candidates.length === 0) return;
 
-  // Sort: highest priority score first, then most urgent (lowest storage),
+  // Sort: highest priority score first, then most urgent (lowest combined energy),
   // then closest (shortest route = cheapest transaction fee).
   candidates.sort(
-    (a, b) => b.score - a.score || a.colonyStorage - b.colonyStorage || a.dist - b.dist,
+    (a, b) => b.score - a.score || a.colonyEnergyTotal - b.colonyEnergyTotal || a.dist - b.dist,
   );
 
   const best = candidates[0]!;
@@ -397,7 +409,7 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     _lastColonySend.set(`${home.name}->${best.colonyRoom}`, Game.time);
     console.log(
       `[terminal] ${home.name}: sent ${COLONY_SEND_AMOUNT} energy to ${best.colonyRoom}` +
-        ` (score=${best.score.toFixed(1)}, storage=${best.colonyStorage})`,
+        ` (score=${best.score.toFixed(1)}, storage=${best.colonyEnergyTotal})`,
     );
   } else {
     console.log(`[terminal] ${home.name}: colony send to ${best.colonyRoom} failed: ${result}`);

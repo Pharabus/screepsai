@@ -1168,6 +1168,55 @@ describe('runTerminal — colony energy send', () => {
     expect(homeTerminal.send).not.toHaveBeenCalled();
   });
 
+  it('holisticEconomy: does not send when a colony storage is low but its terminal energy alone clears the target', () => {
+    // Regression test for a live bug: the receiver gate only ever checked
+    // storage, so a colony whose TERMINAL energy piled up past
+    // COLONY_STORAGE_TARGET (exactly where these shipments land) kept
+    // "qualifying" forever because its storage alone still read low.
+    (Memory as any).holisticEconomy = true;
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+
+    (Game as any).rooms['W1N1'].storage.my = true;
+    (Game as any).rooms['W1N1'].terminal.my = true;
+    (Game as any).rooms['W2N1'].storage.my = true;
+    (Game as any).rooms['W2N1'].terminal.my = true;
+    (Game as any).rooms['W2N1'].storage.store.getUsedCapacity = () => 5_000; // well under 30k alone
+    (Game as any).rooms['W2N1'].terminal.store = makeTerminalStore({ energy: 250_000 }); // combined 255k — way over target
+
+    (Game as any).rooms['W2N2'].storage.my = true;
+    (Game as any).rooms['W2N2'].terminal.my = true;
+    (Game as any).rooms['W2N2'].storage.store.getUsedCapacity = () => 35_000; // above target too
+
+    runTerminal();
+
+    expect(homeTerminal.send).not.toHaveBeenCalled();
+  });
+
+  it('holisticEconomy: still sends when a colony genuinely has low combined storage+terminal energy', () => {
+    (Memory as any).holisticEconomy = true;
+    (Game as any).time = SEND_TICK;
+    const { homeTerminal } = makeColonySendSetup();
+
+    (Game as any).rooms['W1N1'].storage.my = true;
+    (Game as any).rooms['W1N1'].terminal.my = true;
+    (Game as any).rooms['W2N1'].storage.my = true;
+    (Game as any).rooms['W2N1'].terminal.my = true;
+    // storage 10k + terminal 5k (from makeColonySendSetup) = 15k — genuinely under target
+    (Game as any).rooms['W2N2'].storage.my = true;
+    (Game as any).rooms['W2N2'].terminal.my = true;
+    (Game as any).rooms['W2N2'].storage.store.getUsedCapacity = () => 35_000; // ineligible
+
+    runTerminal();
+
+    expect(homeTerminal.send).toHaveBeenCalledWith(
+      RESOURCE_ENERGY,
+      10_000,
+      'W2N1',
+      'colony energy support',
+    );
+  });
+
   it('does not send when colony has no terminal (RCL < 6, pre-terminal stage)', () => {
     (Game as any).time = SEND_TICK;
     const { homeTerminal } = makeColonySendSetup();
