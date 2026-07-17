@@ -1079,6 +1079,12 @@ function deliverToTerminalEnergy(creep: Creep): boolean {
   const floor = terminalEnergyFloor(creep.room);
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= floor) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
+  // A terminal's free capacity is shared across all resources, not just energy —
+  // when other minerals fill it up, transfer() fails with ERR_FULL. Without this
+  // guard the caller (deliver()) still treats the attempt as "handled" (only
+  // ERR_NOT_IN_RANGE triggers a fallback), so a hauler gets permanently stuck
+  // holding cargo it can never unload here instead of falling through to storage.
+  if (terminal.store.getFreeCapacity() <= 0) return false;
   if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
     moveTo(creep, terminal, {
       priority: PRIORITY_HAULER,

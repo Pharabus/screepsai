@@ -500,6 +500,40 @@ describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
     // Hub always uses the 15k floor — unchanged from before this fix.
     expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
   });
+
+  it('falls through to storage instead of stalling when the terminal is full of other resources', () => {
+    (Memory as any).holisticEconomy = true;
+    const storage = {
+      my: true,
+      pos: new RoomPosition(20, 20, 'W1N1'),
+      store: mockStore({ energy: 0 }, 1_000_000),
+    };
+    // Terminal energy is 0 (well under any floor) but every unit of its capacity
+    // is consumed by other minerals — transfer() would return ERR_FULL. Before
+    // the fix, deliverToTerminalEnergy attempted the transfer anyway and still
+    // returned true, so deliver() stopped there and the hauler never reached
+    // storage — permanently stuck holding cargo with nowhere to unload it.
+    const terminal = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ Z: 300_000 }, 300_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 500 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+    expect(creep.transfer).toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
 });
 
 describe('hauler lab logistics', () => {
