@@ -14,6 +14,7 @@ import {
   FACTORY_ENERGY_FLOOR,
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_ENERGY_TARGET,
+  ENERGY_TERMINAL_BUFFER,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
 import { colonyEnergy, upgradeBuffer } from '../utils/economy';
@@ -364,6 +365,23 @@ function pickup(creep: Creep): boolean {
   ) {
     if (pickupLabFlush(creep, mem)) return true;
   }
+
+  // Terminal deadlock preempt: a terminal at 0 free capacity with energy below
+  // ENERGY_TERMINAL_BUFFER can never recover on its own — every transfer() into
+  // it fails with ERR_FULL (so deliverToTerminalEnergy can no longer seed it,
+  // see the fix above) and every sell/buy/send requires enough energy already
+  // present to pay its fee. Break the cycle by pulling some of the terminal's
+  // largest mineral stack back into storage, which always has ample room.
+  // Gated to empty haulers (a "pick a new job" preempt) and to the exact
+  // deadlock condition so it's inert in normal operation. MUST rank above the
+  // storage-link high-water preempt below — that one claims almost every empty
+  // hauler on a normal tick (the source-link faucet keeps the storage link near
+  // its high-water mark continuously), so placing this preempt after it left
+  // the deadlock-breaker permanently starved of a turn, the same class of bug
+  // documented on the boost-lab and lab-flush preempts below (observed live:
+  // W43N58's terminal sat completely full with this fix deployed but never once
+  // fired because every empty hauler kept getting redirected to the link first).
+  if (creep.store.getUsedCapacity() === 0 && pickupTerminalOverflow(creep)) return true;
 
   // Storage-link high-water preempt: the normal link drain (STORAGE_LINK_DRAIN_THRESHOLD)
   // sits below continueCommittedPickup, so once a hauler commits to a distant source drop
@@ -925,11 +943,82 @@ function pickupFeederLabs(creep: Creep, mem: RoomMemory | undefined): boolean {
   return false;
 }
 
+/**
+ * Terminal deadlock breaker. A terminal at 0 free capacity with energy below
+ * ENERGY_TERMINAL_BUFFER is permanently stuck: no transfer can add energy
+ * (ERR_FULL on any resource) and no deal (sell/buy/send) can fire without
+ * enough energy already present to pay its fee. Withdraws the terminal's
+ * single largest resource stack back into storage — which always has ample
+ * room — freeing enough capacity for the next hauler cycle to seed the
+ * terminal with energy via deliverToTerminalEnergy and let
+ * sellSurplus/sendMineralsToHub/buyForLabs resume.
+ *
+ * Checks against ENERGY_TERMINAL_BUFFER, not literally zero: a single
+ * withdrawal only frees room for one hauler's worth of energy (typically far
+ * short of the buffer), and free capacity collapses back to 0 the instant
+ * that energy lands — so gating on "== 0 energy" stops this from running
+ * again after the first partial success, permanently stalling at whatever
+ * partial amount arrived (observed live: W43N58 plateaued at 800/5000 energy
+ * with free capacity back at 0, since 800 > 0 disabled this function for the
+ * rest of the climb). Needs several rounds to actually clear the buffer.
+ *
+ * Stamps forceStorageDelivery so the DELIVER state dumps the load straight
+ * into storage rather than letting deliverToTerminalOrStorage's normal
+ * floor-based routing send it right back into the capacity just freed (that
+ * routing only avoids the terminal when the resource's storage stock is below
+ * its floor — not guaranteed for whichever resource happens to be largest).
+ */
+function pickupTerminalOverflow(creep: Creep): boolean {
+  const terminal = myTerminal(creep.room);
+  const storage = myStorage(creep.room);
+  if (!terminal || !storage) return false;
+  if (terminal.store.getFreeCapacity() > 0) return false;
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= ENERGY_TERMINAL_BUFFER) return false;
+
+  let bestResource: ResourceConstant | undefined;
+  let bestAmount = 0;
+  for (const resource of Object.keys(terminal.store) as ResourceConstant[]) {
+    const amount = terminal.store.getUsedCapacity(resource);
+    if (amount > bestAmount) {
+      bestAmount = amount;
+      bestResource = resource;
+    }
+  }
+  if (!bestResource) return false;
+
+  creep.memory.targetId = terminal.id;
+  creep.memory.forceStorageDelivery = true;
+  const amount = Math.min(creep.store.getFreeCapacity(), bestAmount);
+  if (creep.withdraw(terminal, bestResource, amount) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, terminal, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ff0000' },
+    });
+  }
+  return true;
+}
+
 function pickupForTerminal(creep: Creep): boolean {
   // Use ownership-aware helpers so we only move minerals from OUR storage to OUR terminal.
   const storage = myStorage(creep.room);
   const terminal = myTerminal(creep.room);
   if (!storage || !terminal || terminal.store.getFreeCapacity() < 1000) return false;
+  // Reserve enough free capacity for energy to land whenever the terminal is
+  // short of it. In normal operation the terminal has ample free capacity
+  // (hundreds of thousands) so this never binds — it only matters once the
+  // terminal is ALSO near full, which is exactly the state pickupTerminalOverflow
+  // just fixed. Bounding the WITHDRAWAL AMOUNT (not just gating whether one
+  // happens) is essential: capping only the gate still lets a full-capacity
+  // withdrawal consume the capacity that fix just freed before
+  // deliverToTerminalEnergy gets a chance to use it, recreating the deadlock
+  // (observed live: freed capacity refilled with more Z/O within ticks, net
+  // terminal free capacity never left 0).
+  const energyDeficit = Math.max(
+    0,
+    ENERGY_TERMINAL_BUFFER - terminal.store.getUsedCapacity(RESOURCE_ENERGY),
+  );
+  const shippableToTerminal = terminal.store.getFreeCapacity() - energyDeficit;
+  if (shippableToTerminal < 1000) return false;
 
   for (const resource of Object.keys(storage.store) as ResourceConstant[]) {
     if (resource === RESOURCE_ENERGY) continue;
@@ -944,8 +1033,13 @@ function pickupForTerminal(creep: Creep): boolean {
       // storage below the floor, and deliverToTerminalOrStorage then routes the
       // load straight back to storage (storage < floor → storage branch) — a
       // futile pull/redeposit loop observed live with GH2O. Mirrors the bounded
-      // withdraw in pickupLabInput.
-      const toWithdraw = Math.min(creep.store.getFreeCapacity(), available - floor);
+      // withdraw in pickupLabInput. Also capped to shippableToTerminal so this
+      // trip doesn't eat into the capacity reserved for energy.
+      const toWithdraw = Math.min(
+        creep.store.getFreeCapacity(),
+        available - floor,
+        shippableToTerminal,
+      );
       if (toWithdraw <= 0) continue;
       if (creep.withdraw(storage, resource, toWithdraw) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
@@ -999,6 +1093,30 @@ function findFullSourceContainer(
 }
 
 function deliver(creep: Creep): void {
+  // Cargo withdrawn by pickupTerminalOverflow — force straight into storage.
+  // Skipping the normal routing (deliverToTerminalOrStorage) is deliberate:
+  // that function would send this exact resource right back into the terminal
+  // capacity we just freed whenever the resource's storage stock happens to
+  // already sit at/above its floor, undoing the fix.
+  if (creep.memory.forceStorageDelivery) {
+    const storage = myStorage(creep.room);
+    const resource = (Object.keys(creep.store) as ResourceConstant[]).find(
+      (r) => creep.store.getUsedCapacity(r) > 0,
+    );
+    if (storage && resource) {
+      if (creep.transfer(storage, resource) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, storage, {
+          priority: PRIORITY_HAULER,
+          visualizePathStyle: { stroke: '#ff0000' },
+        });
+      } else {
+        delete creep.memory.forceStorageDelivery;
+      }
+      return;
+    }
+    delete creep.memory.forceStorageDelivery;
+  }
+
   // Non-energy resources: deliver to lab input, terminal, or storage.
   // If the room has no storage or terminal (young colony), drop the mineral rather
   // than getting permanently stuck in DELIVER with no valid target.
@@ -1080,12 +1198,22 @@ function deliverToTerminalEnergy(creep: Creep): boolean {
   if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= floor) return false;
   if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
   // A terminal's free capacity is shared across all resources, not just energy —
-  // when other minerals fill it up, transfer() fails with ERR_FULL. Without this
-  // guard the caller (deliver()) still treats the attempt as "handled" (only
-  // ERR_NOT_IN_RANGE triggers a fallback), so a hauler gets permanently stuck
-  // holding cargo it can never unload here instead of falling through to storage.
-  if (terminal.store.getFreeCapacity() <= 0) return false;
-  if (creep.transfer(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+  // when other minerals fill it up, an unbounded transfer() fails with ERR_FULL
+  // the instant the carried amount exceeds whatever room is left, not just when
+  // the terminal is completely full. Without this guard the caller (deliver())
+  // still treats the attempt as "handled" (only ERR_NOT_IN_RANGE triggers a
+  // fallback), so a hauler gets permanently stuck holding cargo it can never
+  // unload here instead of falling through to storage. Transferring only the
+  // amount that actually fits means a partially-full terminal (e.g. capacity
+  // just freed by pickupTerminalOverflow) still gets topped up as far as
+  // possible, and any leftover cargo correctly falls through to storage on the
+  // next evaluation instead of retrying the same failing transfer forever.
+  const amount = Math.min(
+    creep.store.getUsedCapacity(RESOURCE_ENERGY),
+    terminal.store.getFreeCapacity(),
+  );
+  if (amount <= 0) return false;
+  if (creep.transfer(terminal, RESOURCE_ENERGY, amount) === ERR_NOT_IN_RANGE) {
     moveTo(creep, terminal, {
       priority: PRIORITY_HAULER,
       visualizePathStyle: { stroke: '#ffff00' },

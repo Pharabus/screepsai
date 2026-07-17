@@ -416,7 +416,7 @@ describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
 
     // Old flat 5k colony floor would have skipped this (10k already ≥ 5k) —
     // the surplus-aware 15k floor now delivers.
-    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
   it('keeps the 5k floor for a non-surplus colony (unchanged baseline)', () => {
@@ -443,7 +443,7 @@ describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
 
     hauler.run(creep);
 
-    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
   it('uses storage-only surplus check when holisticEconomy is off', () => {
@@ -469,7 +469,7 @@ describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
 
     hauler.run(creep);
 
-    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
   it('keeps the hub floor at 15k regardless of the room being non-surplus', () => {
@@ -498,7 +498,7 @@ describe('deliverToTerminalEnergy — surplus-aware terminal floor', () => {
     hauler.run(creep);
 
     // Hub always uses the 15k floor — unchanged from before this fix.
-    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY);
+    expect(creep.transfer).toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
   });
 
   it('falls through to storage instead of stalling when the terminal is full of other resources', () => {
@@ -3623,5 +3623,268 @@ describe('pickupTerminalEnergyToStorage', () => {
     hauler.run(creep);
 
     expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_ENERGY, expect.any(Number));
+  });
+});
+
+describe('pickupTerminalOverflow — terminal deadlock breaker', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  function makeStorage(contents: Record<string, number> = {}): any {
+    return {
+      id: 'storage1' as any,
+      my: true,
+      store: mockStore(contents, 1_000_000),
+    };
+  }
+
+  function makeFullTerminal(contents: Record<string, number>): any {
+    return {
+      id: 'terminal1' as any,
+      my: true,
+      store: mockStore(contents, 300_000),
+      cooldown: 0,
+    };
+  }
+
+  it('withdraws the largest stack when terminal is full and holds zero energy', () => {
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage({ energy: 0 });
+    // Z is the largest stack; sums exactly to the 300k cap (0 free).
+    const terminal = makeFullTerminal({ Z: 200_000, O: 100_000 });
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, 'Z', 800);
+    expect(creep.memory.forceStorageDelivery).toBe(true);
+  });
+
+  it('keeps firing while full and below the energy buffer, even after a partial success left some energy', () => {
+    // Regression test for the plateau bug: a prior version gated on energy
+    // being literally 0, so after one round left a small amount of energy
+    // (e.g. 800, still far short of ENERGY_TERMINAL_BUFFER=5000) with free
+    // capacity back at 0, the breaker refused to run again and progress
+    // stalled permanently. It must keep clearing capacity until energy
+    // actually clears the buffer.
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage({ energy: 0 });
+    const terminal = makeFullTerminal({ Z: 299_200, energy: 800 }); // 0 free, 800 energy
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, 'Z', 800);
+    expect(creep.memory.forceStorageDelivery).toBe(true);
+  });
+
+  it('does not fire when the terminal has free capacity', () => {
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage({ energy: 0 });
+    const terminal = makeFullTerminal({ Z: 100_000 }); // 200k free
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, 'Z', expect.any(Number));
+  });
+
+  it('does not fire when the terminal already holds energy (not deadlocked)', () => {
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    const storage = makeStorage({ energy: 0 });
+    const terminal = makeFullTerminal({ Z: 250_000, energy: 50_000 });
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, 'Z', expect.any(Number));
+  });
+
+  it('forceStorageDelivery routes the withdrawn cargo straight to storage, bypassing terminal overflow routing', () => {
+    const room = mockRoom({ name: 'W1N1' });
+    // Storage already holds this mineral above its normal hub floor (5000) —
+    // the generic deliverToTerminalOrStorage routing would send it back to the
+    // terminal's "overflow" branch instead of storage. forceStorageDelivery
+    // must override that and land it in storage anyway.
+    const storage = makeStorage({ Z: 50_000 });
+    const terminal = makeFullTerminal({});
+    room.storage = storage;
+    room.terminal = terminal;
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER', forceStorageDelivery: true },
+      store: mockStore({ Z: 800 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(storage, 'Z');
+    expect(creep.transfer).not.toHaveBeenCalledWith(terminal, 'Z');
+  });
+});
+
+describe('pickupForTerminal — reserves capacity for energy when the terminal is short', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('does not push more minerals in when a near-full terminal is short of energy', () => {
+    // Mirrors the state right after pickupTerminalOverflow frees a small amount
+    // of capacity (3000 free — above the pre-existing 1000 minimum-batch gate,
+    // so this specifically exercises the new energy reservation, not that gate)
+    // with energy still 0: without the reservation guard, pickupForTerminal
+    // would immediately consume that freed room with more mineral, starving
+    // deliverToTerminalEnergy of the space it needs.
+    const storage = {
+      id: 'storage1' as any,
+      my: true,
+      store: mockStore({ energy: 100, O: 50_000 }, 1_000_000),
+    };
+    const terminal = {
+      id: 'terminal1' as any,
+      my: true,
+      store: mockStore({ energy: 0, Z: 297_000 }, 300_000), // 3000 free
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'O', expect.any(Number));
+  });
+
+  it('still pushes minerals in when the terminal has ample free capacity, even if energy is momentarily low', () => {
+    // Normal operation: a terminal with hundreds of thousands of free capacity
+    // is never actually contending with deliverToTerminalEnergy for room, so a
+    // momentary energy dip (e.g. a colony terminal sitting at its normal 5k
+    // floor) must not disable routine mineral shipment.
+    const storage = {
+      id: 'storage1' as any,
+      my: true,
+      store: mockStore({ energy: 100, O: 50_000 }, 1_000_000),
+    };
+    const terminal = {
+      id: 'terminal1' as any,
+      my: true,
+      store: mockStore({ energy: 0 }, 300_000), // ~300k free
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'O', expect.any(Number));
+  });
+
+  it('caps the withdrawal to the amount that leaves the energy reserve intact', () => {
+    // Regression test for the actual bug: an earlier version of this guard only
+    // gated WHETHER a withdrawal happened, not how much — so once free capacity
+    // opened up above the deficit threshold, a large-capacity hauler could still
+    // withdraw more than the terminal could actually receive without eating
+    // into the reserve. Terminal: 6000 free, 0 energy → 5000 deficit → only
+    // 1000 is safely shippable, even though this hauler could carry 2000.
+    const storage = {
+      id: 'storage1' as any,
+      my: true,
+      store: mockStore({ energy: 100, O: 50_000 }, 1_000_000),
+    };
+    const terminal = {
+      id: 'terminal1' as any,
+      my: true,
+      store: mockStore({ energy: 0, Z: 294_000 }, 300_000), // 6000 free
+    };
+    const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).rooms = { W1N1: room };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}, 2000),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    (Game as any).creeps = { hauler_1: creep };
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'O', 1000);
   });
 });

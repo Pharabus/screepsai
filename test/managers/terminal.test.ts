@@ -2217,6 +2217,145 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     expect(Game.market.deal).toHaveBeenCalledWith('order1', expect.any(Number), 'W1N1');
     consoleSpy.mockRestore();
   });
+
+  it('does not ship into a hub with free capacity too small to also reserve room for energy', () => {
+    // Regression test: a hub terminal near full (small free capacity) but short
+    // of energy is exactly the deadlock pickupTerminalOverflow (hauler.ts)
+    // exists to fix — feeders must not immediately refill whatever capacity
+    // that fix frees, or energy never gets a chance to land and the hub can
+    // never sell to make room on its own.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    // Hub terminal: 3000 free (above MIN_MINERAL_SHIP), 0 energy — the 5000-unit
+    // energy deficit exceeds the 3000 free capacity, so shipping in must skip.
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ Z: 297_000 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('caps the shipment amount to leave the energy reserve intact, even when the feeder could fill the rest', () => {
+    // Regression test for the actual bug: an earlier version of this guard only
+    // gated WHETHER a shipment happened, not how much it sent — so once any
+    // capacity opened up above the deficit threshold, a feeder would still ship
+    // enough to consume it all, undoing pickupTerminalOverflow's fix within
+    // ticks. The shipped amount must be capped to freeCapacity - energyDeficit,
+    // not freeCapacity alone.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Feeder holds far more O than the hub could take while preserving its reserve.
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 20_000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    // Hub: 12000 free, 800 energy (4200 deficit below the 5000 buffer).
+    // Shippable = 12000 - 4200 = 7800, not the full 12000.
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({ Z: 287_200, energy: 800 }),
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 7800, 'W3N3', 'mineral consolidation');
+    consoleSpy.mockRestore();
+  });
+
+  it('still ships into a hub with ample free capacity even if the hub is momentarily short of energy', () => {
+    // Normal operation: a hub with hundreds of thousands of free capacity is
+    // never actually contending with deliverToTerminalEnergy for room, so a
+    // momentary energy dip must not disable routine mineral consolidation.
+    (Game as any).time = SHIP_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const feederTerminal: any = {
+      store: makeFullTerminalStore({ O: 6000, energy: 50_000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const feeder = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      terminal: feederTerminal,
+    });
+    const hubTerminal: any = {
+      store: makeFullTerminalStore({}), // 0 energy, ~300k free
+      cooldown: 0,
+    };
+    const hub = mockRoom({
+      name: 'W3N3',
+      controller: { my: true, level: 7 },
+      terminal: hubTerminal,
+    });
+    (Game as any).rooms = { W1N1: feeder, W3N3: hub };
+    (Memory as any).rooms = {
+      W1N1: {},
+      W3N3: { labIds: ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'] },
+    };
+    (Game as any).market = {
+      getAllOrders: vi.fn(() => []),
+      calcTransactionCost: vi.fn(() => 100),
+      deal: vi.fn(() => OK),
+    };
+
+    runTerminal();
+
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
+    consoleSpy.mockRestore();
+  });
 });
 
 describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {

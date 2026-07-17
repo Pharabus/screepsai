@@ -490,16 +490,30 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 
   if (!bestResource || bestAmount < MIN_MINERAL_SHIP) return;
 
-  // Clamp to hub terminal's free capacity for this resource.
-  const hubFree = hubTerminal.store.getFreeCapacity(bestResource);
-  if (hubFree < MIN_MINERAL_SHIP) {
+  // Clamp to hub terminal's free capacity for this resource, minus whatever
+  // capacity must stay reserved for energy to land. In normal operation the
+  // hub terminal has ample free capacity so the reserve is never binding — it
+  // only matters once the hub is ALSO near full, which is exactly the state
+  // pickupTerminalOverflow (hauler.ts) exists to fix. Bounding the SHIPMENT
+  // AMOUNT (not just gating whether one happens) is essential: a hub with,
+  // say, 12000 free and only a 4200 deficit would otherwise still ship the
+  // full 12000 in one go, consuming the capacity that fix just freed before
+  // deliverToTerminalEnergy gets a chance to use it and recreating the
+  // deadlock (observed live: multiple feeders kept shipping Z/O/X/battery into
+  // W43N58 right back to 300000/300000 within ticks of it being freed).
+  const hubEnergyDeficit = Math.max(
+    0,
+    ENERGY_TERMINAL_BUFFER - hubTerminal.store.getUsedCapacity(RESOURCE_ENERGY),
+  );
+  const hubShippable = hubTerminal.store.getFreeCapacity(bestResource) - hubEnergyDeficit;
+  if (hubShippable < MIN_MINERAL_SHIP) {
     verboseTerminalLog(
-      `[terminal] ${room.name}: sendMineralsToHub skip — hub full for ${bestResource} (free=${hubFree})`,
+      `[terminal] ${room.name}: sendMineralsToHub skip — hub full for ${bestResource} (shippable=${hubShippable})`,
     );
     return;
   }
 
-  const amount = Math.min(bestAmount, hubFree);
+  const amount = Math.min(bestAmount, hubShippable);
 
   // Energy guard: only send if the feeder terminal can cover the transaction
   // cost plus a small safety margin. Deliberately NOT ENERGY_TERMINAL_BUFFER

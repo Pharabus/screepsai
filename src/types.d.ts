@@ -66,6 +66,17 @@ interface CreepMemory {
    * RemoteMiningMission.haulerIds / reserverId in sync without needing spawn callbacks.
    */
   missionId?: string;
+  /**
+   * Set by pickupTerminalOverflow() (src/roles/hauler.ts) when a hauler withdraws
+   * a mineral from a terminal that is completely full (0 free capacity) AND holds
+   * zero energy — a deadlock no transfer/deal can ever break on its own, since a
+   * transfer of any resource fails with ERR_FULL and every sell/buy/send requires
+   * energy already present to pay its fee. Forces the DELIVER state to dump the
+   * withdrawn load straight into storage rather than letting the normal
+   * deliverToTerminalOrStorage routing send it right back into the capacity we
+   * just freed. Cleared once the delivery completes.
+   */
+  forceStorageDelivery?: boolean;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
