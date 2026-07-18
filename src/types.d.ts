@@ -247,13 +247,47 @@ interface RoomMemory {
    */
   perimeterPlan?: PerimeterPlanData;
   // Observer scan queue (src/managers/observer.ts) — owned by whichever room
-  // has a built StructureObserver. v1 scope: cycles this room's own
-  // remoteRooms only, one room requested per tick (observeRoom() grants
-  // vision starting the NEXT tick, so requestedRoom tracks what to harvest).
+  // has a built StructureObserver. Cycles this room's own remoteRooms plus
+  // its adjacent highway rooms, one room requested per tick (observeRoom()
+  // grants vision starting the NEXT tick, so requestedRoom tracks what to
+  // harvest).
   observerQueue?: string[];
   observerQueueIdx?: number;
   observerQueueBuiltAt?: number;
   observerRequestedRoom?: string;
+  /**
+   * Power Bank spotted on a highway-room observer scan (`recordHighwayIntel`
+   * in `src/utils/roomIntel.ts`). Filtered at record time to power >= 2000,
+   * ticksToDecay >= 3000, and 2+ free adjacent tiles (a bank needs multiple
+   * attackers to crack before it decays). `recordedAtTick`/`ticksToDecay`
+   * let a consumer compute the actual remaining decay budget later, since the
+   * scan itself may be stale by the time anything acts on it. Cleared when a
+   * rescan finds no qualifying bank.
+   */
+  scoutedPowerBank?: {
+    id: Id<StructurePowerBank>;
+    x: number;
+    y: number;
+    power: number;
+    ticksToDecay: number;
+    freeAdjacentTiles: number;
+    recordedAtTick: number;
+  };
+  /**
+   * Commodity Deposits spotted on a highway-room observer scan. `lastCooldown`
+   * is the game's own signal for how exhausted a deposit is — its next
+   * harvest cooldown only ever grows from here, so a future consumer decides
+   * viability by comparing against a threshold (todo.md: "abandon when
+   * cooldown exceeds ~100"), not tracked as a decision here.
+   */
+  scoutedDeposits?: {
+    id: Id<Deposit>;
+    x: number;
+    y: number;
+    depositType: DepositConstant;
+    lastCooldown: number;
+    recordedAtTick: number;
+  }[];
 }
 
 // ---------------------------------------------------------------------------

@@ -107,3 +107,83 @@ export function recordRoomIntel(room: Room): void {
 
   recordLoot(room, rmem);
 }
+
+// Power Bank viability thresholds (todo.md "Scan highway rooms for Power
+// Banks"): a bank needs enough power to be worth the trip, enough remaining
+// life to actually organize a squad around, and room for multiple attackers
+// to stand adjacent (a single-attacker approach can't out-damage the bank's
+// regen before it decays).
+const POWER_BANK_MIN_POWER = 2000;
+const POWER_BANK_MIN_DECAY = 3000;
+const POWER_BANK_MIN_FREE_TILES = 2;
+
+const EIGHT_NEIGHBOR_OFFSETS: [number, number][] = [
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [-1, 0],
+  [1, 0],
+  [-1, 1],
+  [0, 1],
+  [1, 1],
+];
+
+function countFreeAdjacentTiles(room: Room, x: number, y: number): number {
+  const terrain = room.getTerrain();
+  let count = 0;
+  for (const [dx, dy] of EIGHT_NEIGHBOR_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || nx > 49 || ny < 0 || ny > 49) continue;
+    if (terrain.get(nx, ny) !== TERRAIN_MASK_WALL) count++;
+  }
+  return count;
+}
+
+/**
+ * Records Power Bank and Deposit intel from a currently-visible highway room
+ * into RoomMemory. Highway rooms have no controller/sources, so this is
+ * intentionally separate from `recordRoomIntel` rather than folded into it —
+ * the two scan for entirely different things. Called from `observer.ts` when
+ * a queued highway room gains vision.
+ */
+export function recordHighwayIntel(room: Room): void {
+  const rmem = (Memory.rooms[room.name] ??= {});
+
+  const bank = getStructuresByType(room)[STRUCTURE_POWER_BANK]?.[0] as
+    | StructurePowerBank
+    | undefined;
+  const freeAdjacentTiles = bank ? countFreeAdjacentTiles(room, bank.pos.x, bank.pos.y) : 0;
+  if (
+    bank &&
+    bank.power >= POWER_BANK_MIN_POWER &&
+    bank.ticksToDecay >= POWER_BANK_MIN_DECAY &&
+    freeAdjacentTiles >= POWER_BANK_MIN_FREE_TILES
+  ) {
+    rmem.scoutedPowerBank = {
+      id: bank.id,
+      x: bank.pos.x,
+      y: bank.pos.y,
+      power: bank.power,
+      ticksToDecay: bank.ticksToDecay,
+      freeAdjacentTiles,
+      recordedAtTick: Game.time,
+    };
+  } else {
+    delete rmem.scoutedPowerBank;
+  }
+
+  const deposits = room.find(FIND_DEPOSITS);
+  if (deposits.length > 0) {
+    rmem.scoutedDeposits = deposits.map((d) => ({
+      id: d.id,
+      x: d.pos.x,
+      y: d.pos.y,
+      depositType: d.depositType,
+      lastCooldown: d.lastCooldown,
+      recordedAtTick: Game.time,
+    }));
+  } else {
+    delete rmem.scoutedDeposits;
+  }
+}

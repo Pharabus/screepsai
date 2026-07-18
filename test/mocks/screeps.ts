@@ -28,6 +28,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).FIND_MINERALS = 110;
 (globalThis as any).FIND_RUINS = 123;
 (globalThis as any).FIND_TOMBSTONES = 118;
+(globalThis as any).FIND_DEPOSITS = 122;
 
 // Look constants
 (globalThis as any).LOOK_CREEPS = 'creep';
@@ -52,6 +53,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).STRUCTURE_NUKER = 'nuker';
 (globalThis as any).STRUCTURE_POWER_SPAWN = 'powerSpawn';
 (globalThis as any).STRUCTURE_OBSERVER = 'observer';
+(globalThis as any).STRUCTURE_POWER_BANK = 'powerBank';
 
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';

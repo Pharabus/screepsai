@@ -160,4 +160,55 @@ describe('runObserver', () => {
 
     expect(observer.observeRoom).not.toHaveBeenCalled();
   });
+
+  it('includes adjacent highway rooms in the queue alongside remoteRooms (sorted, deduped)', () => {
+    const observer = mockObserverStub();
+    const room = makeOwningRoom('W5N5', observer);
+    Game.rooms['W5N5'] = room;
+    Memory.rooms['W5N5'] = { remoteRooms: ['W3N5'] };
+    (Game as any).map.describeExits = () => ({
+      [FIND_EXIT_TOP]: 'W5N10', // y=10 -> highway
+      [FIND_EXIT_RIGHT]: 'W3N5', // not a highway; also a dup of the remote room
+      [FIND_EXIT_LEFT]: 'W4N5', // not a highway
+    });
+
+    runObserver();
+
+    expect(Memory.rooms['W5N5']!.observerQueue).toEqual(['W3N5', 'W5N10']);
+  });
+
+  it('harvests highway intel (power bank), not remote intel, for a highway-room target', () => {
+    const observer = mockObserverStub();
+    const room = makeOwningRoom('W1N1', observer);
+    Game.rooms['W1N1'] = room;
+    Memory.rooms['W1N1'] = {
+      remoteRooms: [],
+      observerQueue: ['W10N1'],
+      observerQueueIdx: 0,
+      observerQueueBuiltAt: Game.time,
+      observerRequestedRoom: 'W10N1',
+    };
+
+    const bank = {
+      id: 'bank1',
+      structureType: STRUCTURE_POWER_BANK,
+      pos: { x: 25, y: 25 },
+      power: 4000,
+      ticksToDecay: 4000,
+    };
+    const observedRoom = mockRoom({
+      name: 'W10N1',
+      controller: undefined,
+      find: (type: number) => (type === FIND_STRUCTURES ? [bank] : []),
+      getTerrain: () => ({ get: () => 0 }), // fully open terrain
+    });
+    Game.rooms['W10N1'] = observedRoom;
+
+    runObserver();
+
+    const targetMem = Memory.rooms['W10N1']!;
+    expect(targetMem.scoutedPowerBank).toMatchObject({ id: 'bank1', power: 4000 });
+    // recordRoomIntel (the remote-room path) must NOT have run for this target.
+    expect(targetMem.scoutedSources).toBeUndefined();
+  });
 });

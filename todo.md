@@ -391,18 +391,19 @@ Full build-out of the RCL 8 structure set: Observer (eyes everywhere), Power Spa
 #### Observer (prerequisite for all highway work)
 
 - [x] **Observer placement** — `placeObserver(room)` in `construction.ts` builds the observer at RCL 8 (anchored near spawn, not link-gated) and is wired into `runConstruction`.
-- [x] **Observer scanning (v1 — remote rooms only)** — `src/managers/observer.ts` `runObserver()` cycles one room per tick from a queue built off `RoomMemory.remoteRooms`, sharing intel-recording logic with `scout.ts` via the new `src/utils/roomIntel.ts`. Checking remote-room status without sending creeps: done. **Not yet covered** (separate future work, only worth adding once this proves valuable): monitoring hostile neighbors, and highway-room scanning for deposits/power banks (still the prerequisite for those two items below).
+- [x] **Observer scanning (v1 — remote rooms only)** — `src/managers/observer.ts` `runObserver()` cycles one room per tick from a queue built off `RoomMemory.remoteRooms`, sharing intel-recording logic with `scout.ts` via the new `src/utils/roomIntel.ts`. Checking remote-room status without sending creeps: done. **Not yet covered** (separate future work, only worth adding once this proves valuable): monitoring hostile neighbors.
+- [x] **Highway-room scanning for power banks/deposits** — `buildObserverQueue` (`observer.ts`) also adds each owned room's adjacent highway rooms (`adjacentHighwayRooms`, via `Game.map.describeExits` + `isHighwayRoom` in the new `src/utils/roomName.ts`) to the same scan queue. On harvest, a highway-room target is routed to the new `recordHighwayIntel` (`src/utils/roomIntel.ts`) instead of `recordRoomIntel` — highway rooms have no controller/sources, so the two scans are kept separate rather than folded together. Wrapped in its own `profile('observer.highway', ...)` label (visible in `stats()`) so its CPU cost is measured independently rather than assumed. v1 scope: only each owned room's 4 direct cardinal neighbors, not a full highway-network BFS — matches the same "narrow first, widen if it proves valuable" approach the remote-room-only observer scope used.
 
 #### Power mining
 
 - [x] **Place Power Spawn** — `placePowerSpawn(room)` in `construction.ts` builds it at RCL 8, anchored range 2-5 from storage, link-gated like terminal/factory.
-- [ ] **Scan highway rooms for Power Banks** — Via Observer. Filter by `power >= 2000`, `ticksToDecay >= 3000`, and 2+ free adjacent tiles (banks need multiple attackers).
+- [x] **Scan highway rooms for Power Banks** — See "Highway-room scanning" above. Filters to `power >= 2000`, `ticksToDecay >= 3000`, and 2+ free adjacent tiles (banks need multiple attackers), stored as `RoomMemory.scoutedPowerBank`. Still blocked: nothing yet consumes this to actually spawn a squad.
 - [ ] **Power squad: `powerAttacker` + `powerHealer` + `powerHauler`** — Attacker is pure ATTACK + MOVE; healer sticks on range 1 with HEAL + MOVE; hauler arrives as the bank breaks to scoop the drop and run it home. All three scale bodies to room `energyCapacityAvailable`.
 - [ ] **Power processing loop** — Once power is in storage, feed `powerSpawn.processPower()` (100 energy + 1 power per call, up to 50/tick) to convert into global power level (GPL).
 
 #### Deposit mining
 
-- [ ] **Scout highway rooms for deposits** — Use Observer (RCL 8) or scout creeps (1 MOVE) to find `FIND_DEPOSITS`. Track `lastCooldown` per deposit — abandon when cooldown exceeds a threshold (e.g. 100).
+- [x] **Scout highway rooms for deposits** — See "Highway-room scanning" above. `recordHighwayIntel` records every deposit found via `FIND_DEPOSITS` (type + position + `lastCooldown`) into `RoomMemory.scoutedDeposits`; the cooldown-based abandon threshold is left for whichever future consumer actually decides viability (dedicated `depositMiner` role below), not decided at scan time.
 - [ ] **Add `depositMiner` + dedicated hauler** — Deposit miners harvest until cooldown climbs, then return; haulers shuttle the resource back to a home-room terminal. Bodies need enough MOVE to handle remote travel at 1:1 fatigue on roadless terrain.
 - [ ] **Feed deposit output into the factory** — Deposits produce commodity inputs (silicon, biomass, metal, mist). Factory manager consumes them at level-appropriate recipes.
 
