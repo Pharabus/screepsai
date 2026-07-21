@@ -2286,8 +2286,8 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       controller: { my: true, level: 6 },
       terminal: feederTerminal,
     });
-    // Hub: 12000 free, 800 energy (4200 deficit below the 5000 buffer).
-    // Shippable = 12000 - 4200 = 7800, not the full 12000.
+    // Hub: 12000 free, 800 energy (9200 deficit below the 10000 recovery target).
+    // Shippable = 12000 - 9200 = 2800, not the full 12000.
     const hubTerminal: any = {
       store: makeFullTerminalStore({ Z: 287_200, energy: 800 }),
       cooldown: 0,
@@ -2310,7 +2310,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
 
     runTerminal();
 
-    expect(feederTerminal.send).toHaveBeenCalledWith('O', 7800, 'W3N3', 'mineral consolidation');
+    expect(feederTerminal.send).toHaveBeenCalledWith('O', 2800, 'W3N3', 'mineral consolidation');
     consoleSpy.mockRestore();
   });
 

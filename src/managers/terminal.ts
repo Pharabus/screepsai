@@ -1,5 +1,6 @@
 import {
   ENERGY_TERMINAL_BUFFER,
+  ENERGY_TERMINAL_RECOVERY_TARGET,
   MINERAL_SHIP_ENERGY_BUFFER,
   BATTERY_TERMINAL_SELL_FLOOR,
   MINERAL_TERMINAL_SELL_FLOOR,
@@ -501,9 +502,16 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
   // deliverToTerminalEnergy gets a chance to use it and recreating the
   // deadlock (observed live: multiple feeders kept shipping Z/O/X/battery into
   // W43N58 right back to 300000/300000 within ticks of it being freed).
+  // Reserves up to ENERGY_TERMINAL_RECOVERY_TARGET, not ENERGY_TERMINAL_BUFFER
+  // — reserving only up to the buffer left zero headroom for sellSurplus/
+  // buyForLabs' "buffer + transaction cost" gates, so this reservation went
+  // inert at the exact same energy level (== buffer) as pickupTerminalOverflow
+  // and pickupForTerminal, and the hub re-filled with minerals before its
+  // energy could ever clear a fee gate (see pickupTerminalOverflow's doc
+  // comment in hauler.ts for the live incident this fixes).
   const hubEnergyDeficit = Math.max(
     0,
-    ENERGY_TERMINAL_BUFFER - hubTerminal.store.getUsedCapacity(RESOURCE_ENERGY),
+    ENERGY_TERMINAL_RECOVERY_TARGET - hubTerminal.store.getUsedCapacity(RESOURCE_ENERGY),
   );
   const hubShippable = hubTerminal.store.getFreeCapacity(bestResource) - hubEnergyDeficit;
   if (hubShippable < MIN_MINERAL_SHIP) {

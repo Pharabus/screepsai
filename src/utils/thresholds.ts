@@ -66,6 +66,24 @@ export const MINERAL_TERMINAL_CEILING = 20_000;
 /** Terminal mineral above this amount is sold as surplus. Sits below MINERAL_TERMINAL_CEILING (the combined hold/throttle cap) so there is always a sellable band — without this gap the terminal can never cross its own sell line and minerals never sell. */
 export const MINERAL_TERMINAL_SELL_FLOOR = 10_000;
 export const ENERGY_TERMINAL_BUFFER = 5_000;
+/**
+ * Target energy level for the terminal-full deadlock breaker and its
+ * companion capacity reservations (pickupTerminalOverflow, pickupForTerminal,
+ * sendMineralsToHub — hauler.ts / terminal.ts), deliberately HIGHER than
+ * ENERGY_TERMINAL_BUFFER. Every fee-gated consumer (sellSurplus, buyForLabs,
+ * sendEnergyToColonies) needs terminal energy > ENERGY_TERMINAL_BUFFER + cost
+ * to fire — a real transaction always costs something, so reserving/breaking
+ * only up to exactly ENERGY_TERMINAL_BUFFER leaves zero headroom for any fee
+ * and the terminal parks at precisely that boundary forever (observed live:
+ * W43N58 stuck at exactly 300000/300000 with energy pinned at exactly 5000 —
+ * pickupTerminalOverflow's stop condition, pickupForTerminal's reservation,
+ * and sendMineralsToHub's hub-side reservation all independently treated
+ * "energy == ENERGY_TERMINAL_BUFFER" as "done," so all three stopped
+ * protecting capacity at once and the terminal refilled with minerals before
+ * energy could ever climb past the fee gates). The margin above the buffer
+ * only needs to comfortably cover a typical transaction fee, not eliminate it.
+ */
+export const ENERGY_TERMINAL_RECOVERY_TARGET = 10_000;
 /** Hub rooms keep 15k liquid for market ops (selling, buying, inter-empire sends). */
 export const TERMINAL_ENERGY_FLOOR = 15_000;
 /**

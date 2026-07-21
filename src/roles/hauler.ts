@@ -14,7 +14,7 @@ import {
   FACTORY_ENERGY_FLOOR,
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_ENERGY_TARGET,
-  ENERGY_TERMINAL_BUFFER,
+  ENERGY_TERMINAL_RECOVERY_TARGET,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
 import { colonyEnergy, upgradeBuffer } from '../utils/economy';
@@ -367,7 +367,7 @@ function pickup(creep: Creep): boolean {
   }
 
   // Terminal deadlock preempt: a terminal at 0 free capacity with energy below
-  // ENERGY_TERMINAL_BUFFER can never recover on its own — every transfer() into
+  // ENERGY_TERMINAL_RECOVERY_TARGET can never recover on its own — every transfer() into
   // it fails with ERR_FULL (so deliverToTerminalEnergy can no longer seed it,
   // see the fix above) and every sell/buy/send requires enough energy already
   // present to pay its fee. Break the cycle by pulling some of the terminal's
@@ -945,22 +945,31 @@ function pickupFeederLabs(creep: Creep, mem: RoomMemory | undefined): boolean {
 
 /**
  * Terminal deadlock breaker. A terminal at 0 free capacity with energy below
- * ENERGY_TERMINAL_BUFFER is permanently stuck: no transfer can add energy
- * (ERR_FULL on any resource) and no deal (sell/buy/send) can fire without
- * enough energy already present to pay its fee. Withdraws the terminal's
- * single largest resource stack back into storage — which always has ample
- * room — freeing enough capacity for the next hauler cycle to seed the
- * terminal with energy via deliverToTerminalEnergy and let
+ * ENERGY_TERMINAL_RECOVERY_TARGET is permanently stuck: no transfer can add
+ * energy (ERR_FULL on any resource) and no deal (sell/buy/send) can fire
+ * without enough energy already present to pay its fee. Withdraws the
+ * terminal's single largest resource stack back into storage — which always
+ * has ample room — freeing enough capacity for the next hauler cycle to seed
+ * the terminal with energy via deliverToTerminalEnergy and let
  * sellSurplus/sendMineralsToHub/buyForLabs resume.
  *
- * Checks against ENERGY_TERMINAL_BUFFER, not literally zero: a single
- * withdrawal only frees room for one hauler's worth of energy (typically far
- * short of the buffer), and free capacity collapses back to 0 the instant
- * that energy lands — so gating on "== 0 energy" stops this from running
- * again after the first partial success, permanently stalling at whatever
- * partial amount arrived (observed live: W43N58 plateaued at 800/5000 energy
- * with free capacity back at 0, since 800 > 0 disabled this function for the
- * rest of the climb). Needs several rounds to actually clear the buffer.
+ * Checks against ENERGY_TERMINAL_RECOVERY_TARGET, not ENERGY_TERMINAL_BUFFER
+ * and not literally zero: a single withdrawal only frees room for one
+ * hauler's worth of energy (typically far short of the target), and free
+ * capacity collapses back to 0 the instant that energy lands — so gating on
+ * "== 0 energy" stops this from running again after the first partial
+ * success, permanently stalling at whatever partial amount arrived. Gating on
+ * ENERGY_TERMINAL_BUFFER itself (5000) has the same failure mode one step
+ * later: every fee-gated consumer needs *more* than that buffer to actually
+ * fire (buffer + transaction cost), so a breaker that stops exactly at the
+ * buffer leaves zero headroom and the terminal parks there forever (observed
+ * live: W43N58 pinned at exactly 300000/300000 with energy exactly 5000 for
+ * an extended period — this function, pickupForTerminal's reservation, and
+ * sendMineralsToHub's hub-side reservation all treated "energy ==
+ * ENERGY_TERMINAL_BUFFER" as "done" simultaneously, so all three stopped
+ * protecting capacity at once and minerals refilled the terminal before
+ * energy could climb past any fee gate). ENERGY_TERMINAL_RECOVERY_TARGET
+ * (10000) leaves real headroom above the buffer so a typical fee can clear.
  *
  * Stamps forceStorageDelivery so the DELIVER state dumps the load straight
  * into storage rather than letting deliverToTerminalOrStorage's normal
@@ -973,7 +982,8 @@ function pickupTerminalOverflow(creep: Creep): boolean {
   const storage = myStorage(creep.room);
   if (!terminal || !storage) return false;
   if (terminal.store.getFreeCapacity() > 0) return false;
-  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= ENERGY_TERMINAL_BUFFER) return false;
+  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= ENERGY_TERMINAL_RECOVERY_TARGET)
+    return false;
 
   let bestResource: ResourceConstant | undefined;
   let bestAmount = 0;
@@ -1012,10 +1022,17 @@ function pickupForTerminal(creep: Creep): boolean {
   // withdrawal consume the capacity that fix just freed before
   // deliverToTerminalEnergy gets a chance to use it, recreating the deadlock
   // (observed live: freed capacity refilled with more Z/O within ticks, net
-  // terminal free capacity never left 0).
+  // terminal free capacity never left 0). Reserves up to
+  // ENERGY_TERMINAL_RECOVERY_TARGET, not ENERGY_TERMINAL_BUFFER — reserving
+  // only up to the buffer left zero headroom for sellSurplus/buyForLabs'
+  // "buffer + transaction cost" gates, so this reservation and
+  // pickupTerminalOverflow's stop condition both went inert at the exact same
+  // boundary (energy == buffer) and the terminal re-filled with minerals
+  // before energy could ever clear a fee gate (see pickupTerminalOverflow's
+  // doc comment for the live incident this fixes).
   const energyDeficit = Math.max(
     0,
-    ENERGY_TERMINAL_BUFFER - terminal.store.getUsedCapacity(RESOURCE_ENERGY),
+    ENERGY_TERMINAL_RECOVERY_TARGET - terminal.store.getUsedCapacity(RESOURCE_ENERGY),
   );
   const shippableToTerminal = terminal.store.getFreeCapacity() - energyDeficit;
   if (shippableToTerminal < 1000) return false;

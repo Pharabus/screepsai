@@ -3858,8 +3858,9 @@ describe('pickupForTerminal — reserves capacity for energy when the terminal i
     // gated WHETHER a withdrawal happened, not how much — so once free capacity
     // opened up above the deficit threshold, a large-capacity hauler could still
     // withdraw more than the terminal could actually receive without eating
-    // into the reserve. Terminal: 6000 free, 0 energy → 5000 deficit → only
-    // 1000 is safely shippable, even though this hauler could carry 2000.
+    // into the reserve. Terminal: 11000 free, 0 energy → 10000 deficit (the
+    // recovery target, not the smaller consumption-gate buffer) → only 1000 is
+    // safely shippable, even though this hauler could carry 2000.
     const storage = {
       id: 'storage1' as any,
       my: true,
@@ -3868,7 +3869,7 @@ describe('pickupForTerminal — reserves capacity for energy when the terminal i
     const terminal = {
       id: 'terminal1' as any,
       my: true,
-      store: mockStore({ energy: 0, Z: 294_000 }, 300_000), // 6000 free
+      store: mockStore({ energy: 0, Z: 289_000 }, 300_000), // 11000 free
     };
     const room = mockRoom({ name: 'W1N1', storage, terminal, find: vi.fn(() => []) });
     (Memory as any).rooms = { W1N1: {} };
