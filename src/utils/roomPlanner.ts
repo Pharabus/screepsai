@@ -206,6 +206,20 @@ export function ensureRoomPlan(room: Room): void {
     }
   }
 
+  // Power spawn tracking (RCL 8+)
+  if ((room.controller?.level ?? 0) >= 8) {
+    if (mem.powerSpawnId) {
+      const ps = Game.getObjectById(mem.powerSpawnId);
+      if (!ps) mem.powerSpawnId = undefined;
+    }
+    if (!mem.powerSpawnId) {
+      const powerSpawns = room.find(FIND_MY_STRUCTURES, {
+        filter: (s): s is StructurePowerSpawn => s.structureType === STRUCTURE_POWER_SPAWN,
+      });
+      if (powerSpawns.length > 0) mem.powerSpawnId = powerSpawns[0]!.id;
+    }
+  }
+
   // Compute base layout plan once — drives construction manager placement.
   // Clear stale plans when the version changes so rooms auto-replan on next tick.
   if (mem.layoutPlan && mem.layoutPlan.version !== LAYOUT_PLAN_VERSION) {

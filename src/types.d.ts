@@ -156,6 +156,8 @@ interface RoomMemory {
   // Factory (RCL 7+)
   factoryId?: Id<StructureFactory>;
   factoryRecipe?: ResourceConstant;
+  // Power spawn (RCL 8+)
+  powerSpawnId?: Id<StructurePowerSpawn>;
   /**
    * ID of a foreign-owned structure in this room whose store still holds
    * resources we want to capture. Set by cleanupClaimedRoom() when a

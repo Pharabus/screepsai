@@ -10,6 +10,12 @@ import { runTerminal, formatMarketStatus } from './managers/terminal';
 import { runLabs } from './managers/labs';
 import { runFactory } from './managers/factory';
 import { runObserver } from './managers/observer';
+import { runPowerSpawn } from './managers/power';
+import {
+  POWER_MAX_BUY_PRICE_DEFAULT,
+  POWER_BUY_CREDIT_RESERVE,
+  ENERGY_TERMINAL_BUFFER,
+} from './utils/thresholds';
 import { initMemory } from './utils/memoryInit';
 import { resetTickCache } from './utils/tickCache';
 import { resetTraffic, resolveTraffic, cleanPathSerialCache } from './utils/trafficManager';
@@ -317,6 +323,86 @@ export const transports = (): string => {
   return lines.join('\n');
 };
 
+/**
+ * Buy up to `amount` POWER on the market for `roomName`'s power spawn, funded
+ * by credits. Manual/operator-invoked (like claim()/deliverEnergy()), NOT an
+ * automatic recurring buy — this is the bot's first-ever trade of this
+ * resource, order-book depth is unmeasured beyond a single price snapshot,
+ * and a batch can run into the hundreds of thousands to millions of credits,
+ * so a human should size and trigger each purchase deliberately.
+ *
+ * Scans sell orders cheapest-first, spends only the headroom above
+ * POWER_BUY_CREDIT_RESERVE, and skips any order whose transaction fee the
+ * terminal can't currently afford (mirrors buyForLabs's fee gate in
+ * terminal.ts). Loops multiple orders in one call (bounded) since this is a
+ * rare, deliberate action rather than a per-tick loop.
+ *
+ *   buyPower('W43N58', 1000)         // up to 1000 power, default price cap
+ *   buyPower('W43N58', 1000, 1800)   // explicit price cap (credits/unit)
+ */
+export const buyPower = (roomName: string, amount: number, maxPricePerUnit?: number): string => {
+  const room = Game.rooms[roomName];
+  if (!room?.controller?.my) return `buyPower refused: ${roomName} is not an owned room`;
+  const terminal = room.terminal;
+  if (!terminal?.my) return `buyPower refused: ${roomName} has no own terminal`;
+  if (amount <= 0) return 'buyPower refused: amount must be positive';
+
+  const priceCap = maxPricePerUnit ?? POWER_MAX_BUY_PRICE_DEFAULT;
+  const orders = Game.market
+    .getAllOrders({ type: ORDER_SELL, resourceType: RESOURCE_POWER })
+    .filter((o) => o.remainingAmount > 0 && o.price <= priceCap)
+    .sort((a, b) => a.price - b.price);
+  if (orders.length === 0) return `buyPower: no sell orders <= ${priceCap}cr/unit`;
+
+  let remaining = amount;
+  let totalBought = 0;
+  let totalCost = 0;
+  const MAX_ORDERS_PER_CALL = 10; // bound CPU for one console invocation
+
+  for (const order of orders.slice(0, MAX_ORDERS_PER_CALL)) {
+    if (remaining <= 0) break;
+    if (Game.market.credits <= POWER_BUY_CREDIT_RESERVE) break;
+
+    const affordable = Math.floor((Game.market.credits - POWER_BUY_CREDIT_RESERVE) / order.price);
+    const want = Math.min(remaining, order.remainingAmount, affordable);
+    if (want <= 0) continue;
+
+    const energyCost = Game.market.calcTransactionCost(want, roomName, order.roomName!);
+    if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < energyCost + ENERGY_TERMINAL_BUFFER)
+      continue;
+
+    const result = Game.market.deal(order.id, want, roomName);
+    if (result === OK) {
+      remaining -= want;
+      totalBought += want;
+      totalCost += want * order.price;
+    }
+  }
+
+  if (totalBought === 0)
+    return 'buyPower: bought nothing (no affordable/energy-viable order found)';
+  return `buyPower: bought ${totalBought} power for ${totalCost.toFixed(0)}cr (avg ${(totalCost / totalBought).toFixed(1)}cr/unit)`;
+};
+
+/** Reports GPL and each power spawn's current power/energy store fill. */
+export const powerStatus = (): string => {
+  const lines: string[] = [
+    `GPL: level=${Game.gpl.level} progress=${Game.gpl.progress}/${Game.gpl.progressTotal}`,
+  ];
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
+    const mem = Memory.rooms[room.name];
+    const ps = mem?.powerSpawnId ? Game.getObjectById(mem.powerSpawnId) : undefined;
+    if (!ps) continue;
+    lines.push(
+      `${room.name}: power=${ps.store.getUsedCapacity(RESOURCE_POWER)}/${ps.store.getCapacity(RESOURCE_POWER)} ` +
+        `energy=${ps.store.getUsedCapacity(RESOURCE_ENERGY)}/${ps.store.getCapacity(RESOURCE_ENERGY)}`,
+    );
+  }
+  if (lines.length === 1) lines.push('no power spawns found');
+  return lines.join('\n');
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
@@ -338,6 +424,8 @@ global.deliverEnergy = deliverEnergy;
 global.transports = transports;
 global.dismantleTarget = dismantleTarget;
 global.roles = roles;
+global.buyPower = buyPower;
+global.powerStatus = powerStatus;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {
@@ -360,6 +448,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('terminal', runTerminal);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('observer', runObserver);
+    if (shouldRun({ priority: THROTTLE_NORMAL })) profile('power', runPowerSpawn);
     // v1.0.311 briefly reverted this to THROTTLE_LOW after live profiling showed
     // runConstruction costing ~20 CPU/call (nearly the whole tick budget) right
     // after W43N58 hit RCL8 — clearBlockingExtensions was calling the room-wide

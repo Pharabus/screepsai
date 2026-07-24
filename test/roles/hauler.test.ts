@@ -2723,6 +2723,200 @@ describe('hauler boost lab servicing', () => {
   });
 });
 
+function mockPowerSpawnStore(
+  stored: Record<string, number>,
+  free: Record<string, number> = {},
+): any {
+  const store: Record<string, any> = {};
+  for (const [key, val] of Object.entries(stored)) {
+    if (val > 0) store[key] = val;
+  }
+  Object.defineProperty(store, 'getUsedCapacity', {
+    enumerable: false,
+    value: vi.fn((r?: string) => (r ? (stored[r] ?? 0) : 0)),
+  });
+  Object.defineProperty(store, 'getFreeCapacity', {
+    enumerable: false,
+    value: vi.fn((r?: string) => (r && free[r] !== undefined ? free[r] : 0)),
+  });
+  return store;
+}
+
+function mockPowerSpawn(id: string, overrides: Record<string, any> = {}): any {
+  return {
+    id,
+    structureType: STRUCTURE_POWER_SPAWN,
+    store: overrides.store ?? mockPowerSpawnStore({}, { power: 100, energy: 5000 }),
+    pos: new RoomPosition(30, 30, 'W1N1'),
+    ...overrides,
+  };
+}
+
+describe('hauler power spawn servicing', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  it('withdraws power from terminal when the power spawn is below the refill threshold', () => {
+    const powerSpawn = mockPowerSpawn('ps1', {
+      store: mockPowerSpawnStore({ power: 5 }, { power: 95, energy: 5000 }), // below threshold (20)
+    });
+    const terminal = {
+      id: 'term1' as any,
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, power: 200 }, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'ps1' ? powerSpawn : null));
+    (Memory as any).rooms = { W1N1: { powerSpawnId: 'ps1' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(terminal, RESOURCE_POWER, expect.any(Number));
+  });
+
+  it('does not withdraw power when the power spawn is already at/above the refill threshold', () => {
+    const powerSpawn = mockPowerSpawn('ps1', {
+      store: mockPowerSpawnStore({ power: 20 }, { power: 80, energy: 5000 }), // at threshold
+    });
+    const terminal = {
+      id: 'term1' as any,
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 50000, power: 200 }, 300000),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      terminal,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'ps1' ? powerSpawn : null));
+    (Memory as any).rooms = { W1N1: { powerSpawnId: 'ps1' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(terminal, RESOURCE_POWER, expect.anything());
+  });
+
+  it('delivers carried power to the power spawn unconditionally', () => {
+    const powerSpawn = mockPowerSpawn('ps1', {
+      store: mockPowerSpawnStore({ power: 5 }, { power: 95, energy: 5000 }),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'ps1' ? powerSpawn : null));
+    (Memory as any).rooms = { W1N1: { powerSpawnId: 'ps1' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ power: 50 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(powerSpawn, RESOURCE_POWER);
+  });
+
+  it('delivers energy to the power spawn once colony energy clears POWER_SPAWN_ENERGY_FLOOR', () => {
+    const powerSpawn = mockPowerSpawn('ps1', {
+      store: mockPowerSpawnStore({ power: 0, energy: 0 }, { power: 100, energy: 5000 }),
+    });
+    const storage = {
+      id: 'stor1' as any,
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 200_000 }, 1_000_000), // above POWER_SPAWN_ENERGY_FLOOR (50k)
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'ps1' ? powerSpawn : null));
+    (Memory as any).rooms = { W1N1: { powerSpawnId: 'ps1' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 500 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(powerSpawn, RESOURCE_ENERGY);
+  });
+
+  it('does not deliver energy to the power spawn when storage is below POWER_SPAWN_ENERGY_FLOOR', () => {
+    const powerSpawn = mockPowerSpawn('ps1', {
+      store: mockPowerSpawnStore({ power: 0, energy: 0 }, { power: 100, energy: 5000 }),
+    });
+    const storage = {
+      id: 'stor1' as any,
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 30_000 }, 1_000_000), // below POWER_SPAWN_ENERGY_FLOOR (50k)
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn(() => []),
+    });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'ps1' ? powerSpawn : null));
+    (Memory as any).rooms = { W1N1: { powerSpawnId: 'ps1' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 500 }),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+    Game.creeps = { hauler_1: creep } as any;
+
+    hauler.run(creep);
+
+    expect(creep.transfer).not.toHaveBeenCalledWith(powerSpawn, RESOURCE_ENERGY);
+  });
+});
+
 describe('hauler pool dispatcher integration', () => {
   beforeEach(() => {
     resetGameGlobals();

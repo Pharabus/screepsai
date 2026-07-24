@@ -27,6 +27,28 @@ export const FACTORY_ENERGY_FLOOR = 120_000;
 export const FACTORY_BATTERY_CAP = 400;
 
 /**
+ * Hauler-side energy-delivery floor for the power spawn (GPL processing).
+ * Originally set above FACTORY_ENERGY_FLOOR (120k) on the theory that GPL has
+ * no direct economic payback so it should only spend genuine leftover
+ * surplus. Live-checked after deploy (2026-07-24): W43N58's colonyEnergy
+ * (storage+terminal) never exceeded ~40-50k across an entire session of
+ * HealthChecks — a 150k floor meant the delivered power would sit in the
+ * spawn forever with no energy to process it, never actually converting into
+ * GPL. Lowered to 50k so the feature can actually fire against this room's
+ * real economic ceiling; call-site ordering in hauler.ts (ranked after
+ * deliverToFactory/deliverToBoostLab) still protects those higher-value uses
+ * regardless of the numeric floor value.
+ */
+export const POWER_SPAWN_ENERGY_FLOOR = 50_000;
+/**
+ * Hauler refills the power spawn's power store from the terminal once it
+ * drops below this (capacity is POWER_SPAWN_POWER_CAPACITY=100). Gives
+ * runway between hauler trips without triggering a fresh trip per unit
+ * consumed by processPower() (1/tick).
+ */
+export const POWER_SPAWN_POWER_REFILL_THRESHOLD = 20;
+
+/**
  * Terminal sell floor for batteries. Batteries are a pure for-sale product
  * (compressed surplus energy → credits), so we hold none back — MIN_DEAL_SIZE
  * is the only gate on when a sale fires. Previously the sell floor reused
@@ -162,3 +184,21 @@ export const BUY_INTERVAL = 500;
 // Energy gates for lab buying: lower threshold for base minerals (H,O,K,L,Z,U,X,G)
 // so the reaction chain can start accumulating well before we hit 100k terminal energy.
 export const MIN_BUY_ENERGY_BASE = 30_000;
+
+/**
+ * Default per-unit price cap for the manual buyPower() console command when
+ * no explicit maxPricePerUnit is passed. Set above the cheapest live-observed
+ * POWER sell orders (~1,678-1,730cr/unit, checked 2026-07-24) with headroom
+ * for normal drift, but still a real ceiling so a fat-fingered call can't
+ * sweep the book at an inflated price.
+ */
+export const POWER_MAX_BUY_PRICE_DEFAULT = 2_000;
+/**
+ * Credit reserve buyPower() will never spend below. Mirrors
+ * LAB_BUY_CREDIT_RESERVE's reserve-then-spend-headroom pattern, but sized for
+ * a categorically bigger, human-triggered purchase (a POWER batch can run
+ * into the hundreds of thousands to millions of credits, unlike routine
+ * lab-input buys) so a purchase mistake or price spike can't drain the
+ * treasury other systems (lab buying, terminal ops, defensive boosts) need.
+ */
+export const POWER_BUY_CREDIT_RESERVE = 1_000_000;

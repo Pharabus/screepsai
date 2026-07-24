@@ -15,6 +15,8 @@ import {
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_ENERGY_TARGET,
   ENERGY_TERMINAL_RECOVERY_TARGET,
+  POWER_SPAWN_ENERGY_FLOOR,
+  POWER_SPAWN_POWER_REFILL_THRESHOLD,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
 import { colonyEnergy, upgradeBuffer } from '../utils/economy';
@@ -633,6 +635,9 @@ function pickup(creep: Creep): boolean {
   // Terminal: move excess minerals from storage to terminal
   if (pickupForTerminal(creep)) return true;
 
+  // Power spawn refill — lowest priority of all, see doc comment above.
+  if (pickupPowerForSpawn(creep)) return true;
+
   markIdle(creep);
   return false;
 }
@@ -1070,6 +1075,43 @@ function pickupForTerminal(creep: Creep): boolean {
   return false;
 }
 
+/**
+ * Refills the power spawn's power store from the terminal (power only ever
+ * arrives there via the manual buyPower() console command — see main.ts).
+ * Targeted, not greedy: only withdraws while the spawn is below
+ * POWER_SPAWN_POWER_REFILL_THRESHOLD, so this is a finite, self-limiting job
+ * ranked dead last in the pickup chain — it must never compete with anything
+ * economically load-bearing.
+ */
+function pickupPowerForSpawn(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.powerSpawnId) return false;
+  const powerSpawn = Game.getObjectById(mem.powerSpawnId);
+  if (!powerSpawn) return false;
+  if (powerSpawn.store.getUsedCapacity(RESOURCE_POWER) >= POWER_SPAWN_POWER_REFILL_THRESHOLD)
+    return false;
+
+  const terminal = myTerminal(creep.room);
+  const inTerminal = terminal?.store.getUsedCapacity(RESOURCE_POWER) ?? 0;
+  if (!terminal || inTerminal === 0) return false;
+
+  const toWithdraw = Math.min(
+    creep.store.getFreeCapacity(),
+    powerSpawn.store.getFreeCapacity(RESOURCE_POWER) ?? 0,
+    inTerminal,
+  );
+  if (toWithdraw <= 0) return false;
+
+  creep.memory.targetId = terminal.id;
+  if (creep.withdraw(terminal, RESOURCE_POWER, toWithdraw) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, terminal, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#cc66ff' },
+    });
+  }
+  return true;
+}
+
 function pickupFromFactory(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.factoryId) return false;
@@ -1139,6 +1181,7 @@ function deliver(creep: Creep): void {
   // than getting permanently stuck in DELIVER with no valid target.
   if (creep.store.getUsedCapacity() > creep.store.getUsedCapacity(RESOURCE_ENERGY)) {
     if (deliverToBoostLab(creep)) return;
+    if (deliverToPowerSpawn(creep)) return;
     if (deliverToLabInput(creep)) return;
     if (deliverToTerminalOrStorage(creep)) return;
     const mineralType = (Object.keys(creep.store) as ResourceConstant[]).find(
@@ -1166,6 +1209,8 @@ function deliver(creep: Creep): void {
   if (deliverToFactory(creep)) return;
 
   if (deliverToBoostLab(creep)) return;
+
+  if (deliverToPowerSpawn(creep)) return;
 
   if (deliverToControllerContainer(creep)) return;
 
@@ -1295,6 +1340,51 @@ function deliverToFactory(creep: Creep): boolean {
     moveTo(creep, factory, {
       priority: PRIORITY_HAULER,
       visualizePathStyle: { stroke: '#ffaa00' },
+    });
+  }
+  return true;
+}
+
+/**
+ * Feeds the power spawn (GPL processing) — power (withdrawn by
+ * pickupPowerForSpawn) delivers unconditionally since its capacity is
+ * trivially small (100 units); energy delivery is gated on
+ * POWER_SPAWN_ENERGY_FLOOR, deliberately ABOVE FACTORY_ENERGY_FLOOR since
+ * GPL has no direct economic payback and must only ever spend genuine
+ * surplus left over after the factory and upgraders are funded.
+ */
+function deliverToPowerSpawn(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.powerSpawnId) return false;
+  const powerSpawn = Game.getObjectById(mem.powerSpawnId);
+  if (!powerSpawn) return false;
+
+  if (creep.store.getUsedCapacity(RESOURCE_POWER) > 0) {
+    if ((powerSpawn.store.getFreeCapacity(RESOURCE_POWER) ?? 0) === 0) return false;
+    if (creep.transfer(powerSpawn, RESOURCE_POWER) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, powerSpawn, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ff66ff' },
+      });
+    }
+    return true;
+  }
+
+  if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return false;
+  const energyOk = Memory.holisticEconomy
+    ? colonyEnergy(creep.room) > POWER_SPAWN_ENERGY_FLOOR
+    : (() => {
+        const storage = myStorage(creep.room);
+        return (
+          !!storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > POWER_SPAWN_ENERGY_FLOOR
+        );
+      })();
+  if (!energyOk) return false;
+  if ((powerSpawn.store.getFreeCapacity(RESOURCE_ENERGY) ?? 0) === 0) return false;
+  if (creep.transfer(powerSpawn, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+    moveTo(creep, powerSpawn, {
+      priority: PRIORITY_HAULER,
+      visualizePathStyle: { stroke: '#ff66ff' },
     });
   }
   return true;

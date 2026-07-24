@@ -58,6 +58,10 @@ import { resetTickCache } from '../../src/utils/tickCache';
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';
 (globalThis as any).RESOURCE_BATTERY = 'battery';
+(globalThis as any).RESOURCE_POWER = 'power';
+
+// Power spawn constants
+(globalThis as any).POWER_SPAWN_ENERGY_RATIO = 50;
 
 // Lab constants
 (globalThis as any).LAB_MINERAL_CAPACITY = 3000;
