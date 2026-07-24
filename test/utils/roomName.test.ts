@@ -1,4 +1,4 @@
-import { parseRoomName, isHighwayRoom } from '../../src/utils/roomName';
+import { parseRoomName, isHighwayRoom, offsetRoomName } from '../../src/utils/roomName';
 
 describe('parseRoomName', () => {
   it('parses all four quadrant sign combinations', () => {
@@ -40,5 +40,34 @@ describe('isHighwayRoom', () => {
 
   it('is false for a malformed room name', () => {
     expect(isHighwayRoom('sim')).toBe(false);
+  });
+});
+
+describe('offsetRoomName', () => {
+  it('steps within a single quadrant without crossing a seam', () => {
+    expect(offsetRoomName('W15N15', -2, 0)).toBe('W17N15'); // west increases W-number
+    expect(offsetRoomName('W15N15', 2, 0)).toBe('W13N15'); // east decreases W-number
+    expect(offsetRoomName('W15N15', 0, -2)).toBe('W15N17'); // north increases N-number
+    expect(offsetRoomName('W15N15', 0, 2)).toBe('W15N13'); // south decreases N-number
+  });
+
+  it('crosses the W0/E0 seam correctly', () => {
+    expect(offsetRoomName('W0N15', 1, 0)).toBe('E0N15'); // one room east of W0 is E0, not W-1
+    expect(offsetRoomName('E0N15', -1, 0)).toBe('W0N15');
+    expect(offsetRoomName('E5N15', -6, 0)).toBe('W0N15');
+    expect(offsetRoomName('W5N15', 6, 0)).toBe('E0N15');
+  });
+
+  it('crosses the N0/S0 seam correctly', () => {
+    expect(offsetRoomName('W15N0', 0, 1)).toBe('W15S0'); // one room south of N0 is S0, not N-1
+    expect(offsetRoomName('W15S0', 0, -1)).toBe('W15N0');
+  });
+
+  it('crosses both seams simultaneously', () => {
+    expect(offsetRoomName('W2S2', 3, -3)).toBe('E0N0');
+  });
+
+  it('returns undefined for a malformed room name', () => {
+    expect(offsetRoomName('sim', 1, 1)).toBeUndefined();
   });
 });

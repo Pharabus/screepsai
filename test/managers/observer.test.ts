@@ -30,17 +30,19 @@ describe('runObserver', () => {
   });
 
   it('builds the queue from remoteRooms (sorted, deduped) and observes the first target', () => {
+    // W15N15 and its remotes sit well clear of any grid line (nearest is
+    // x/y=10 or 20), so the highway-ring search contributes nothing here.
     const observer = mockObserverStub();
-    const room = makeOwningRoom('W1N1', observer);
-    Game.rooms['W1N1'] = room;
-    Memory.rooms['W1N1'] = { remoteRooms: ['W3N1', 'W2N1', 'W2N1'] };
+    const room = makeOwningRoom('W15N15', observer);
+    Game.rooms['W15N15'] = room;
+    Memory.rooms['W15N15'] = { remoteRooms: ['W17N15', 'W16N15', 'W16N15'] };
 
     runObserver();
 
-    expect(observer.observeRoom).toHaveBeenCalledWith('W2N1');
-    const mem = Memory.rooms['W1N1']!;
-    expect(mem.observerQueue).toEqual(['W2N1', 'W3N1']);
-    expect(mem.observerRequestedRoom).toBe('W2N1');
+    expect(observer.observeRoom).toHaveBeenCalledWith('W16N15');
+    const mem = Memory.rooms['W15N15']!;
+    expect(mem.observerQueue).toEqual(['W16N15', 'W17N15']);
+    expect(mem.observerRequestedRoom).toBe('W16N15');
     expect(mem.observerQueueIdx).toBe(1);
   });
 
@@ -109,21 +111,21 @@ describe('runObserver', () => {
 
   it('rebuilds a stale queue after the rebuild interval and resets the cursor', () => {
     const observer = mockObserverStub();
-    const room = makeOwningRoom('W1N1', observer);
-    Game.rooms['W1N1'] = room;
+    const room = makeOwningRoom('W15N15', observer);
+    Game.rooms['W15N15'] = room;
     Game.time = 10_000;
-    Memory.rooms['W1N1'] = {
-      remoteRooms: ['W4N1'], // changed since the queue was last built
-      observerQueue: ['W2N1', 'W3N1'],
+    Memory.rooms['W15N15'] = {
+      remoteRooms: ['W17N15'], // changed since the queue was last built
+      observerQueue: ['W16N15', 'W18N15'],
       observerQueueIdx: 1,
       observerQueueBuiltAt: 9000, // > 500 ticks ago
     };
 
     runObserver();
 
-    const mem = Memory.rooms['W1N1']!;
-    expect(mem.observerQueue).toEqual(['W4N1']);
-    expect(observer.observeRoom).toHaveBeenCalledWith('W4N1');
+    const mem = Memory.rooms['W15N15']!;
+    expect(mem.observerQueue).toEqual(['W17N15']);
+    expect(observer.observeRoom).toHaveBeenCalledWith('W17N15');
   });
 
   it('skips a room with no built observer', () => {
@@ -152,29 +154,53 @@ describe('runObserver', () => {
 
   it('does nothing when the queue is empty', () => {
     const observer = mockObserverStub();
-    const room = makeOwningRoom('W1N1', observer);
-    Game.rooms['W1N1'] = room;
-    Memory.rooms['W1N1'] = { remoteRooms: [] };
+    const room = makeOwningRoom('W15N15', observer);
+    Game.rooms['W15N15'] = room;
+    Memory.rooms['W15N15'] = { remoteRooms: [] };
 
     runObserver();
 
     expect(observer.observeRoom).not.toHaveBeenCalled();
   });
 
-  it('includes adjacent highway rooms in the queue alongside remoteRooms (sorted, deduped)', () => {
+  it('finds a highway room only reachable at radius 2, not radius 1', () => {
+    // W8N5: x=8 is 2 away from the x=10 grid line, so it only enters range
+    // at dx=-2 (ring 1, dx=-1, lands on x=9 — not a highway). Since the
+    // highway test is "x OR y is a multiple of 10", every dy at that dx
+    // qualifies too (x=10 alone is enough), so the whole W10 column across
+    // the scanned dy range comes back, not just one cell.
     const observer = mockObserverStub();
-    const room = makeOwningRoom('W5N5', observer);
-    Game.rooms['W5N5'] = room;
-    Memory.rooms['W5N5'] = { remoteRooms: ['W3N5'] };
-    (Game as any).map.describeExits = () => ({
-      [FIND_EXIT_TOP]: 'W5N10', // y=10 -> highway
-      [FIND_EXIT_RIGHT]: 'W3N5', // not a highway; also a dup of the remote room
-      [FIND_EXIT_LEFT]: 'W4N5', // not a highway
-    });
+    const room = makeOwningRoom('W8N5', observer);
+    Game.rooms['W8N5'] = room;
+    Memory.rooms['W8N5'] = { remoteRooms: [] };
 
     runObserver();
 
-    expect(Memory.rooms['W5N5']!.observerQueue).toEqual(['W3N5', 'W5N10']);
+    expect(Memory.rooms['W8N5']!.observerQueue).toEqual([
+      'W10N3',
+      'W10N4',
+      'W10N5',
+      'W10N6',
+      'W10N7',
+    ]);
+  });
+
+  it('includes highway rooms in the queue alongside remoteRooms (sorted, deduped)', () => {
+    const observer = mockObserverStub();
+    const room = makeOwningRoom('W8N5', observer);
+    Game.rooms['W8N5'] = room;
+    Memory.rooms['W8N5'] = { remoteRooms: ['W3N5', 'W10N5'] }; // W10N5 dups a highway hit
+
+    runObserver();
+
+    expect(Memory.rooms['W8N5']!.observerQueue).toEqual([
+      'W10N3',
+      'W10N4',
+      'W10N5',
+      'W10N6',
+      'W10N7',
+      'W3N5',
+    ]);
   });
 
   it('harvests highway intel (power bank), not remote intel, for a highway-room target', () => {

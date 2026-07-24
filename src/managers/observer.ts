@@ -1,5 +1,5 @@
 import { recordRoomIntel, recordHighwayIntel } from '../utils/roomIntel';
-import { isHighwayRoom } from '../utils/roomName';
+import { isHighwayRoom, offsetRoomName } from '../utils/roomName';
 import { getMyStructuresByType } from '../utils/tickCache';
 import { profile } from '../utils/profiler';
 
@@ -8,19 +8,32 @@ import { profile } from '../utils/profiler';
 // frequent enough to pick up a newly-selected/dropped remote reasonably soon.
 const QUEUE_REBUILD_INTERVAL = 500;
 
+// How far out (Chebyshev distance, in rooms) to look for highway rooms
+// around each owned room. A ring-1-only search (just the 4 cardinal
+// neighbors) found nothing for any of our current rooms — none of them sit
+// close enough to a sector grid line — so this covers rings 1 and 2. Well
+// within STRUCTURE_OBSERVER's 10-room observe range, so no reachability
+// concern; the cost is a slightly longer scan-queue cycle (see below), not
+// CPU (still one room requested per tick regardless of queue length).
+const HIGHWAY_SCAN_RADIUS = 2;
+
 /**
- * Adjacent highway rooms — the four cardinal neighbors of this room, filtered
- * to the ones sitting on a sector grid line. Deliberately narrow (v1, mirrors
- * the original "remote rooms only" scope): a BFS out to every reachable
- * highway room would need its own frontier-tracking machinery for marginal
- * extra coverage, when every owned room already touches 0-2 highway rooms
- * directly. Widen this later (e.g. via remoteRooms' own neighbors) only if
- * direct-neighbor coverage proves too sparse to find anything.
+ * Highway rooms within `HIGHWAY_SCAN_RADIUS` rooms of this room (Chebyshev
+ * distance, excluding the room itself), filtered to the ones sitting on a
+ * sector grid line. Computed via coordinate math (`offsetRoomName`) rather
+ * than `Game.map.describeExits` — the latter only ever returns the 4
+ * immediate neighbors, which can't express a ring wider than 1.
  */
 function adjacentHighwayRooms(roomName: string): string[] {
-  const exits = Game.map.describeExits(roomName);
-  if (!exits) return [];
-  return Object.values(exits).filter((name): name is string => !!name && isHighwayRoom(name));
+  const found: string[] = [];
+  for (let dx = -HIGHWAY_SCAN_RADIUS; dx <= HIGHWAY_SCAN_RADIUS; dx++) {
+    for (let dy = -HIGHWAY_SCAN_RADIUS; dy <= HIGHWAY_SCAN_RADIUS; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const candidate = offsetRoomName(roomName, dx, dy);
+      if (candidate && isHighwayRoom(candidate)) found.push(candidate);
+    }
+  }
+  return found;
 }
 
 /**
