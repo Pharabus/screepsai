@@ -730,8 +730,8 @@ describe('haulersNeeded', () => {
     expect(haulersNeeded(room)).toBe(3);
   });
 
-  it('applies RCL8 distribution bump for a linked source (1 link + 3 bump = 4)', () => {
-    // RCL8: HAULER_DIST_BUMP_BY_RCL[8]=3 → count = 1 + 3 = 4
+  it('applies RCL8 distribution bump for a linked source (1 link + 2 bump = 3)', () => {
+    // RCL8: HAULER_DIST_BUMP_BY_RCL[8]=2 → count = 1 + 2 = 3
     (Game as any).getObjectById = (id: string) => (id === 'link1' ? { id: 'link1' } : undefined);
     (Memory as any).rooms = {
       W1N1: {
@@ -743,7 +743,7 @@ describe('haulersNeeded', () => {
       energyCapacityAvailable: 800,
       controller: { my: true, level: 8 },
     });
-    expect(haulersNeeded(room)).toBe(4);
+    expect(haulersNeeded(room)).toBe(3);
   });
 
   it('does not apply distribution bump for an unlinked source at RCL6 (gate check)', () => {
@@ -803,7 +803,7 @@ describe('haulersNeeded — mineral-priority lean profile', () => {
     expect(haulersNeeded(room)).toBe(2);
   });
 
-  it('an otherwise-identical non-priority room still applies both bumps', () => {
+  it('an otherwise-identical non-priority room still applies both bumps when mineral mining is allowed', () => {
     (Game as any).getObjectById = (id: string) => {
       if (id === 'link1') return { id: 'link1' };
       if (id === 'min1') return { mineralAmount: 10_000 };
@@ -814,14 +814,46 @@ describe('haulersNeeded — mineral-priority lean profile', () => {
         sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
         mineralId: 'min1' as any,
         mineralContainerId: 'mcnt1' as any,
+        // minerEconomy + storage well above RCL6's buffer(25k)+MINERAL_RESERVE_MARGIN(15k)
+        // so energyBudget(room).allowMineralMining resolves true — the mineral bump is
+        // now gated on this (mirrors mineralMinersNeeded's own gate).
+        minerEconomy: true,
       },
     };
     const room = mockRoom({
       name: 'W1N1',
       energyCapacityAvailable: 800,
       controller: { my: true, level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
     });
     expect(haulersNeeded(room)).toBe(4);
+  });
+
+  it('skips the mineral bump when mineral mining is not currently allowed (low colonyEnergy)', () => {
+    (Game as any).getObjectById = (id: string) => {
+      if (id === 'link1') return { id: 'link1' };
+      if (id === 'min1') return { mineralAmount: 10_000 };
+      return undefined;
+    };
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, linkId: 'link1' }],
+        mineralId: 'min1' as any,
+        mineralContainerId: 'mcnt1' as any,
+        minerEconomy: true,
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 800,
+      controller: { my: true, level: 6 },
+      storage: { my: true, store: { getUsedCapacity: () => 1_000 } },
+    });
+    // 1 (link) + 2 (RCL6 bump) = 3 — no mineral bump: colonyEnergy (1000) is well
+    // under buffer(25k)+MINERAL_RESERVE_MARGIN(15k), so allowMineralMining is false
+    // even though a mineral+container+stock all exist. Live case this fixes:
+    // W43N58 paid for this hauler with zero mineralMiner actually spawned.
+    expect(haulersNeeded(room)).toBe(3);
   });
 });
 
@@ -1954,6 +1986,25 @@ describe('remoteHaulersWanted', () => {
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(2);
+  });
+
+  it('rounds down a <0.5 fractional shortfall instead of rounding up (live case: 248-tick round trip)', () => {
+    // roundTripTicks = 248, sourceRate = 10, carryCapacity = 800 → 3.1
+    // round(3.1) = 3; flat floor = 3 (reserved, >= CLOSE_REMOTE_ROUND_TRIP_TICKS); Math.max(3,3) = 3
+    // Previously ceil(3.1) = 4 — the source container's own buffer absorbs the
+    // small shortfall, so the 4th hauler was pure over-provisioning (W42N58 live).
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 248 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
+  });
+
+  it('still rounds up a >=0.5 fractional remainder (does not under-provision a tight room)', () => {
+    // roundTripTicks = 264, sourceRate = 10, carryCapacity = 800 → 3.3... use a value
+    // that lands exactly on .5 to prove round-half-up, not round-down-always:
+    // roundTripTicks = 260 → 260*10/800 = 3.25 rounds to 3; use 292 → 3.65 rounds to 4.
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 292 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(4);
   });
 });
 

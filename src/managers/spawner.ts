@@ -113,7 +113,18 @@ const CLOSE_REMOTE_HAULER_FLOOR = 2;
 // need only 1 hauler for link-drain, but filling the spawn + extensions scales with extension
 // count (~RCL), not source count — the base count starves a large mature core (live W44N57:
 // 2 haulers, extensions 2/40, spawn idle, colony collapsed). ~ extension-cap / 20. Tunable.
-const HAULER_DIST_BUMP_BY_RCL: Record<number, number> = { 6: 2, 7: 2, 8: 3 };
+//
+// RCL8 lowered 3->2 (2026-07-25): 3 was sized for a mazy, far-source core (W44N57-style).
+// Modeled against W43N58's compact core (pathDist 16-17, 3 spawns, 60 extensions): the
+// worst-case burst (all 3 spawns firing simultaneously, ~1600 energy each) needs ~67
+// energy/tick to keep up; a single hauler's milk-run over this cluster delivers ~28/tick,
+// so 2 bump haulers (+1 link-drain = 3 total) deliver ~84/tick, comfortably covering the
+// burst with margin, while steady-state average demand is only ~13/tick. Live evidence:
+// extensions sat full with all spawns idle at 4 local haulers (1 more than this floor),
+// confirming the room was over-served, not distribution-starved. Do not drop below 2 — the
+// same model shows 2 total local haulers (bump=1) delivers only ~56/tick, short of the
+// 67/tick burst requirement.
+const HAULER_DIST_BUMP_BY_RCL: Record<number, number> = { 6: 2, 7: 2, 8: 2 };
 
 type SpawnRequest = {
   role: CreepRoleName;
@@ -294,8 +305,18 @@ export function haulersNeeded(room: Room): number {
 
   count = Math.max(count, 2);
 
-  // +1 when mineral mining is active so the mineral container doesn't overflow
-  if (mem.mineralId && mem.mineralContainerId && !leanProfile) {
+  // +1 when mineral mining is active so the mineral container doesn't overflow.
+  // Gated on allowMineralMining (the same gate mineralMinersNeeded uses) — without
+  // it this bump paid for a hauler dedicated to servicing a mineralMiner that
+  // wasn't actually spawned (the room's colonyEnergy too low to clear the gate),
+  // so the room carried a permanently idle hauler slot (observed live: W43N58,
+  // 0 live mineralMiner, colonyEnergy ~7-20k against a ~115k gate, all session).
+  if (
+    mem.mineralId &&
+    mem.mineralContainerId &&
+    !leanProfile &&
+    energyBudget(room).allowMineralMining
+  ) {
     const mineral = Game.getObjectById(mem.mineralId as Id<Mineral>);
     if (mineral && mineral.mineralAmount > 0) count += 1;
   }
@@ -546,10 +567,22 @@ export function defenderComposition(room: Room): DefenderComposition {
  * Uses cached round-trip distance (ticks) to scale beyond the flat baseline.
  * Falls back to the flat formula when distance has not been cached yet.
  *
- * Formula: Math.max(flat, ceil(roundTripTicks × sourceRate / carryCapacity)) × sourceCount
+ * Formula: Math.max(flat, round(roundTripTicks × sourceRate / carryCapacity)) × sourceCount
  *   flat         : existing lower bound (3 reserved, 2 unreserved) — never regress
  *   sourceRate   : energy/tick per source (10 reserved, 5 unreserved)
  *   carryCapacity: total CARRY from the actual hauler body built for this room
+ *
+ * round(), not ceil(): a <0.5-hauler fractional shortfall is absorbed by the
+ * source container's own buffer (2000 capacity) rather than needing a whole
+ * extra hauler to move it — live case: W42N58's round-trip (248 ticks) computed
+ * ceil(3.1)=4, but the container would take 6000+ ticks to overflow at that
+ * shortfall rate, so the 4th hauler was pure over-provisioning (its own
+ * ~1.07 energy/tick spawn-replacement cost plus remoteHauler's outsized
+ * per-call CPU, see v1.0.307, for moving energy the container was never
+ * going to lose). round() only ever trims when the fractional remainder is
+ * <0.5 — a genuinely tight room (e.g. computing 4.6) still rounds up to 5 —
+ * and the `floor` below still applies afterward, so an already-floored room
+ * (e.g. a close reserved remote at CLOSE_REMOTE_HAULER_FLOOR) is unaffected.
  */
 export function remoteHaulersWanted(
   room: Room,
@@ -575,7 +608,7 @@ export function remoteHaulersWanted(
       : flatPerSource;
   const haulersPerSource = Math.min(
     MAX_HAULERS_PER_SOURCE,
-    Math.max(floor, Math.ceil((roundTripTicks * sourceRate) / carryCapacity)),
+    Math.max(floor, Math.round((roundTripTicks * sourceRate) / carryCapacity)),
   );
   return haulersPerSource * sourceCount;
 }
