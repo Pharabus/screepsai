@@ -11,7 +11,12 @@ import { nameHash } from '../utils/idle';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
 import { ensureRoomPlan, ensureRemoteRoomPlan, needsMineralMiner } from '../utils/roomPlanner';
-import { selectRemoteRooms, remoteRoomCap } from '../utils/remotePlanner';
+import {
+  selectRemoteRooms,
+  remoteRoomCap,
+  selectKeeperBootstrapTarget,
+  keeperEngagementReady,
+} from '../utils/remotePlanner';
 import { findScoutTarget } from '../roles/scout';
 import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import {
@@ -651,19 +656,30 @@ export function huntersNeeded(homeRoom: Room): number {
   return getInvaderTargetRooms(homeRoom).length;
 }
 
-/** SK rooms (in remoteRooms) that need a keeper killer from this colony. */
+/**
+ * SK rooms that need a keeper killer from this colony: any already-selected
+ * remote flagged as a keeper room, plus the current bootstrap target (see
+ * selectKeeperBootstrapTarget in remotePlanner.ts) — the one SK room this
+ * colony is trying to clear BEFORE it's eligible for normal remote selection.
+ * Deduped since the bootstrap target is cleared the same cycle it lands in
+ * remoteRooms, but a stale read within that cycle could otherwise double up.
+ */
 function getKeeperTargetRooms(home: Room): string[] {
-  return (Memory.rooms[home.name]?.remoteRooms ?? []).filter(
-    (r) => !!Memory.rooms[r]?.scoutedHasKeepers,
-  );
+  const mem = Memory.rooms[home.name];
+  const fromRemotes = (mem?.remoteRooms ?? []).filter((r) => !!Memory.rooms[r]?.scoutedHasKeepers);
+  const bootstrap = mem?.keeperBootstrapTarget;
+  if (bootstrap && !fromRemotes.includes(bootstrap)) fromRemotes.push(bootstrap);
+  return fromRemotes;
 }
 
 /**
  * Count of SK-flagged remote rooms that lack an assigned keeper killer.
- * Returns 0 when energyCapacityAvailable < 5300 (body can't be built).
+ * Returns 0 unless keeperEngagementReady(home) — see remotePlanner.ts for why
+ * (SK combat has repeatedly lost keeper killers live; the gate holds off
+ * further investment until the room is more mature/stable).
  */
 export function keeperKillersNeeded(home: Room): number {
-  if (home.energyCapacityAvailable < 5300) return 0;
+  if (!keeperEngagementReady(home)) return 0;
   return getKeeperTargetRooms(home).filter(
     (targetRoom) =>
       !Object.values(Game.creeps).some(
@@ -974,7 +990,10 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 
   // Priority 2: Keeper killers for SK rooms — queued before miners so Source Keeper
   // rooms stay clear and don't block remote energy production indefinitely.
-  for (const targetRoom of getKeeperTargetRooms(room)) {
+  // Gated the same as keeperKillersNeeded (keeperEngagementReady) — this loop
+  // builds the queue directly rather than going through that count function,
+  // so it needs its own copy of the gate.
+  for (const targetRoom of keeperEngagementReady(room) ? getKeeperTargetRooms(room) : []) {
     const hasKiller = Object.values(Game.creeps).some(
       (c) =>
         c.memory.role === 'keeperKiller' &&
@@ -1386,6 +1405,7 @@ export function runSpawner(): void {
       // faster than its slow per-tick recovery could offset.
       if (Game.time % 100 === nameHash(room.name) % 100) {
         selectRemoteRooms(room);
+        selectKeeperBootstrapTarget(room);
         // Retire missions for any remotes that selectRemoteRooms just removed
         syncAllMissions(room.name, Memory.rooms[room.name]?.remoteRooms ?? []);
       }

@@ -2014,24 +2014,53 @@ describe('keeperKillersNeeded', () => {
     resetTickCache();
   });
 
-  it('returns 0 when energyCapacityAvailable < 5300', () => {
+  // keeperEngagementReady requires RCL8 + 50k own storage energy — SK combat
+  // has repeatedly lost keeper killers live even when the smaller RCL7 body
+  // was affordable, so engagement is now gated on room maturity, not just
+  // "can we build the body". readyRoom() is the passing baseline; individual
+  // tests override one field at a time to prove each half of the gate.
+  function readyRoom(overrides: Record<string, any> = {}): any {
+    return mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 7000,
+      controller: { my: true, level: 8 },
+      storage: { my: true, store: { getUsedCapacity: () => 50_000 } },
+      ...overrides,
+    });
+  }
+
+  it('returns 0 when RCL < 8 even with plenty of storage', () => {
     (Memory as any).rooms = { W1N1: { remoteRooms: ['W0N0'] }, W0N0: { scoutedHasKeepers: true } };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5299 });
+    const room = readyRoom({ controller: { my: true, level: 7 } });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when storage is below the 50k floor even at RCL8', () => {
+    (Memory as any).rooms = { W1N1: { remoteRooms: ['W0N0'] }, W0N0: { scoutedHasKeepers: true } };
+    (Game as any).creeps = {};
+    const room = readyRoom({ storage: { my: true, store: { getUsedCapacity: () => 49_999 } } });
+    expect(keeperKillersNeeded(room)).toBe(0);
+  });
+
+  it('returns 0 when there is no own storage at all', () => {
+    (Memory as any).rooms = { W1N1: { remoteRooms: ['W0N0'] }, W0N0: { scoutedHasKeepers: true } };
+    (Game as any).creeps = {};
+    const room = readyRoom({ storage: undefined });
     expect(keeperKillersNeeded(room)).toBe(0);
   });
 
   it('returns 0 when no remoteRooms have scoutedHasKeepers', () => {
     (Memory as any).rooms = { W1N1: { remoteRooms: ['W2N1'] }, W2N1: {} };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     expect(keeperKillersNeeded(room)).toBe(0);
   });
 
   it('returns 0 when remoteRooms is empty', () => {
     (Memory as any).rooms = { W1N1: {} };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     expect(keeperKillersNeeded(room)).toBe(0);
   });
 
@@ -2041,7 +2070,7 @@ describe('keeperKillersNeeded', () => {
       W0N0: { scoutedHasKeepers: true },
     };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     expect(keeperKillersNeeded(room)).toBe(1);
   });
 
@@ -2057,7 +2086,7 @@ describe('keeperKillersNeeded', () => {
         room: { name: 'W0N0' },
       },
     };
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     expect(keeperKillersNeeded(room)).toBe(0);
   });
 
@@ -2068,7 +2097,7 @@ describe('keeperKillersNeeded', () => {
       W0N1: { scoutedHasKeepers: true },
     };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     expect(keeperKillersNeeded(room)).toBe(2);
   });
 
@@ -2078,7 +2107,7 @@ describe('keeperKillersNeeded', () => {
       W0N0: { scoutedHasKeepers: true },
     };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 7000 });
+    const room = readyRoom();
     const queue = buildSpawnQueue(room);
     const entry = queue.find((r) => r.role === 'keeperKiller');
     expect(entry).toBeDefined();
@@ -2086,15 +2115,59 @@ describe('keeperKillersNeeded', () => {
     expect(entry?.memory?.homeRoom).toBe('W1N1');
   });
 
-  it('does not queue keeperKiller when energyCapacityAvailable < 5300', () => {
+  it('does not queue keeperKiller when RCL < 8', () => {
     (Memory as any).rooms = {
       W1N1: { remoteRooms: ['W0N0'], minerEconomy: true },
       W0N0: { scoutedHasKeepers: true },
     };
     (Game as any).creeps = {};
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+    const room = readyRoom({ controller: { my: true, level: 7 } });
     const queue = buildSpawnQueue(room);
     expect(queue.find((r) => r.role === 'keeperKiller')).toBeUndefined();
+  });
+
+  it('does not queue keeperKiller when storage is below the 50k floor', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'], minerEconomy: true },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = readyRoom({ storage: { my: true, store: { getUsedCapacity: () => 10_000 } } });
+    const queue = buildSpawnQueue(room);
+    expect(queue.find((r) => r.role === 'keeperKiller')).toBeUndefined();
+  });
+
+  it('returns 1 for a keeperBootstrapTarget not yet in remoteRooms (breaks the selection deadlock)', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: [], keeperBootstrapTarget: 'W0N0' },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = readyRoom();
+    expect(keeperKillersNeeded(room)).toBe(1);
+  });
+
+  it('does not double-count a bootstrap target that has already landed in remoteRooms', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'], keeperBootstrapTarget: 'W0N0' },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = readyRoom();
+    expect(keeperKillersNeeded(room)).toBe(1);
+  });
+
+  it('queues keeperKiller for a bootstrap target with no assigned killer', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: [], keeperBootstrapTarget: 'W0N0', minerEconomy: true },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Game as any).creeps = {};
+    const room = readyRoom();
+    const queue = buildSpawnQueue(room);
+    const entry = queue.find((r) => r.role === 'keeperKiller');
+    expect(entry).toBeDefined();
+    expect(entry?.memory?.targetRoom).toBe('W0N0');
   });
 });
 

@@ -2,6 +2,7 @@ import { resetGameGlobals, mockRoom, mockCreep } from '../mocks/screeps';
 import {
   evaluateRemoteRoom,
   selectRemoteRooms,
+  selectKeeperBootstrapTarget,
   remoteRoomCap,
   NPC_SCOUT_REJECT_TICKS,
   PLAYER_SCOUT_REJECT_TICKS,
@@ -274,16 +275,193 @@ describe('remotePlanner', () => {
       expect(evaluateRemoteRoom('W2N1', true)).toBe(-1);
     });
 
-    it('accepts SK room when allowKeeperRooms is true and a killer is alive', () => {
+    it('rejects SK room when a killer exists but has not yet reached PATROL', () => {
       Memory.rooms['W2N1'] = {
         scoutedAt: 100,
         scoutedSources: 3,
         scoutedHasKeepers: true,
       } as any;
       (Game as any).creeps = {
-        kk1: { memory: { role: 'keeperKiller', targetRoom: 'W2N1', homeRoom: 'W1N1' } },
+        kk1: {
+          memory: { role: 'keeperKiller', targetRoom: 'W2N1', homeRoom: 'W1N1', state: 'TRAVEL' },
+        },
+      };
+      expect(evaluateRemoteRoom('W2N1', true)).toBe(-1);
+    });
+
+    it('rejects SK room when a killer is patrolling but has not held it long enough yet', () => {
+      Game.time = 1000;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 3,
+        scoutedHasKeepers: true,
+      } as any;
+      (Game as any).creeps = {
+        kk1: {
+          memory: {
+            role: 'keeperKiller',
+            targetRoom: 'W2N1',
+            homeRoom: 'W1N1',
+            state: 'PATROL',
+            patrolSince: 1000 - 10, // under KEEPER_ESTABLISHED_TICKS (50)
+          },
+        },
+      };
+      expect(evaluateRemoteRoom('W2N1', true)).toBe(-1);
+    });
+
+    it('accepts SK room once a killer has patrolled long enough', () => {
+      Game.time = 1000;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 3,
+        scoutedHasKeepers: true,
+      } as any;
+      (Game as any).creeps = {
+        kk1: {
+          memory: {
+            role: 'keeperKiller',
+            targetRoom: 'W2N1',
+            homeRoom: 'W1N1',
+            state: 'PATROL',
+            patrolSince: 1000 - 50, // exactly KEEPER_ESTABLISHED_TICKS
+          },
+        },
       };
       expect(evaluateRemoteRoom('W2N1', true)).toBe(9); // 3 sources × 3
+    });
+  });
+
+  describe('selectKeeperBootstrapTarget', () => {
+    // keeperEngagementReady requires RCL8 + 50k own storage energy. readyRoom()
+    // is the passing baseline; individual tests override one field to prove
+    // each half of the gate independently.
+    function readyRoom(overrides: Record<string, any> = {}): any {
+      return mockRoom({
+        name: 'W1N1',
+        energyCapacityAvailable: 7000,
+        controller: { my: true, level: 8 },
+        storage: mockStorage(50_000),
+        ...overrides,
+      });
+    }
+
+    it('picks an adjacent SK room with no killer yet as the bootstrap target', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 1 } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBe('W2N1');
+    });
+
+    it('picks the SK exit with more sources when multiple are available', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2, scoutedHasKeepers: true } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBe('W1N2');
+    });
+
+    it('does nothing when RCL < 8 (mirrors evaluateRemoteRoom gate)', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      const room = readyRoom({ controller: { my: true, level: 7 } });
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('does nothing when storage is below the 50k floor even at RCL8', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      const room = readyRoom({ storage: mockStorage(10_000) });
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('clears an existing target once the room drops below the gate', () => {
+      Memory.rooms['W1N1'] = { keeperBootstrapTarget: 'W2N1' } as any;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      const room = readyRoom({ controller: { my: true, level: 7 } });
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('skips SK exits with no sources', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 0, scoutedHasKeepers: true } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('skips an SK exit with a recent player-hostile sighting', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 3,
+        scoutedHasKeepers: true,
+        scoutedHostiles: 1,
+        scoutedHostileIsPlayer: true,
+      } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('skips an owned SK exit', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 3,
+        scoutedHasKeepers: true,
+        scoutedOwner: 'SomePlayer',
+      } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('keeps an existing valid target instead of re-picking', () => {
+      Memory.rooms['W1N1'] = { keeperBootstrapTarget: 'W2N1' } as any;
+      Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 1, scoutedHasKeepers: true } as any;
+      Memory.rooms['W1N2'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBe('W2N1');
+    });
+
+    it('clears the bootstrap target once it lands in remoteRooms', () => {
+      Memory.rooms['W1N1'] = { keeperBootstrapTarget: 'W2N1', remoteRooms: ['W2N1'] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBeUndefined();
+    });
+
+    it('re-picks when the current target stops being valid (e.g. an aggressive player showed up)', () => {
+      // Unique room names (not reused elsewhere in this file) — recordHostile
+      // writes into the shared segment-backed neighbor-intel cache, which
+      // persists across tests within the file and would otherwise falsely
+      // flag a reused room name as aggressive in later, unrelated tests.
+      Memory.rooms['W1N1'] = { keeperBootstrapTarget: 'W8N8' } as any;
+      Game.map.describeExits = () => ({ '1': 'W8N8', '3': 'W8N9' }) as any;
+      const attacker = mockCreep({
+        owner: { username: 'Griefer' },
+        body: [{ type: ATTACK, hits: 100 }],
+      });
+      const targetRoom = mockRoom({ name: 'W8N8' });
+      for (let i = 0; i < 3; i++) {
+        recordHostile(attacker, targetRoom);
+        flushSegments();
+      }
+      Memory.rooms['W8N8'] = { scoutedAt: 100, scoutedSources: 3, scoutedHasKeepers: true } as any;
+      Memory.rooms['W8N9'] = { scoutedAt: 100, scoutedSources: 2, scoutedHasKeepers: true } as any;
+      const room = readyRoom();
+      selectKeeperBootstrapTarget(room);
+      expect(Memory.rooms['W1N1']?.keeperBootstrapTarget).toBe('W8N9');
     });
   });
 
@@ -545,21 +723,31 @@ describe('remotePlanner', () => {
     });
 
     it('classifies SK rooms as keeperRoom', () => {
+      Game.time = 1000;
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W2N1'] = {
         scoutedAt: 100,
         scoutedSources: 3,
         scoutedHasKeepers: true,
       } as any;
-      // Provide an alive killer so evaluateRemoteRoom accepts the room
+      // Provide an established killer so evaluateRemoteRoom accepts the room
       (Game as any).creeps = {
-        kk1: { memory: { role: 'keeperKiller', targetRoom: 'W2N1', homeRoom: 'W1N1' } },
+        kk1: {
+          memory: {
+            role: 'keeperKiller',
+            targetRoom: 'W2N1',
+            homeRoom: 'W1N1',
+            state: 'PATROL',
+            patrolSince: 1000 - 50,
+          },
+        },
       };
 
       const room = mockRoom({
         name: 'W1N1',
-        storage: mockStorage(0),
-        energyCapacityAvailable: 5300,
+        storage: mockStorage(50_000),
+        controller: { my: true, level: 8 },
+        energyCapacityAvailable: 7000,
       });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
@@ -568,6 +756,7 @@ describe('remotePlanner', () => {
     });
 
     it('sets flee policy for keeper rooms', () => {
+      Game.time = 1000;
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W2N1'] = {
         scoutedAt: 100,
@@ -575,13 +764,22 @@ describe('remotePlanner', () => {
         scoutedHasKeepers: true,
       } as any;
       (Game as any).creeps = {
-        kk1: { memory: { role: 'keeperKiller', targetRoom: 'W2N1', homeRoom: 'W1N1' } },
+        kk1: {
+          memory: {
+            role: 'keeperKiller',
+            targetRoom: 'W2N1',
+            homeRoom: 'W1N1',
+            state: 'PATROL',
+            patrolSince: 1000 - 50,
+          },
+        },
       };
 
       const room = mockRoom({
         name: 'W1N1',
-        storage: mockStorage(0),
-        energyCapacityAvailable: 5300,
+        storage: mockStorage(50_000),
+        controller: { my: true, level: 8 },
+        energyCapacityAvailable: 7000,
       });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);
@@ -589,7 +787,7 @@ describe('remotePlanner', () => {
       expect(Memory.rooms['W2N1'].defensePolicy).toBe('flee');
     });
 
-    it('does not opt in SK rooms when energyCapacityAvailable < 5300', () => {
+    it('does not opt in SK rooms when RCL < 8', () => {
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W2N1'] = {
         scoutedAt: 100,
@@ -602,8 +800,33 @@ describe('remotePlanner', () => {
 
       const room = mockRoom({
         name: 'W1N1',
-        storage: mockStorage(0),
-        energyCapacityAvailable: 5299,
+        storage: mockStorage(50_000),
+        controller: { my: true, level: 7 },
+        energyCapacityAvailable: 7000,
+      });
+      Memory.rooms['W1N1'] = {};
+      selectRemoteRooms(room);
+
+      // SK room rejected — remoteRooms should be empty
+      expect(Memory.rooms['W1N1'].remoteRooms).toEqual([]);
+    });
+
+    it('does not opt in SK rooms when storage is below the 50k floor', () => {
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W2N1'] = {
+        scoutedAt: 100,
+        scoutedSources: 3,
+        scoutedHasKeepers: true,
+      } as any;
+      (Game as any).creeps = {
+        kk1: { memory: { role: 'keeperKiller', targetRoom: 'W2N1', homeRoom: 'W1N1' } },
+      };
+
+      const room = mockRoom({
+        name: 'W1N1',
+        storage: mockStorage(10_000),
+        controller: { my: true, level: 8 },
+        energyCapacityAvailable: 7000,
       });
       Memory.rooms['W1N1'] = {};
       selectRemoteRooms(room);

@@ -181,14 +181,16 @@ describe('buildKeeperKillerBody', () => {
     expect(body).not.toBeNull();
     expect(body!.filter((p) => p === TOUGH).length).toBe(6);
     expect(body!.filter((p) => p === MOVE).length).toBe(10);
-    expect(body!.filter((p) => p === ATTACK).length).toBe(20);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(14);
+    expect(body!.filter((p) => p === RANGED_ATTACK).length).toBe(6);
     expect(body!.filter((p) => p === HEAL).length).toBe(4);
   });
 
   it('returns tier-1 body at 6999 energy', () => {
     const body = buildKeeperKillerBody(6999);
     expect(body!.filter((p) => p === TOUGH).length).toBe(6);
-    expect(body!.filter((p) => p === ATTACK).length).toBe(20);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(14);
+    expect(body!.filter((p) => p === RANGED_ATTACK).length).toBe(6);
     expect(body!.filter((p) => p === HEAL).length).toBe(4);
   });
 
@@ -197,14 +199,22 @@ describe('buildKeeperKillerBody', () => {
     expect(body).not.toBeNull();
     expect(body!.filter((p) => p === TOUGH).length).toBe(8);
     expect(body!.filter((p) => p === MOVE).length).toBe(12);
-    expect(body!.filter((p) => p === ATTACK).length).toBe(25);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(15);
+    expect(body!.filter((p) => p === RANGED_ATTACK).length).toBe(7);
     expect(body!.filter((p) => p === HEAL).length).toBe(8);
   });
 
   it('returns tier-2 body above 7000 energy', () => {
     const body = buildKeeperKillerBody(10000);
     expect(body!.filter((p) => p === TOUGH).length).toBe(8);
-    expect(body!.filter((p) => p === ATTACK).length).toBe(25);
+    expect(body!.filter((p) => p === ATTACK).length).toBe(15);
+    expect(body!.filter((p) => p === RANGED_ATTACK).length).toBe(7);
+  });
+
+  it('never exceeds MAX_CREEP_SIZE (50 parts)', () => {
+    expect(buildKeeperKillerBody(5300)!.length).toBeLessThanOrEqual(50);
+    expect(buildKeeperKillerBody(7000)!.length).toBeLessThanOrEqual(50);
+    expect(buildKeeperKillerBody(50000)!.length).toBeLessThanOrEqual(50);
   });
 
   it('places TOUGH first and HEAL last for damage absorption', () => {
@@ -217,5 +227,12 @@ describe('buildKeeperKillerBody', () => {
     const body = buildKeeperKillerBody(7000)!;
     expect(body[0]).toBe(TOUGH);
     expect(body[body.length - 1]).toBe(HEAL);
+  });
+
+  it('places RANGED_ATTACK after ATTACK so it degrades later under damage', () => {
+    const body = buildKeeperKillerBody(5300)!;
+    const lastAttackIdx = body.lastIndexOf(ATTACK);
+    const firstRangedIdx = body.indexOf(RANGED_ATTACK);
+    expect(firstRangedIdx).toBeGreaterThan(lastAttackIdx);
   });
 });

@@ -111,6 +111,59 @@ describe('keeperKiller', () => {
       ]);
     });
 
+    it('stamps patrolSince on TRAVEL→PATROL transition', () => {
+      const room = mockRoom({
+        name: 'W0N0',
+        find: vi.fn((type: number) => {
+          if (type === FIND_STRUCTURES) return [];
+          if (type === FIND_HOSTILE_CREEPS) return [];
+          if (type === FIND_MY_SPAWNS) return [];
+          return [];
+        }),
+      });
+      const creep = mockCreep({
+        ticksToLive: 1500,
+        memory: { role: 'keeperKiller', homeRoom: 'W1N1', targetRoom: 'W0N0', state: 'TRAVEL' },
+        room,
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W0N0'),
+      });
+      (Game as any).creeps = { [creep.name]: creep };
+      (Game as any).rooms = { W0N0: room };
+      (Memory as any).rooms = { W0N0: {} };
+      Game.time = 12345;
+
+      keeperKiller.run(creep);
+
+      expect(creep.memory.patrolSince).toBe(12345);
+    });
+
+    it('does not reset patrolSince on re-entry while already in PATROL', () => {
+      const room = mockRoom({
+        name: 'W0N0',
+        find: vi.fn(() => []),
+      });
+      const creep = mockCreep({
+        ticksToLive: 1500,
+        memory: {
+          role: 'keeperKiller',
+          homeRoom: 'W1N1',
+          targetRoom: 'W0N0',
+          state: 'PATROL',
+          patrolSince: 100,
+        },
+        room,
+        pos: new (globalThis as any).RoomPosition(25, 25, 'W0N0'),
+      });
+      (Game as any).creeps = { [creep.name]: creep };
+      (Game as any).rooms = { W0N0: room };
+      (Memory as any).rooms = { W0N0: { keeperLairPositions: [] } };
+      Game.time = 500;
+
+      keeperKiller.run(creep);
+
+      expect(creep.memory.patrolSince).toBe(100);
+    });
+
     it('does not overwrite existing keeperLairPositions on re-entry', () => {
       const room = mockRoom({
         name: 'W0N0',
@@ -159,7 +212,7 @@ describe('keeperKiller', () => {
       expect(creep.heal).toHaveBeenCalledWith(creep);
     });
 
-    it('attacks Source Keeper within melee range', () => {
+    it('attacks and rangedAttacks Source Keeper within melee range (both fire)', () => {
       const keeper = {
         owner: { username: 'Source Keeper' },
         pos: new (globalThis as any).RoomPosition(25, 26, 'W0N0'), // range 1
@@ -175,16 +228,41 @@ describe('keeperKiller', () => {
         }),
       });
       const creep = patrolCreep({ room });
-      creep.attack = vi.fn(() => 0);
       (Game as any).rooms = { W0N0: room };
       (Memory as any).rooms = { W0N0: { keeperLairPositions: [] } };
 
       keeperKiller.run(creep);
 
       expect(creep.attack).toHaveBeenCalledWith(keeper);
+      expect(creep.rangedAttack).toHaveBeenCalledWith(keeper);
     });
 
-    it('does not attack Source Keeper out of melee range', () => {
+    it('rangedAttacks (but does not melee attack) a Source Keeper at range 3', () => {
+      const keeper = {
+        owner: { username: 'Source Keeper' },
+        pos: new (globalThis as any).RoomPosition(25, 28, 'W0N0'), // range 3
+      };
+      const room = mockRoom({
+        name: 'W0N0',
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_HOSTILE_CREEPS) {
+            const filter = opts?.filter ?? (() => true);
+            return [keeper].filter(filter);
+          }
+          return [];
+        }),
+      });
+      const creep = patrolCreep({ room });
+      (Game as any).rooms = { W0N0: room };
+      (Memory as any).rooms = { W0N0: { keeperLairPositions: [] } };
+
+      keeperKiller.run(creep);
+
+      expect(creep.rangedAttack).toHaveBeenCalledWith(keeper);
+      expect(creep.attack).not.toHaveBeenCalled();
+    });
+
+    it('does not attack or rangedAttack a Source Keeper beyond range 3', () => {
       const keeper = {
         owner: { username: 'Source Keeper' },
         pos: new (globalThis as any).RoomPosition(20, 20, 'W0N0'), // range 5
@@ -200,13 +278,42 @@ describe('keeperKiller', () => {
         }),
       });
       const creep = patrolCreep({ room });
-      creep.attack = vi.fn(() => 0);
       (Game as any).rooms = { W0N0: room };
       (Memory as any).rooms = { W0N0: { keeperLairPositions: [] } };
 
       keeperKiller.run(creep);
 
       expect(creep.attack).not.toHaveBeenCalled();
+      expect(creep.rangedAttack).not.toHaveBeenCalled();
+    });
+
+    it('targets the nearest Source Keeper when multiple are present', () => {
+      const far = {
+        owner: { username: 'Source Keeper' },
+        pos: new (globalThis as any).RoomPosition(20, 20, 'W0N0'), // range 5
+      };
+      const near = {
+        owner: { username: 'Source Keeper' },
+        pos: new (globalThis as any).RoomPosition(25, 26, 'W0N0'), // range 1
+      };
+      const room = mockRoom({
+        name: 'W0N0',
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_HOSTILE_CREEPS) {
+            const filter = opts?.filter ?? (() => true);
+            return [far, near].filter(filter);
+          }
+          return [];
+        }),
+      });
+      const creep = patrolCreep({ room });
+      (Game as any).rooms = { W0N0: room };
+      (Memory as any).rooms = { W0N0: { keeperLairPositions: [] } };
+
+      keeperKiller.run(creep);
+
+      expect(creep.attack).toHaveBeenCalledWith(near);
+      expect(creep.rangedAttack).toHaveBeenCalledWith(near);
     });
 
     it('moves toward nearest non-adjacent lair', () => {

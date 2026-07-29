@@ -30,6 +30,51 @@ export const REMOTE_MAX_PATH_TILES = 120;
 /** Recompute a cached remote path distance when older than this many ticks. */
 const REMOTE_DISTANCE_STALE_TICKS = 5000;
 
+/**
+ * Minimum ticks a keeperKiller must have held PATROL in an SK room before
+ * evaluateRemoteRoom treats it as viable. A pure "does a killer creep exist
+ * with this targetRoom" check let a room score positive the instant the
+ * killer was queued/spawned — before it had even left home, let alone
+ * arrived and started fighting — so a remote miner (dispatched the same
+ * cycle once the room entered remoteRooms) could reach a still-fully-guarded
+ * SK room before the killer did (near-miss observed live: W44N56, both
+ * creeps still in transit through the same home room when checked). Since
+ * selectRemoteRooms only re-evaluates on a ~100-tick phased cadence per room,
+ * a modest tenure requirement is enough to all but guarantee the killer has
+ * had time to engage before the next cycle can add the room.
+ */
+const KEEPER_ESTABLISHED_TICKS = 50;
+
+/**
+ * Minimum home-room RCL before a colony will engage a Source Keeper room at
+ * all (bootstrap targeting, normal selection, and keeper-killer spawning all
+ * gate on this). SK combat has repeatedly lost keeper killers live even at
+ * the smaller RCL7-affordable body tier (5300 energyCapacityAvailable) — the
+ * fight needs the bigger RCL8 body/economy before it's worth committing spawn
+ * cost to, so this raises the bar well past "can technically afford a body"
+ * to "the room is mature enough to absorb the losses while it's learning."
+ */
+export const KEEPER_ENGAGEMENT_MIN_RCL = 8;
+/**
+ * Minimum own storage energy before engaging a Source Keeper room — keeper
+ * killers are expensive and, per the RCL8 gate's rationale, this fight has a
+ * real chance of costing several creeps before it's reliably won. A room
+ * should have a genuine buffer above its normal operating floor before that
+ * cost is worth risking, not just barely be affording the body.
+ */
+export const KEEPER_ENGAGEMENT_ENERGY_FLOOR = 50_000;
+
+/**
+ * Whether homeRoom is stable enough to engage a Source Keeper room at all.
+ * Shared by selectKeeperBootstrapTarget, selectRemoteRooms (allowKeeperRooms),
+ * and keeperKillersNeeded (spawner.ts) so all three gates move together.
+ */
+export function keeperEngagementReady(homeRoom: Room): boolean {
+  if ((homeRoom.controller?.level ?? 0) < KEEPER_ENGAGEMENT_MIN_RCL) return false;
+  const stored = myStorage(homeRoom)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  return stored >= KEEPER_ENGAGEMENT_ENERGY_FLOOR;
+}
+
 /** NPC reservation owners — mirrors remoteThreat.ts's copy (kept local to avoid a
  *  utils→utils import purely for a 2-entry set). An Invader Core auto-despawns on
  *  its own after a few thousand ticks, unlike a real player's Reserve Controller
@@ -83,14 +128,21 @@ export function evaluateRemoteRoom(targetRoomName: string, allowKeeperRooms = fa
   // Reject rooms with no sources
   if ((rmem.scoutedSources ?? 0) === 0) return -1;
 
-  // Source Keeper rooms: only opt in when a killer is already alive there.
+  // Source Keeper rooms: only opt in once a killer has been actively
+  // patrolling there for KEEPER_ESTABLISHED_TICKS — not merely spawned (see
+  // KEEPER_ESTABLISHED_TICKS doc for why existence alone isn't enough).
   // Score 3× to reflect 3× source capacity (3000 vs 1000 per regen cycle).
   if (rmem.scoutedHasKeepers) {
     if (!allowKeeperRooms) return -1;
-    const hasKiller = Object.values(Game.creeps).some(
-      (c) => c.memory.role === 'keeperKiller' && c.memory.targetRoom === targetRoomName,
+    const hasEstablishedKiller = Object.values(Game.creeps).some(
+      (c) =>
+        c.memory.role === 'keeperKiller' &&
+        c.memory.targetRoom === targetRoomName &&
+        c.memory.state === 'PATROL' &&
+        c.memory.patrolSince !== undefined &&
+        Game.time - c.memory.patrolSince >= KEEPER_ESTABLISHED_TICKS,
     );
-    if (!hasKiller) return -1;
+    if (!hasEstablishedKiller) return -1;
     return (rmem.scoutedSources ?? 0) * 3;
   }
 
@@ -224,6 +276,74 @@ function claimedByCloserColony(
   return false;
 }
 
+/**
+ * Picks a single SK room to send a keeper killer against BEFORE it's eligible
+ * for normal remote selection. evaluateRemoteRoom only scores an SK room once
+ * a killer is already alive there (deliberately — haulers/miners shouldn't
+ * walk into live keeper aggro), but keeperKillersNeeded only spawns a killer
+ * for a room already in remoteRooms. That's a closed loop: nothing can ever
+ * go first, so a real SK opportunity sits permanently unclaimed even when
+ * it's a direct exit with no hostiles (observed live: W44N56, bordering
+ * W44N57, 3 sources, never touched).
+ *
+ * This breaks the cycle independently of remoteRooms/evaluateRemoteRoom: pick
+ * the best-scoring adjacent SK room (most sources, no recent hostile players)
+ * and hold it in mem.keeperBootstrapTarget so keeperKillersNeeded (spawner.ts)
+ * can target it directly. Once a killer is alive there, evaluateRemoteRoom
+ * starts scoring it normally, selectRemoteRooms picks it up into remoteRooms
+ * on the next cycle, and this function clears the bootstrap target — from
+ * then on the normal remoteRooms-driven keeperKillersNeeded path maintains it
+ * (replacement killers on death, etc.), same as any other keeper room.
+ */
+export function selectKeeperBootstrapTarget(homeRoom: Room): void {
+  const mem = (Memory.rooms[homeRoom.name] ??= {});
+
+  // Already picked up by normal selection — bootstrap job is done.
+  if (mem.keeperBootstrapTarget && mem.remoteRooms?.includes(mem.keeperBootstrapTarget)) {
+    mem.keeperBootstrapTarget = undefined;
+    return;
+  }
+
+  // Mirrors evaluateRemoteRoom's own gate — see keeperEngagementReady.
+  if (!keeperEngagementReady(homeRoom)) {
+    mem.keeperBootstrapTarget = undefined;
+    return;
+  }
+
+  // Keep an existing target unless it's stopped being valid (e.g. a player
+  // showed up) — avoids thrashing between candidates while a killer is
+  // mid-transit or mid-clear.
+  if (mem.keeperBootstrapTarget) {
+    const rmem = Memory.rooms[mem.keeperBootstrapTarget];
+    const aggressiveNearby = hostilesSeen(mem.keeperBootstrapTarget, 20_000).some(
+      (name) => getNeighbor(name)?.hostility === 'aggressive',
+    );
+    if (rmem?.scoutedHasKeepers && !rmem.scoutedOwner && !aggressiveNearby) return;
+    mem.keeperBootstrapTarget = undefined;
+  }
+
+  const exits = Game.map.describeExits(homeRoom.name);
+  if (!exits) return;
+
+  let best: { name: string; sources: number } | undefined;
+  for (const roomName of Object.values(exits)) {
+    const rmem = Memory.rooms[roomName];
+    if (!rmem?.scoutedHasKeepers || rmem.scoutedOwner) continue;
+    const sources = rmem.scoutedSources ?? 0;
+    if (sources === 0) continue;
+    const isPlayerHostile = rmem.scoutedHostileIsPlayer === true && (rmem.scoutedHostiles ?? 0) > 0;
+    if (isPlayerHostile) continue;
+    if (
+      hostilesSeen(roomName, 20_000).some((name) => getNeighbor(name)?.hostility === 'aggressive')
+    ) {
+      continue;
+    }
+    if (!best || sources > best.sources) best = { name: roomName, sources };
+  }
+
+  mem.keeperBootstrapTarget = best?.name;
+}
+
 export function selectRemoteRooms(homeRoom: Room): void {
   const mem = (Memory.rooms[homeRoom.name] ??= {});
 
@@ -247,7 +367,7 @@ export function selectRemoteRooms(homeRoom: Room): void {
   mem.remoteDistanceUpdated ??= {};
   const homeSpawn = homeRoom.find(FIND_MY_SPAWNS)[0] as StructureSpawn | undefined;
 
-  const allowKeeperRooms = homeRoom.energyCapacityAvailable >= 5300;
+  const allowKeeperRooms = keeperEngagementReady(homeRoom);
   const scored: { name: string; score: number }[] = [];
   for (const roomName of Object.values(exits)) {
     const sourceScore = evaluateRemoteRoom(roomName, allowKeeperRooms);

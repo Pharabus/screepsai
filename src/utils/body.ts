@@ -100,12 +100,27 @@ export function buildHunterBody(energyCapacity: number): BodyPartConstant[] {
 /**
  * Build a keeper killer body for clearing Source Keepers from SK rooms.
  *
- * Three tiers keyed on energyCapacityAvailable:
- *   < 5300  — room not developed enough; returns null (caller skips the spawn).
- *   5300–6999 — [TOUGH×6, MOVE×10, ATTACK×20, HEAL×4]; clears SK in ~18 ticks.
- *   ≥ 7000  — [TOUGH×8, MOVE×12, ATTACK×25, HEAL×8]; clears SK in ~14 ticks.
+ * Two tiers keyed on energyCapacityAvailable (< 5300 — room not developed
+ * enough; returns null, caller skips the spawn):
+ *   5300–6999 — [TOUGH×6, MOVE×10, ATTACK×14, RANGED_ATTACK×6, HEAL×4] = 40 parts
+ *   ≥ 7000    — [TOUGH×8, MOVE×12, ATTACK×15, RANGED_ATTACK×7, HEAL×8] = 50 parts
+ *              (MAX_CREEP_SIZE is 50 — the previous ≥7000 body was 53 parts,
+ *              over the hard cap, and would have failed to spawn; never hit
+ *              live since only one owned room is RCL8 and it hadn't yet
+ *              queued a keeper killer at this tier).
  *
- * Body order: TOUGH first (absorbs ranged hits), MOVE, ATTACK, HEAL last.
+ * A pure-melee body (the original design) lets a Source Keeper — which
+ * carries its own RANGED_ATTACK parts — kite backward and free-hit the
+ * killer the entire approach, since ATTACK only lands once adjacent
+ * (observed live: melee-only keeperKillers got worn down before landing a
+ * hit). Some ATTACK budget is now traded for RANGED_ATTACK so it can return
+ * fire from range 3 while closing, the same hybrid ranged/melee approach
+ * already used by buildHunterBody against kiting Invader healers.
+ *
+ * Body order: TOUGH first (absorbs hits before functional parts), MOVE,
+ * ATTACK, RANGED_ATTACK, HEAL last — damage consumes parts in array order,
+ * so this keeps ranged capability and self-heal working the longest as the
+ * creep takes damage.
  * Returns null rather than [] when below threshold so callers can distinguish
  * "skip spawning entirely" from "can't afford it right now".
  */
@@ -114,7 +129,8 @@ export function buildKeeperKillerBody(energyCap: number): BodyPartConstant[] | n
     return [
       ...Array(8).fill(TOUGH),
       ...Array(12).fill(MOVE),
-      ...Array(25).fill(ATTACK),
+      ...Array(15).fill(ATTACK),
+      ...Array(7).fill(RANGED_ATTACK),
       ...Array(8).fill(HEAL),
     ];
   }
@@ -122,7 +138,8 @@ export function buildKeeperKillerBody(energyCap: number): BodyPartConstant[] | n
     return [
       ...Array(6).fill(TOUGH),
       ...Array(10).fill(MOVE),
-      ...Array(20).fill(ATTACK),
+      ...Array(14).fill(ATTACK),
+      ...Array(6).fill(RANGED_ATTACK),
       ...Array(4).fill(HEAL),
     ];
   }

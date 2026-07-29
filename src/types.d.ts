@@ -77,6 +77,16 @@ interface CreepMemory {
    * just freed. Cleared once the delivery completes.
    */
   forceStorageDelivery?: boolean;
+  /**
+   * Tick a keeperKiller first entered PATROL in its targetRoom (stamped on
+   * every TRAVEL→PATROL transition, so it resets if pushed back out and
+   * re-enters). Lets evaluateRemoteRoom (remotePlanner.ts) require the killer
+   * to have actually been fighting in-room for a minimum tenure before an SK
+   * room scores as viable — not just exist somewhere with a matching
+   * targetRoom, which let a remote miner get dispatched into a still-guarded
+   * SK room before the killer had even arrived (observed live: W44N56).
+   */
+  patrolSince?: number;
 }
 
 // Per-room persistent memory. Managers extend this as they need cold data
@@ -201,6 +211,16 @@ interface RoomMemory {
   remoteDistanceUpdated?: Record<string, number>;
   remoteType?: 'remote' | 'reserved' | 'claimed' | 'keeperRoom';
   defensePolicy?: 'flee' | 'defend' | 'abandon';
+  /**
+   * SK room a keeper killer is being bootstrapped against BEFORE it's eligible
+   * for normal remote selection. evaluateRemoteRoom only scores an SK room once
+   * a killer is already alive there, and keeperKillersNeeded only spawns a
+   * killer for a room already in remoteRooms — a closed loop that otherwise
+   * leaves every SK opportunity permanently unclaimed. See
+   * selectKeeperBootstrapTarget (remotePlanner.ts). Cleared once the target
+   * room is actually selected into remoteRooms.
+   */
+  keeperBootstrapTarget?: string;
   // Scout data (populated by scouts visiting unowned rooms)
   scoutedAt?: number;
   /** Set when a scout departs for this room; cleared on arrival. Prevents respawn loops when scout dies at border. */

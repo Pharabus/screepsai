@@ -32,9 +32,14 @@ const states: StateMachineDefinition = {
 
   PATROL: {
     onEnter(creep) {
-      // Cache lair positions on first arrival so subsequent ticks skip the find call.
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom) return;
+      // Stamped on every TRAVEL→PATROL transition (resets if pushed back out and
+      // re-enters) — evaluateRemoteRoom requires this to be old enough before an
+      // SK room scores as viable. See CreepMemory.patrolSince doc for why.
+      creep.memory.patrolSince = Game.time;
+
+      // Cache lair positions on first arrival so subsequent ticks skip the find call.
       const mem = (Memory.rooms[targetRoom] ??= {});
       if (mem.keeperLairPositions) return;
       const room = Game.rooms[targetRoom];
@@ -46,6 +51,11 @@ const states: StateMachineDefinition = {
       const targetRoom = creep.memory.targetRoom;
       if (!targetRoom || creep.room.name !== targetRoom) return 'TRAVEL';
 
+      // Backfill for a creep already mid-PATROL when patrolSince was introduced
+      // (onEnter only fires on transition, so an already-patrolling creep would
+      // otherwise never get stamped and its room would wrongly look un-established).
+      if (creep.memory.patrolSince === undefined) creep.memory.patrolSince = Game.time;
+
       // Retreat when TTL is too low to make it home safely.
       const homeRoom = creep.memory.homeRoom;
       const travelTime =
@@ -55,12 +65,25 @@ const states: StateMachineDefinition = {
       // Self-heal every tick — heal fires alongside attack in the same tick.
       creep.heal(creep);
 
-      // Attack nearest Source Keeper within melee range (1 tile).
+      // Ranged + melee combat against the nearest Source Keeper. Source Keepers
+      // carry their own RANGED_ATTACK parts and kite a pure-melee attacker
+      // (observed live: a melee-only keeperKiller took free ranged damage the
+      // whole approach and got worn down before ever landing a hit) — see
+      // buildKeeperKillerBody for the matching RANGED_ATTACK body parts.
+      // Both fire in the same tick when adjacent (different action types),
+      // mirroring the hybrid ranged/melee approach already used by hunterBody.
       const keepers = creep.room.find(FIND_HOSTILE_CREEPS, {
         filter: (c) => c.owner?.username === 'Source Keeper',
       });
-      const inRange = keepers.filter((k) => creep.pos.getRangeTo(k) <= 1);
-      if (inRange[0]) creep.attack(inRange[0]);
+      const nearest = keepers.reduce<Creep | undefined>((closest, k) => {
+        if (!closest) return k;
+        return creep.pos.getRangeTo(k) < creep.pos.getRangeTo(closest) ? k : closest;
+      }, undefined);
+      if (nearest) {
+        const range = creep.pos.getRangeTo(nearest);
+        if (range <= 3) creep.rangedAttack(nearest);
+        if (range <= 1) creep.attack(nearest);
+      }
 
       // Path toward the nearest lair we are not yet adjacent to.
       const lairPositions = Memory.rooms[targetRoom]?.keeperLairPositions;
