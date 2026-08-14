@@ -1028,6 +1028,89 @@ describe('construction RCL gating', () => {
 
       expect(room.createConstructionSite).not.toHaveBeenCalled();
     });
+
+    it('refuses an adjacency-valid tile that would seal an already-built extension (live W42N59 regression)', () => {
+      // EXT's only neighbour is the candidate tile (11,9); the candidate's only
+      // OTHER neighbour is a corridor tile (11,8) that lies just outside the
+      // Chebyshev-2-of-both-inputs region (so it's never itself a candidate,
+      // but stays physically walkable) and does not touch EXT directly — no
+      // diagonal bypass. Placing a lab on (11,9) would cut EXT off entirely.
+      const IN1B = { x: 10, y: 10 };
+      const IN2B = { x: 10, y: 11 };
+      const lab1 = {
+        structureType: STRUCTURE_LAB,
+        id: 'lab1',
+        pos: new RoomPosition(10, 10, 'W1N1'),
+      };
+      const lab2 = {
+        structureType: STRUCTURE_LAB,
+        id: 'lab2',
+        pos: new RoomPosition(10, 11, 'W1N1'),
+      };
+      const ext = {
+        structureType: STRUCTURE_EXTENSION,
+        id: 'ext1',
+        pos: new RoomPosition(12, 10, 'W1N1'),
+      };
+      // Wall off every tile in the adjacency-valid region (x:8-12, y:9-12)
+      // except the two input labs, EXT, and the sealing candidate (11,9) — so
+      // (11,9) is the *only* candidate the naive search would ever find free.
+      // (11,8) — the corridor connecting (11,9) out to the spawn — sits at
+      // y:8, outside the valid region, and is left open (not walled).
+      const OPEN = new Set(['10,10', '10,11', '12,10', '11,9']);
+      const wallSet = new Set<string>();
+      for (let x = 8; x <= 12; x++) {
+        for (let y = 9; y <= 12; y++) {
+          const key = `${x},${y}`;
+          if (!OPEN.has(key)) wallSet.add(key);
+        }
+      }
+
+      const room = roomAt(7, {
+        storage: { my: true, pos: new RoomPosition(5, 5, 'W1N1') },
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(5, 5, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            if (opts?.filter) return [lab1, lab2].filter(opts.filter);
+            return [];
+          }
+          if (type === FIND_STRUCTURES) return [lab1, lab2, ext];
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+        getTerrain: vi.fn(() => ({
+          get: (x: number, y: number) => (wallSet.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+        })),
+        lookForAt: vi.fn(() => []),
+      });
+      (globalThis as any).RoomPosition.prototype.lookFor = function (type: string) {
+        if (type !== LOOK_STRUCTURES) return [];
+        const here = `${this.x},${this.y}`;
+        if (here === '10,10' || here === '10,11') return [{ structureType: STRUCTURE_LAB }];
+        if (here === '12,10') return [{ structureType: STRUCTURE_EXTENSION }];
+        return [];
+      };
+      (Memory as any).rooms = {
+        W1N1: {
+          layoutPlan: {
+            storagePos: { x: 5, y: 6 },
+            terminalPos: { x: 6, y: 6 },
+            towerPositions: [],
+            labPositions: [IN1B, IN2B],
+            extensionPositions: [],
+          },
+          inputLabIds: ['lab1', 'lab2'],
+        },
+      };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      // The only candidate that would satisfy adjacency AND "physically free"
+      // is the sealing tile (11,9) — a correct implementation must refuse it
+      // rather than seal EXT, even though that means placing nothing this tick.
+      expect(room.createConstructionSite).not.toHaveBeenCalled();
+    });
   });
 
   describe('placeCorridorRoads', () => {
@@ -1890,5 +1973,139 @@ describe('clearBlockingExtensions', () => {
 
     expect(farBlocker.destroy).toHaveBeenCalledTimes(1);
     expect(target.destroy).not.toHaveBeenCalled();
+  });
+
+  describe('stale site cleanup (clearStaleSites)', () => {
+    // Live W42N59 regression (RCL8, 2026-08-14): a replan (isAccessible's v8
+    // check) dropped lab positions (18,26)/(20,27)/(18,28) from the cached plan,
+    // but the construction sites already placed there under the older plan were
+    // never removed — nothing but this cleanup path prunes a stale obstacle site
+    // that fell out of the current plan. Left alone, those sites would finish
+    // building and permanently seal 2 already-built extensions + 2 already-built
+    // labs on the far side of the lab block.
+    function mkSite(type: string, x: number, y: number): any {
+      return { structureType: type, pos: new RoomPosition(x, y, 'W1N1'), remove: vi.fn() };
+    }
+
+    function roomWithSites(sites: any[]): any {
+      const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
+      return roomAt(8, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [spawn];
+          if (type === FIND_MY_STRUCTURES) return [];
+          if (type === FIND_STRUCTURES) return [];
+          if (type === FIND_MY_CONSTRUCTION_SITES) {
+            return opts?.filter ? sites.filter(opts.filter) : sites;
+          }
+          return [];
+        }),
+        getTerrain: vi.fn(() => ({ get: () => 0 })),
+        lookForAt: vi.fn(() => []),
+      });
+    }
+
+    it('removes a stale lab construction site not in the current plan', () => {
+      const staleLab = mkSite(STRUCTURE_LAB, 18, 26);
+      const room = roomWithSites([staleLab]);
+      Memory.rooms = {
+        W1N1: {
+          layoutPlan: {
+            version: 8,
+            storagePos: { x: 17, y: 25 },
+            terminalPos: { x: 16, y: 24 },
+            towerPositions: [],
+            labPositions: [{ x: 19, y: 27 }], // does NOT include (18,26)
+            extensionPositions: [],
+            spawnPositions: [{ x: 25, y: 25 }],
+          },
+        },
+      };
+
+      clearBlockingExtensions(room);
+
+      expect(staleLab.remove).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes a stale tower construction site not in the current plan', () => {
+      const staleTower = mkSite(STRUCTURE_TOWER, 17, 28);
+      const room = roomWithSites([staleTower]);
+      Memory.rooms = {
+        W1N1: {
+          layoutPlan: {
+            version: 8,
+            storagePos: { x: 17, y: 25 },
+            terminalPos: { x: 16, y: 24 },
+            towerPositions: [{ x: 14, y: 22 }], // does NOT include (17,28)
+            labPositions: [],
+            extensionPositions: [],
+            spawnPositions: [{ x: 25, y: 25 }],
+          },
+        },
+      };
+
+      clearBlockingExtensions(room);
+
+      expect(staleTower.remove).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a lab site alone when its position is still in the current plan', () => {
+      const wantedLab = mkSite(STRUCTURE_LAB, 19, 27);
+      const room = roomWithSites([wantedLab]);
+      Memory.rooms = {
+        W1N1: {
+          layoutPlan: {
+            version: 8,
+            storagePos: { x: 17, y: 25 },
+            terminalPos: { x: 16, y: 24 },
+            towerPositions: [],
+            labPositions: [{ x: 19, y: 27 }],
+            extensionPositions: [],
+            spawnPositions: [{ x: 25, y: 25 }],
+          },
+        },
+      };
+
+      clearBlockingExtensions(room);
+
+      expect(wantedLab.remove).not.toHaveBeenCalled();
+    });
+
+    it('removes only one stale site per call, prioritizing extension over lab/tower', () => {
+      const staleExt = mkSite(STRUCTURE_EXTENSION, 5, 5);
+      const staleLab = mkSite(STRUCTURE_LAB, 18, 26);
+      const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
+      const room = roomAt(8, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [spawn];
+          if (type === FIND_MY_STRUCTURES) return [];
+          if (type === FIND_STRUCTURES) return [];
+          if (type === FIND_MY_CONSTRUCTION_SITES) {
+            const sites = [staleExt, staleLab];
+            return opts?.filter ? sites.filter(opts.filter) : sites;
+          }
+          return [];
+        }),
+        getTerrain: vi.fn(() => ({ get: () => 0 })),
+        lookForAt: vi.fn(() => []),
+      });
+      Memory.rooms = {
+        W1N1: {
+          layoutPlan: {
+            version: 8,
+            storagePos: { x: 17, y: 25 },
+            terminalPos: { x: 16, y: 24 },
+            towerPositions: [],
+            labPositions: [],
+            extensionPositions: [],
+            spawnPositions: [{ x: 25, y: 25 }],
+          },
+        },
+      };
+
+      clearBlockingExtensions(room);
+
+      expect(staleExt.remove).toHaveBeenCalledTimes(1);
+      expect(staleLab.remove).not.toHaveBeenCalled();
+    });
   });
 });

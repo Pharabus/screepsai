@@ -3,6 +3,7 @@ import {
   LAB_STAMP,
   findBestSpawnPosition,
   findStrandedExtensions,
+  wouldSealLiveStructure,
 } from '../utils/layoutPlanner';
 import {
   applyTunnelWalls,
@@ -910,24 +911,47 @@ export function placeLinks(room: Room): void {
 }
 
 /**
- * Remove extension construction sites that are not in the current layout plan.
+ * Remove obstacle-type construction sites that are not in the current layout plan.
  * This cleans up stale sites left over after a replan so builders don't complete
  * them and create inaccessible pockets that the new plan avoided.
+ *
+ * Covers every obstacle type whose plan array feeds through `isAccessible`
+ * (extension, lab, tower, spawn) — all four went through the same v8 incremental
+ * accessibility check, so any of them can drop a previously-valid position out of
+ * the plan on a replan. Extension was the only type actually cleaned up here
+ * originally; **live bug (W42N59, RCL8, 2026-08-14)**: the lab stamp anchor sits
+ * hard against a dense extension cluster, and an older (pre-v8) plan had placed
+ * lab sites at (18,26)/(20,27)/(18,28) — positions the current, corrected
+ * `isAccessible` check no longer includes in `labPositions` (they're gone from the
+ * cached plan entirely). Nothing ever removed the orphaned sites, so they sat there
+ * still under active construction, collectively sealing off 2 already-built
+ * extensions and 2 already-built labs on the far side of the lab block with zero
+ * reachable neighbours. `placeLabs`/`placeTowers`/spawn placement only ever *add*
+ * missing plan positions — none of them prune a stale one — so this is the only
+ * cleanup path for all four types.
  */
 function clearStaleSites(room: Room): boolean {
   const plan = Memory.rooms[room.name]?.layoutPlan;
   if (!plan) return false;
-  const planSet = new Set(plan.extensionPositions.map((p) => `${p.x},${p.y}`));
-  const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
-    filter: (s) => s.structureType === STRUCTURE_EXTENSION,
-  });
-  for (const site of sites) {
-    if (!planSet.has(`${site.pos.x},${site.pos.y}`)) {
-      console.log(
-        `[construction] ${room.name}: removing stale extension site at (${site.pos.x},${site.pos.y}) — not in current plan`,
-      );
-      site.remove();
-      return true;
+  const planned: [string, { x: number; y: number }[]][] = [
+    [STRUCTURE_EXTENSION, plan.extensionPositions],
+    [STRUCTURE_LAB, plan.labPositions],
+    [STRUCTURE_TOWER, plan.towerPositions],
+    [STRUCTURE_SPAWN, plan.spawnPositions ?? []],
+  ];
+  for (const [structureType, positions] of planned) {
+    const planSet = new Set(positions.map((p) => `${p.x},${p.y}`));
+    const sites = room.find(FIND_MY_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === structureType,
+    });
+    for (const site of sites) {
+      if (!planSet.has(`${site.pos.x},${site.pos.y}`)) {
+        console.log(
+          `[construction] ${room.name}: removing stale ${structureType} site at (${site.pos.x},${site.pos.y}) — not in current plan`,
+        );
+        site.remove();
+        return true;
+      }
     }
   }
   return false;
@@ -940,7 +964,8 @@ function clearStaleSites(room: Room): boolean {
  * placed overflow extensions that created isolated pockets.
  */
 export function clearBlockingExtensions(room: Room): void {
-  // First pass: remove any extension construction sites the current plan doesn't want.
+  // First pass: remove any obstacle-type construction site the current plan doesn't want
+  // (extension/lab/tower/spawn — see clearStaleSites doc comment).
   if (clearStaleSites(room)) return;
 
   const spawn = room.find(FIND_MY_SPAWNS)[0];
@@ -1319,6 +1344,13 @@ function placeAdjacencyValidLab(
       const blocked =
         pos.lookFor(LOOK_STRUCTURES).length > 0 || pos.lookFor(LOOK_CONSTRUCTION_SITES).length > 0;
       if (blocked) continue;
+      // This search has no other reachability awareness — reject any candidate
+      // that would seal an already-built/sited obstacle-type structure (see
+      // wouldSealLiveStructure doc comment for the live W42N59 regression this
+      // fixes). Evaluated against current live state each call, so an earlier
+      // safe pick that later makes a *different* candidate unsafe is caught on
+      // the next cycle rather than needing to reason about it up front.
+      if (wouldSealLiveStructure(room, x, y)) continue;
       room.createConstructionSite(pos, STRUCTURE_LAB);
       return; // one per tick
     }

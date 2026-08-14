@@ -465,6 +465,77 @@ export function findStrandedExtensions(room: Room): { x: number; y: number; buil
   return results;
 }
 
+/**
+ * Returns true if placing an obstacle-type structure at (x, y) would newly
+ * strand any currently built or sited obstacle-type structure that is
+ * presently reachable from the spawn.
+ *
+ * `findStrandedExtensions`/`pruneUnreachableExtensions` protect the cached
+ * layout plan at compute time and for extensions specifically, but a few
+ * placement paths pick live-room candidates independently of the plan and
+ * never went through any transitive check — notably `placeAdjacencyValidLab`
+ * (construction.ts), the lab overflow search used once the rigid LAB_STAMP
+ * runs out of plan positions before MAX_LABS is reached. **Live bug (W42N59,
+ * RCL8, 2026-08-14):** that search has no reachability check at all (only
+ * "is this tile physically empty and in range"), so it happily proposed
+ * (18,28)/(20,27)/(21,29) — tiles that, once built, would seal off 2
+ * already-built extensions and 2 already-built labs on the far side of the
+ * lab block. Worse, since those tiles never belong to `plan.labPositions`
+ * (they're plan-independent), `clearStaleSites`'s "not in current plan"
+ * cleanup kept removing them each cycle while this same search kept
+ * re-proposing them — a permanent whack-a-mole that never converged and
+ * never actually finished the room's lab count.
+ *
+ * Computed against LIVE room state (not the cached plan) via two flood-fills
+ * — before and after adding the candidate — so a structure already stranded
+ * for unrelated reasons is never blamed on this candidate (fail open on
+ * those; only reject a candidate that newly breaks something).
+ *
+ * Fail open (returns false — "safe to place") if the room has no spawn or no
+ * walkable spawn neighbour.
+ */
+export function wouldSealLiveStructure(room: Room, x: number, y: number): boolean {
+  const spawn = room.find(FIND_MY_SPAWNS)[0];
+  if (!spawn) return false;
+
+  const terrain = room.getTerrain();
+
+  const obstacleKeys = new Set<string>();
+  for (const s of room.find(FIND_STRUCTURES)) {
+    if (NON_WALKABLE_STRUCTURES.has(s.structureType)) {
+      obstacleKeys.add(`${s.pos.x},${s.pos.y}`);
+    }
+  }
+  for (const cs of room.find(FIND_MY_CONSTRUCTION_SITES)) {
+    if (NON_WALKABLE_STRUCTURES.has(cs.structureType as string)) {
+      obstacleKeys.add(`${cs.pos.x},${cs.pos.y}`);
+    }
+  }
+
+  const seedsBefore = walkableNeighbourSeeds(spawn.pos, obstacleKeys, terrain);
+  if (seedsBefore.length === 0) return false; // fail open
+  const before = floodReachable(seedsBefore, obstacleKeys, terrain);
+
+  const withCandidate = new Set(obstacleKeys);
+  withCandidate.add(`${x},${y}`);
+  const seedsAfter = walkableNeighbourSeeds(spawn.pos, withCandidate, terrain);
+  const after =
+    seedsAfter.length === 0
+      ? new Set<string>()
+      : floodReachable(seedsAfter, withCandidate, terrain);
+
+  for (const key of obstacleKeys) {
+    const parts = key.split(',');
+    const ox = Number(parts[0]);
+    const oy = Number(parts[1]);
+    const wasReachable = EIGHT_NEIGHBORS.some(([dx, dy]) => before.has(`${ox + dx},${oy + dy}`));
+    if (!wasReachable) continue; // already stranded — not this candidate's doing
+    const stillReachable = EIGHT_NEIGHBORS.some(([dx, dy]) => after.has(`${ox + dx},${oy + dy}`));
+    if (!stillReachable) return true; // candidate newly seals it
+  }
+  return false;
+}
+
 function countBuildableLabPositions(
   storageX: number,
   storageY: number,
