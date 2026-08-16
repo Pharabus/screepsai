@@ -929,13 +929,22 @@ export function placeLinks(room: Room): void {
  * reachable neighbours. `placeLabs`/`placeTowers`/spawn placement only ever *add*
  * missing plan positions — none of them prune a stale one — so this is the only
  * cleanup path for all four types.
+ *
+ * **Lab positions also include `overflowLabPositions` (v1.0.338)** — labs
+ * placed by `placeAdjacencyValidLab`'s overflow search are never part of the
+ * fixed `layoutPlan.labPositions` stamp by design (that search re-derives its
+ * own candidates fresh every call), so without this a legitimately-placed
+ * overflow lab looked identical to a genuinely-orphaned stale one and got
+ * deleted the moment it was placed — see `overflowLabPositions`' doc comment
+ * (`types.d.ts`) for the live regression this fixes.
  */
 function clearStaleSites(room: Room): boolean {
-  const plan = Memory.rooms[room.name]?.layoutPlan;
+  const mem = Memory.rooms[room.name];
+  const plan = mem?.layoutPlan;
   if (!plan) return false;
   const planned: [string, { x: number; y: number }[]][] = [
     [STRUCTURE_EXTENSION, plan.extensionPositions],
-    [STRUCTURE_LAB, plan.labPositions],
+    [STRUCTURE_LAB, [...plan.labPositions, ...(mem?.overflowLabPositions ?? [])]],
     [STRUCTURE_TOWER, plan.towerPositions],
     [STRUCTURE_SPAWN, plan.spawnPositions ?? []],
   ];
@@ -1323,6 +1332,20 @@ function placeAdjacencyValidLab(
   if (!anchors) return;
   const [in1, in2] = anchors;
 
+  // Prune tracked overflow positions that no longer hold a lab structure/site
+  // (e.g. destroyed by unrelated cleanup) — keeps clearStaleSites' allowlist
+  // from accumulating stale entries indefinitely.
+  const mem = (Memory.rooms[room.name] ??= {});
+  if (mem.overflowLabPositions && mem.overflowLabPositions.length > 0) {
+    mem.overflowLabPositions = mem.overflowLabPositions.filter(({ x, y }) => {
+      const pos = new RoomPosition(x, y, room.name);
+      return (
+        pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_LAB) ||
+        pos.lookFor(LOOK_CONSTRUCTION_SITES).some((s) => s.structureType === STRUCTURE_LAB)
+      );
+    });
+  }
+
   const terrain = room.getTerrain();
   const reserved = getPlannedReserved(room);
   const cheb = (ax: number, ay: number, b: { x: number; y: number }): number =>
@@ -1352,6 +1375,7 @@ function placeAdjacencyValidLab(
       // the next cycle rather than needing to reason about it up front.
       if (wouldSealLiveStructure(room, x, y)) continue;
       room.createConstructionSite(pos, STRUCTURE_LAB);
+      (mem.overflowLabPositions ??= []).push({ x, y });
       return; // one per tick
     }
   }

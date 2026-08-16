@@ -193,6 +193,19 @@ interface RoomMemory {
   /** Rate-limit tracking for placeLabs blocked log; maps "x,y" → last emission tick */
   labStampBlockedLog?: Record<string, number>;
   /**
+   * Lab positions placed by placeAdjacencyValidLab's overflow search (outside
+   * the fixed layoutPlan.labPositions stamp) — never in the cached plan by
+   * design, since the overflow search re-derives its own candidates fresh
+   * every call. clearStaleSites' "not in plan" cleanup would otherwise treat
+   * every overflow lab as an orphan and delete it the moment it's placed,
+   * only for the overflow search to re-place it next cycle — a permanent
+   * whack-a-mole that wastes the energy already invested each time (live
+   * regression, W42N59 RCL8, 2026-08-16). Pruned of stale entries at the top
+   * of placeAdjacencyValidLab whenever the position no longer has a lab
+   * structure or site.
+   */
+  overflowLabPositions?: { x: number; y: number }[];
+  /**
    * Set when placeRemoteRoads() completes a full pass with all path steps roaded.
    * Re-checked every 50 ticks instead of every 5 when true.
    */

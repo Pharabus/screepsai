@@ -983,6 +983,50 @@ describe('construction RCL gating', () => {
       expect(`${pos.x},${pos.y}`).not.toBe(`${IN2.x},${IN2.y}`);
     });
 
+    it('records the overflow placement, and clearStaleSites does not remove it as an orphan (live W42N59 regression)', () => {
+      // Live bug (2026-08-16): an overflow lab is never in plan.labPositions by
+      // design (that array is only the fixed LAB_STAMP), so clearStaleSites
+      // treated it as an orphan and deleted it the instant it was placed — the
+      // overflow search then re-placed it next cycle, forever, wasting the
+      // energy already invested in the site every single time.
+      const occupied = new Set<string>([`${IN1.x},${IN1.y}`, `${IN2.x},${IN2.y}`]);
+      installOccupancy(occupied);
+      const room = labOverflowRoom();
+      (Memory as any).rooms = { W1N1: planWithInputsOnly() };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      const [pos] = (room.createConstructionSite as any).mock.calls[0];
+      // The overflow search must record where it placed so clearStaleSites can
+      // recognize it as wanted on a later pass.
+      expect((Memory as any).rooms.W1N1.overflowLabPositions).toEqual([{ x: pos.x, y: pos.y }]);
+
+      // Second construction pass: the overflow lab is now a real site. Point
+      // the room's find() at it and confirm clearBlockingExtensions (which
+      // runs clearStaleSites first) leaves it alone.
+      const overflowSite = {
+        structureType: STRUCTURE_LAB,
+        id: 'overflow-lab',
+        pos: new RoomPosition(pos.x, pos.y, 'W1N1'),
+        remove: vi.fn(),
+      };
+      room.find = vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(5, 6, 'W1N1') }];
+        if (type === FIND_MY_STRUCTURES) return [];
+        if (type === FIND_STRUCTURES) return [];
+        if (type === FIND_MY_CONSTRUCTION_SITES) {
+          const sites = [overflowSite];
+          return opts?.filter ? sites.filter(opts.filter) : sites;
+        }
+        return [];
+      });
+
+      clearBlockingExtensions(room);
+
+      expect(overflowSite.remove).not.toHaveBeenCalled();
+    });
+
     it('does NOT place a non-adjacent lab when no adjacency-valid tile is free', () => {
       // Occupy every tile within range 2 of both inputs (the only valid region).
       const occupied = new Set<string>();
