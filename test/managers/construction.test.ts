@@ -2019,6 +2019,120 @@ describe('clearBlockingExtensions', () => {
     expect(target.destroy).not.toHaveBeenCalled();
   });
 
+  it('splices a destroyed overflow blocker out of the plan so placeExtensions cannot rebuild it (live W42N59 regression)', () => {
+    // Without the splice, destroying farBlocker here doesn't stop
+    // placeExtensions() from recreating a site at the exact same position on
+    // the next construction cycle, which reseals `target` and triggers this
+    // same destroy again — forever, wasting the extension's build cost every
+    // cycle it manages to complete (live W42N59, 2026-08-16: (23,28) destroyed
+    // and rebuilt repeatedly, (22,28) permanently stuck at 0 open cardinals).
+    const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
+    const target = mkExt(25, 20);
+    const farBlocker = mkExt(25, 19);
+    const towerW = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(24, 20, 'W1N1') };
+    const towerE = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(26, 20, 'W1N1') };
+    const towerS = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(25, 21, 'W1N1') };
+
+    const lookMap = new Map<string, any[]>([
+      ['25,19', [farBlocker]],
+      ['24,20', [towerW]],
+      ['26,20', [towerE]],
+      ['25,21', [towerS]],
+    ]);
+
+    const room = roomAt(8, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_MY_STRUCTURES) {
+          const structs = [target, farBlocker];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_STRUCTURES) return [target, farBlocker, towerW, towerE, towerS];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+      getTerrain: vi.fn(() => ({ get: () => 0 })),
+      lookForAt: vi.fn((_look: string, x: number, y: number) => lookMap.get(`${x},${y}`) ?? []),
+    });
+    Memory.rooms = {
+      W1N1: {
+        layoutPlan: {
+          version: 8,
+          storagePos: { x: 5, y: 5 },
+          terminalPos: { x: 6, y: 5 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [
+            { x: farBlocker.pos.x, y: farBlocker.pos.y },
+            { x: target.pos.x, y: target.pos.y },
+          ],
+        },
+      },
+    };
+
+    clearBlockingExtensions(room);
+
+    expect(farBlocker.destroy).toHaveBeenCalledTimes(1);
+    expect((Memory as any).rooms.W1N1.layoutPlan.extensionPositions).toEqual([
+      { x: target.pos.x, y: target.pos.y },
+    ]);
+  });
+
+  it('splices a destroyed stranded extension out of the plan too', () => {
+    const spawn = { pos: new RoomPosition(17, 17, 'W1N1') };
+    const target = mkExt(15, 15);
+    const southExt = mkExt(15, 16);
+    const tower = { structureType: STRUCTURE_TOWER, pos: new RoomPosition(14, 15, 'W1N1') };
+    const spawn2 = { structureType: STRUCTURE_SPAWN, pos: new RoomPosition(16, 15, 'W1N1') };
+
+    const wallSet = new Set(['15,14', '14,14', '16,14', '14,16', '16,16']);
+    const lookMap = new Map<string, any[]>([
+      ['16,15', [spawn2]],
+      ['14,15', [tower]],
+      ['15,16', [southExt]],
+      ['15,15', [target]],
+    ]);
+
+    const room = roomAt(8, {
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_MY_STRUCTURES) {
+          const structs = [target, southExt];
+          return opts?.filter ? structs.filter(opts.filter) : structs;
+        }
+        if (type === FIND_STRUCTURES) return [target, southExt, tower, spawn2];
+        if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+        return [];
+      }),
+      getTerrain: vi.fn(() => ({
+        get: (x: number, y: number) => (wallSet.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+      })),
+      lookForAt: vi.fn((_look: string, x: number, y: number) => lookMap.get(`${x},${y}`) ?? []),
+    });
+    Memory.rooms = {
+      W1N1: {
+        layoutPlan: {
+          version: 8,
+          storagePos: { x: 5, y: 5 },
+          terminalPos: { x: 6, y: 5 },
+          towerPositions: [],
+          labPositions: [],
+          extensionPositions: [
+            { x: target.pos.x, y: target.pos.y },
+            { x: southExt.pos.x, y: southExt.pos.y },
+          ],
+        },
+      },
+    };
+
+    clearBlockingExtensions(room);
+
+    expect(target.destroy).toHaveBeenCalledTimes(1);
+    expect((Memory as any).rooms.W1N1.layoutPlan.extensionPositions).toEqual([
+      { x: southExt.pos.x, y: southExt.pos.y },
+    ]);
+  });
+
   describe('stale site cleanup (clearStaleSites)', () => {
     // Live W42N59 regression (RCL8, 2026-08-14): a replan (isAccessible's v8
     // check) dropped lab positions (18,26)/(20,27)/(18,28) from the cached plan,

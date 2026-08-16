@@ -1032,6 +1032,14 @@ export function clearBlockingExtensions(room: Room): void {
           `[construction] ${room.name}: destroying overflow extension at (${blocker.pos.x},${blocker.pos.y}) — blocked (${ext.pos.x},${ext.pos.y}) with 0 open cardinals`,
         );
         blocker.destroy();
+        // Without this, placeExtensions() sees the position still listed in the
+        // plan and rebuilds the exact same blocker the next chance it gets,
+        // re-sealing `ext` and triggering this same destroy again — a
+        // destroy/rebuild oscillation that never actually resolves (live
+        // W42N59, 2026-08-16: (23,28) destroyed and rebuilt repeatedly,
+        // permanently blocking (22,28)). Splicing means the position stays
+        // open for good, matching the pattern clearSpawnBlockers already uses.
+        spliceExtensionFromPlan(room.name, blocker.pos.x, blocker.pos.y);
         return;
       }
     }
@@ -1067,6 +1075,10 @@ export function clearBlockingExtensions(room: Room): void {
         `[construction] ${room.name}: destroying stranded extension at (${ext.pos.x},${ext.pos.y}) — no reachable path from spawn`,
       );
       ext.destroy();
+      // Same reasoning as the overflow-blocker branch above — without this,
+      // placeExtensions() rebuilds this extension right back at the same
+      // stranded position, since it's still listed in the plan.
+      spliceExtensionFromPlan(room.name, ext.pos.x, ext.pos.y);
       return;
     }
   }
