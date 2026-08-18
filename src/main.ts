@@ -403,6 +403,21 @@ export const powerStatus = (): string => {
   return lines.join('\n');
 };
 
+// Max room-to-room hops (Game.map.findRoute's actual walkable route, not raw
+// grid distance) allowed between a home room and a deposit target.
+//
+// Live regression (2026-08-16): W43N60 sits at Game.map.getRoomLinearDistance
+// = 1 from W42N59 (grid-adjacent — well within the observer's 2-ring highway
+// scan), but findRoute's actual walkable path was an 8-room detour (no direct
+// border exit between them). mineDeposit() had no reachability check at all,
+// so the depositMiner committed to the 8-hop trek, got stuck partway through
+// a dead-end transit room, and the movement stack's stuck-detection kept
+// forcing expensive full-room repaths every few ticks with no way to ever
+// resolve — burning the bucket from ~9800 to ~4800 in under 1000 ticks before
+// this was caught live and mitigated with stopMiningDeposit(). Grid distance
+// is not a reliable proxy for walkable distance; gate on the real route.
+const DEPOSIT_MAX_ROOM_HOPS = 3;
+
 /**
  * Assign a scouted highway deposit as the mining target for `homeRoom`. The
  * deposit must already have a scoutedDeposits entry — recorded automatically
@@ -418,6 +433,19 @@ export const mineDeposit = (homeRoom: string, depositRoom: string): string => {
   if (!home?.controller?.my) return `mineDeposit refused: ${homeRoom} is not an owned room`;
   const deposit = Memory.rooms[depositRoom]?.scoutedDeposits?.[0];
   if (!deposit) return `mineDeposit refused: no scouted deposit recorded for ${depositRoom}`;
+
+  const route = Game.map.findRoute(homeRoom, depositRoom);
+  if (route === ERR_NO_PATH) {
+    return `mineDeposit refused: no room route exists from ${homeRoom} to ${depositRoom}`;
+  }
+  if (route.length > DEPOSIT_MAX_ROOM_HOPS) {
+    return (
+      `mineDeposit refused: ${depositRoom} is ${route.length} room-hops from ${homeRoom} ` +
+      `(max ${DEPOSIT_MAX_ROOM_HOPS}) — grid-adjacent rooms can still require a long walkable ` +
+      `detour if there's no direct border exit; not worth the round trip`
+    );
+  }
+
   const homeMem = (Memory.rooms[homeRoom] ??= {});
   homeMem.depositTarget = {
     room: depositRoom,
@@ -426,7 +454,7 @@ export const mineDeposit = (homeRoom: string, depositRoom: string): string => {
     depositType: deposit.depositType,
     id: deposit.id,
   };
-  return `mineDeposit: ${homeRoom} will mine ${deposit.depositType} at ${depositRoom} (${deposit.x},${deposit.y})`;
+  return `mineDeposit: ${homeRoom} will mine ${deposit.depositType} at ${depositRoom} (${deposit.x},${deposit.y}), ${route.length} room-hop(s) away`;
 };
 
 /** Cancels a room's deposit-mining target. Any live depositMiner delivers its
