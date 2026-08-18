@@ -56,6 +56,27 @@ export function buildRemoteMinerBody(energyAvailable: number, maxWork = 5): Body
 }
 
 /**
+ * Build a deposit miner body: [WORK, CARRY×2, MOVE×3] repeating units (1:1
+ * MOVE:non-MOVE ratio for roadless highway/remote terrain). A deposit's
+ * per-harvest cooldown escalates with total resource extracted regardless of
+ * WORK count, so more WORK doesn't meaningfully raise lifetime yield the way
+ * it does for a source — the budget goes toward CARRY instead, so a single
+ * trip can bank as much as possible before the long round trip home. Caps at
+ * 4 units (24 parts, 1400 energy) — comfortably affordable at RCL7+ without
+ * needing a bigger body than the resource can realistically justify.
+ */
+export function buildDepositMinerBody(energyAvailable: number, maxUnits = 4): BodyPartConstant[] {
+  const unitCost = 100 + 50 * 2 + 50 * 3; // WORK + CARRY*2 + MOVE*3 = 350
+  if (energyAvailable < unitCost) return [];
+  const units = Math.min(Math.floor(energyAvailable / unitCost), maxUnits);
+  const body: BodyPartConstant[] = [];
+  for (let i = 0; i < units; i++) body.push(WORK);
+  for (let i = 0; i < units * 2; i++) body.push(CARRY);
+  for (let i = 0; i < units * 3; i++) body.push(MOVE);
+  return body;
+}
+
+/**
  * Build a hunter body for killing NPC invaders in remote/transit rooms.
  *
  * Three tiers keyed on energyCapacityAvailable:

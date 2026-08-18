@@ -104,6 +104,7 @@ const ROLE_TIERS: Record<CreepRoleName, ThrottleTier | null> = {
   reserver: TIER_LIGHT,
   mineralMiner: TIER_LIGHT,
   harvester: TIER_LIGHT,
+  depositMiner: TIER_LIGHT,
 
   // TIER_HEAVY — discretionary work, shed first
   upgrader: TIER_HEAVY,

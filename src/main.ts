@@ -403,6 +403,64 @@ export const powerStatus = (): string => {
   return lines.join('\n');
 };
 
+/**
+ * Assign a scouted highway deposit as the mining target for `homeRoom`. The
+ * deposit must already have a scoutedDeposits entry — recorded automatically
+ * by an owned room's Observer (see src/managers/observer.ts /
+ * src/utils/roomIntel.ts) once it scans the highway room it's on. Manual,
+ * like buyPower()/claim() — deposits are speculative, so there's no
+ * automatic empire-wide selection across every sighting.
+ *
+ *   mineDeposit('W42N59', 'W43N60')
+ */
+export const mineDeposit = (homeRoom: string, depositRoom: string): string => {
+  const home = Game.rooms[homeRoom];
+  if (!home?.controller?.my) return `mineDeposit refused: ${homeRoom} is not an owned room`;
+  const deposit = Memory.rooms[depositRoom]?.scoutedDeposits?.[0];
+  if (!deposit) return `mineDeposit refused: no scouted deposit recorded for ${depositRoom}`;
+  const homeMem = (Memory.rooms[homeRoom] ??= {});
+  homeMem.depositTarget = {
+    room: depositRoom,
+    x: deposit.x,
+    y: deposit.y,
+    depositType: deposit.depositType,
+    id: deposit.id,
+  };
+  return `mineDeposit: ${homeRoom} will mine ${deposit.depositType} at ${depositRoom} (${deposit.x},${deposit.y})`;
+};
+
+/** Cancels a room's deposit-mining target. Any live depositMiner delivers its
+ *  current load, then recycles instead of returning to the deposit. */
+export const stopMiningDeposit = (homeRoom: string): string => {
+  const mem = Memory.rooms[homeRoom];
+  if (!mem?.depositTarget) return `${homeRoom} has no active deposit target`;
+  const { depositType, room } = mem.depositTarget;
+  delete mem.depositTarget;
+  return `Cleared deposit target for ${homeRoom} (was ${depositType} at ${room})`;
+};
+
+/** Lists every room with an active deposit target, its live depositMiner count, and current cooldown (if visible). */
+export const depositStatus = (): string => {
+  const lines: string[] = [];
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
+    const target = Memory.rooms[room.name]?.depositTarget;
+    if (!target) continue;
+    const liveCount = Object.values(Game.creeps).filter(
+      (c) => c.memory.role === 'depositMiner' && c.memory.targetRoom === target.room,
+    ).length;
+    const deposit = Game.getObjectById(target.id);
+    const state = deposit
+      ? `cooldown=${deposit.cooldown} lastCooldown=${deposit.lastCooldown}`
+      : 'not currently visible';
+    lines.push(
+      `${room.name} -> ${target.room} (${target.x},${target.y}) ${target.depositType}: ${liveCount} miner(s), ${state}`,
+    );
+  }
+  if (lines.length === 0) return 'No active deposit targets.';
+  return lines.join('\n');
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
@@ -426,6 +484,9 @@ global.dismantleTarget = dismantleTarget;
 global.roles = roles;
 global.buyPower = buyPower;
 global.powerStatus = powerStatus;
+global.mineDeposit = mineDeposit;
+global.stopMiningDeposit = stopMiningDeposit;
+global.depositStatus = depositStatus;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

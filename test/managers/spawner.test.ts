@@ -1795,6 +1795,59 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
       expect(queue.find((r) => r.role === 'claimer')).toBeUndefined();
     });
   });
+
+  describe('depositMiner queueing', () => {
+    const depositTarget = {
+      room: 'W2N1',
+      x: 20,
+      y: 20,
+      depositType: 'silicon' as DepositConstant,
+      id: 'dep1' as Id<Deposit>,
+    };
+
+    it('queues a depositMiner when a depositTarget is set and none is alive', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], depositTarget } };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      const entry = queue.find((r) => r.role === 'depositMiner');
+
+      expect(entry).toBeDefined();
+      expect((entry?.memory as any)?.homeRoom).toBe('W1N1');
+      expect((entry?.memory as any)?.targetRoom).toBe('W2N1');
+      expect(entry?.body?.some((p) => p === WORK)).toBe(true);
+    });
+
+    it('does not queue a depositMiner when no depositTarget is set', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'depositMiner')).toBeUndefined();
+    });
+
+    it('does not queue another depositMiner when one is already alive for the target', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], depositTarget } };
+      (Game as any).creeps = {
+        dm1: { memory: { role: 'depositMiner', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      };
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'depositMiner')).toBeUndefined();
+    });
+
+    it('does not queue a depositMiner when energy capacity is below one body unit', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], depositTarget } };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 300 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'depositMiner')).toBeUndefined();
+    });
+  });
 });
 
 describe('huntersNeeded', () => {

@@ -1,5 +1,6 @@
 import {
   buildBody,
+  buildDepositMinerBody,
   buildHunterBody,
   buildKeeperKillerBody,
   buildMinerBody,
@@ -1137,6 +1138,30 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         maxRepeats: 5,
         minCount: mineralMiners,
       });
+    }
+    // Deposit mining: operator-set via the mineDeposit() console command
+    // (main.ts) against a room already holding a scoutedDeposits entry.
+    // No dynamic scoring/selection — deposits are speculative (escalating
+    // cooldown, no guaranteed lifetime yield), so this mirrors buyPower()/
+    // claim() rather than auto-committing empire resources to one. One
+    // depositMiner at a time per target; the role itself clears
+    // depositTarget (and thus stops respawns) once the deposit is no longer
+    // worth working — see roles/depositMiner.ts.
+    const depositTarget = Memory.rooms[room.name]?.depositTarget;
+    if (depositTarget && countCreepsByRoleAndTarget('depositMiner', depositTarget.room) === 0) {
+      const depositMinerBody = buildDepositMinerBody(room.energyCapacityAvailable);
+      if (depositMinerBody.length > 0) {
+        queue.push({
+          role: 'depositMiner',
+          body: depositMinerBody,
+          minCount: countCreepsByRole('depositMiner', room.name) + 1,
+          memory: {
+            role: 'depositMiner' as CreepRoleName,
+            homeRoom: room.name,
+            targetRoom: depositTarget.room,
+          },
+        });
+      }
     }
     // Colony expansion: claimer + colonyBuilder for any target room parented here.
     // Slotted ahead of remote mining because a colony in flight has a hard TTL

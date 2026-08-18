@@ -8,6 +8,7 @@ import { miner } from '../../src/roles/miner';
 import { remoteHauler } from '../../src/roles/remoteHauler';
 import { reserver } from '../../src/roles/reserver';
 import { remoteBuilder } from '../../src/roles/remoteBuilder';
+import { depositMiner } from '../../src/roles/depositMiner';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTraffic } from '../../src/utils/trafficManager';
 
@@ -76,6 +77,12 @@ describe('remote roles flee on threat (wiring check)', () => {
   it('remoteBuilder records hostile sighting and short-circuits its state machine', () => {
     const creep = setup('remoteBuilder');
     remoteBuilder.run(creep);
+    expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
+  });
+
+  it('depositMiner records hostile sighting and short-circuits its state machine', () => {
+    const creep = setup('depositMiner');
+    depositMiner.run(creep);
     expect(Memory.rooms.W2N1.hostileLastSeen).toBe(10000);
   });
 });

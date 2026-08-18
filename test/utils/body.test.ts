@@ -1,5 +1,6 @@
 import {
   buildBody,
+  buildDepositMinerBody,
   buildHunterBody,
   buildKeeperKillerBody,
   buildMinerBody,
@@ -128,6 +129,49 @@ describe('buildRemoteMinerBody', () => {
     // At 1500 energy: (1500-100)/150 = 9.33 → 9 WORK
     const body = buildRemoteMinerBody(1500, 10);
     expect(body.filter((p) => p === WORK).length).toBe(9);
+  });
+});
+
+describe('buildDepositMinerBody', () => {
+  it('returns empty array when energy is insufficient for one unit', () => {
+    // 1 unit = WORK(100) + CARRY*2(100) + MOVE*3(150) = 350
+    expect(buildDepositMinerBody(300)).toEqual([]);
+  });
+
+  it('builds one unit at exactly the unit cost', () => {
+    const body = buildDepositMinerBody(350);
+    expect(body.filter((p) => p === WORK).length).toBe(1);
+    expect(body.filter((p) => p === CARRY).length).toBe(2);
+    expect(body.filter((p) => p === MOVE).length).toBe(3);
+  });
+
+  it('maintains a 1:1 MOVE-to-non-MOVE ratio at every unit count', () => {
+    for (const units of [1, 2, 3, 4]) {
+      const body = buildDepositMinerBody(units * 350);
+      const moveCount = body.filter((p) => p === MOVE).length;
+      const nonMoveCount = body.length - moveCount;
+      expect(moveCount).toBe(nonMoveCount);
+    }
+  });
+
+  it('caps at 4 units by default regardless of available energy', () => {
+    const body = buildDepositMinerBody(10000);
+    expect(body.filter((p) => p === WORK).length).toBe(4);
+    expect(body.filter((p) => p === CARRY).length).toBe(8);
+    expect(body.filter((p) => p === MOVE).length).toBe(12);
+    expect(body.length).toBe(24);
+  });
+
+  it('respects a maxUnits override', () => {
+    const body = buildDepositMinerBody(10000, 2);
+    expect(body.filter((p) => p === WORK).length).toBe(2);
+    expect(body.length).toBe(2 + 4 + 6);
+  });
+
+  it('scales down smoothly between unit boundaries (floors, does not round up)', () => {
+    // 600 energy: floor(600/350) = 1 unit, not 2
+    const body = buildDepositMinerBody(600);
+    expect(body.filter((p) => p === WORK).length).toBe(1);
   });
 });
 

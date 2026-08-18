@@ -18,7 +18,8 @@ type CreepRoleName =
   | 'hunter'
   | 'keeperKiller'
   | 'courier'
-  | 'dismantler';
+  | 'dismantler'
+  | 'depositMiner';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -188,6 +189,25 @@ interface RoomMemory {
    * so it mines once RCL6 even on single-source income.
    */
   mineralPriority?: boolean;
+  /**
+   * Active deposit-mining assignment for this (home) room, set via the
+   * mineDeposit() console command against a room already carrying a
+   * scoutedDeposits entry (recorded by an observer's recordHighwayIntel —
+   * roomIntel.ts). Manual/operator-driven rather than auto-selected: deposits
+   * are speculative (escalating per-harvest cooldown, no guaranteed lifetime
+   * yield) so there's no empire-wide scoring, matching the buyPower()/claim()
+   * pattern of committing to one opportunity at a time. depositMiner
+   * (roles/depositMiner.ts) reads this to find its target; cleared
+   * automatically (by the miner itself) once the deposit's cooldown grows
+   * past DEPOSIT_ABANDON_COOLDOWN or the deposit object disappears.
+   */
+  depositTarget?: {
+    room: string;
+    x: number;
+    y: number;
+    depositType: DepositConstant;
+    id: Id<Deposit>;
+  };
   /** Rate-limit tracking for overflow tower placement; stores "x,y" keys already warned about */
   overflowedTowers?: string[];
   /** Rate-limit tracking for placeLabs blocked log; maps "x,y" → last emission tick */
