@@ -460,6 +460,12 @@ function pickup(creep: Creep): boolean {
     if (!mem?.activeReaction && pickupFeederLabs(creep, mem)) return true;
   }
 
+  // Factory work: feed the active recipe's non-energy components (silicon
+  // chain — utrium_bar, silicon). Inert for the battery recipe (no non-energy
+  // components) and whenever factoryRecipe is unset. Same tier as lab work
+  // above — an active production process, not urgent enough to preempt it.
+  if (pickupFactoryInput(creep, mem)) return true;
+
   // Terminal → storage restock: when storage is in the deficit zone (below the
   // RCL upgrade buffer) and the terminal holds surplus above its standing floor,
   // pull energy back into storage so spawning and role logic can use it.
@@ -790,6 +796,56 @@ function pickupLabOutput(creep: Creep, mem: RoomMemory | undefined): boolean {
 }
 
 /**
+ * Feeds the factory's active recipe (mem.factoryRecipe, set by runFactory)
+ * with whichever non-energy component it's short on — the silicon-chain
+ * counterpart to pickupLabInput. Only reads COMMODITIES' component list, so
+ * it works for any recipe runFactory ever selects (utrium_bar, wire, battery
+ * has no non-energy components so this is simply inert for it) without
+ * needing per-recipe cases here.
+ */
+function pickupFactoryInput(creep: Creep, mem: RoomMemory | undefined): boolean {
+  if (!mem?.factoryId || !mem.factoryRecipe) return false;
+  const recipe = COMMODITIES[mem.factoryRecipe as keyof typeof COMMODITIES];
+  if (!recipe) return false;
+  const factory = Game.getObjectById(mem.factoryId);
+  if (!factory) return false;
+  const storage = creep.room.storage;
+  const terminal = creep.room.terminal;
+  if (!storage && !terminal) return false;
+
+  for (const component of Object.keys(recipe.components) as ResourceConstant[]) {
+    if (component === RESOURCE_ENERGY) continue;
+    const need = recipe.components[component as keyof typeof recipe.components] ?? 0;
+    const inFactory = factory.store.getUsedCapacity(component) ?? 0;
+    if (inFactory >= need) continue; // factory already holds enough for this batch
+
+    const inStorage = storage?.store.getUsedCapacity(component) ?? 0;
+    const inTerminal = terminal?.store.getUsedCapacity(component) ?? 0;
+    const source: StructureStorage | StructureTerminal | null =
+      inStorage > 0 ? (storage ?? null) : inTerminal > 0 ? (terminal ?? null) : null;
+    if (!source) continue; // don't have this component anywhere — try the next one
+
+    const available = inStorage > 0 ? inStorage : inTerminal;
+    creep.memory.targetId = source.id;
+    const toWithdraw = Math.min(
+      need - inFactory,
+      creep.store.getFreeCapacity(),
+      available,
+      factory.store.getFreeCapacity(component) ?? 0,
+    );
+    if (toWithdraw <= 0) continue;
+    if (creep.withdraw(source, component, toWithdraw) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, source, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#00ff88' },
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
  * Service the reserved boost lab: top it up with its compound (from storage,
  * then terminal) and energy (from storage). Gated entirely on boostLabId AND
  * boostCompound being set in RoomMemory — inert when either is absent.
@@ -1112,21 +1168,31 @@ function pickupPowerForSpawn(creep: Creep): boolean {
   return true;
 }
 
+// Finished sale-ready factory products to withdraw for the terminal. Battery
+// is always a pure sale product. Wire is the silicon chain's actual goal
+// output — utrium_bar is deliberately excluded: it's an intermediate the
+// chain re-consumes for the next wire batch (same reasoning as the lab
+// reaction chain's intermediates), so it's left in the factory rather than
+// pulled out and sold.
+const FACTORY_SALE_PRODUCTS: ResourceConstant[] = [RESOURCE_BATTERY, RESOURCE_WIRE];
+
 function pickupFromFactory(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.factoryId) return false;
   const factory = Game.getObjectById(mem.factoryId);
   if (!factory) return false;
-  const batteries = factory.store.getUsedCapacity(RESOURCE_BATTERY) ?? 0;
-  if (batteries === 0) return false;
-  creep.memory.targetId = factory.id;
-  if (creep.withdraw(factory, RESOURCE_BATTERY) === ERR_NOT_IN_RANGE) {
-    moveTo(creep, factory, {
-      priority: PRIORITY_HAULER,
-      visualizePathStyle: { stroke: '#cc66ff' },
-    });
+  for (const resource of FACTORY_SALE_PRODUCTS) {
+    if ((factory.store.getUsedCapacity(resource) ?? 0) === 0) continue;
+    creep.memory.targetId = factory.id;
+    if (creep.withdraw(factory, resource) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, factory, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#cc66ff' },
+      });
+    }
+    return true;
   }
-  return true;
+  return false;
 }
 
 const SOURCE_CONTAINER_FULL_THRESHOLD = 1000;
@@ -1183,6 +1249,7 @@ function deliver(creep: Creep): void {
     if (deliverToBoostLab(creep)) return;
     if (deliverToPowerSpawn(creep)) return;
     if (deliverToLabInput(creep)) return;
+    if (deliverToFactoryInputs(creep)) return;
     if (deliverToTerminalOrStorage(creep)) return;
     const mineralType = (Object.keys(creep.store) as ResourceConstant[]).find(
       (r) => r !== RESOURCE_ENERGY && creep.store.getUsedCapacity(r) > 0,
@@ -1457,6 +1524,40 @@ function deliverToLabInput(creep: Creep): boolean {
       }
       return true;
     }
+  }
+  return false;
+}
+
+/**
+ * Delivers whatever the creep is carrying into the factory, if it's a
+ * non-energy component the active recipe (mem.factoryRecipe) actually needs
+ * — the delivery-side counterpart to pickupFactoryInput. Ranked alongside
+ * deliverToLabInput, ahead of deliverToTerminalOrStorage, so a hauler that
+ * picked up silicon/utrium_bar for the factory doesn't get misrouted back
+ * into storage/terminal by the generic mineral-delivery fallback.
+ */
+function deliverToFactoryInputs(creep: Creep): boolean {
+  const mem = Memory.rooms[creep.room.name];
+  if (!mem?.factoryId || !mem.factoryRecipe) return false;
+  const recipe = COMMODITIES[mem.factoryRecipe as keyof typeof COMMODITIES];
+  if (!recipe) return false;
+  const factory = Game.getObjectById(mem.factoryId);
+  if (!factory) return false;
+
+  const resourceTypes = Object.keys(creep.store) as ResourceConstant[];
+  for (const resource of resourceTypes) {
+    if (resource === RESOURCE_ENERGY) continue;
+    if (creep.store.getUsedCapacity(resource) === 0) continue;
+    if (!(resource in recipe.components)) continue;
+    if ((factory.store.getFreeCapacity(resource) ?? 0) === 0) continue;
+
+    if (creep.transfer(factory, resource) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, factory, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#00ff88' },
+      });
+    }
+    return true;
   }
   return false;
 }

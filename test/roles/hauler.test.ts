@@ -912,6 +912,166 @@ describe('hauler lab logistics', () => {
   });
 });
 
+describe('hauler factory logistics (silicon chain)', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+  });
+
+  function makeFactory(stock: Record<string, number> = {}, freeCapacity = 50000): any {
+    return {
+      id: 'factory1' as any,
+      pos: new RoomPosition(27, 27, 'W1N1'),
+      store: {
+        getUsedCapacity: (r?: ResourceConstant) => (r ? (stock[r] ?? 0) : 0),
+        getFreeCapacity: (_r?: ResourceConstant) => freeCapacity,
+      },
+    };
+  }
+
+  it('withdraws U from storage into the factory when producing utrium_bar', () => {
+    const factory = makeFactory({}); // 0 utrium_bar, 0 U in the factory
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100, U: 1000 }),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = {
+      W1N1: { factoryId: 'factory1', factoryRecipe: 'utrium_bar' },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    // toWithdraw = min(need=500, carry=300, available=1000, factoryFree=50000) = 300
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'U', 300);
+  });
+
+  it('withdraws silicon (not utrium_bar) when the factory already holds enough utrium_bar for a wire batch', () => {
+    const factory = makeFactory({ utrium_bar: 20 }); // already enough for one wire batch
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100, silicon: 500, utrium_bar: 0 }),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = {
+      W1N1: { factoryId: 'factory1', factoryRecipe: 'wire' },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'silicon', expect.any(Number));
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'utrium_bar', expect.anything());
+  });
+
+  it('does not pull factory inputs when the factory already holds enough of every component', () => {
+    const factory = makeFactory({ utrium_bar: 20, silicon: 100 });
+    const storage = {
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100, silicon: 500 }),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = {
+      W1N1: { factoryId: 'factory1', factoryRecipe: 'wire' },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'silicon', expect.anything());
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'utrium_bar', expect.anything());
+  });
+
+  it('delivers carried silicon into the factory when the active recipe needs it', () => {
+    const factory = makeFactory({});
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = {
+      W1N1: { factoryId: 'factory1', factoryRecipe: 'wire' },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ silicon: 300 }),
+      pos: new RoomPosition(26, 26, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(factory, 'silicon');
+  });
+
+  it('does NOT deliver a carried resource the active recipe does not need', () => {
+    const factory = makeFactory({});
+    const storage = {
+      my: true,
+      pos: new RoomPosition(26, 26, 'W1N1'),
+      store: mockStore({ energy: 100 }, 1_000_000),
+    };
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = {
+      W1N1: { factoryId: 'factory1', factoryRecipe: 'wire' },
+    };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ Z: 300 }), // Z is not a wire-chain component
+      pos: new RoomPosition(26, 26, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).not.toHaveBeenCalledWith(factory, 'Z');
+  });
+
+  it('withdraws finished wire from the factory for sale, but not the utrium_bar intermediate', () => {
+    const factory = makeFactory({ wire: 100, utrium_bar: 40 });
+    const room = mockRoom({ name: 'W1N1', find: vi.fn(() => []) });
+    (Game as any).getObjectById = vi.fn((id: string) => (id === 'factory1' ? factory : null));
+    (Memory as any).rooms = { W1N1: { factoryId: 'factory1' } };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({}),
+      pos: new RoomPosition(27, 28, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(factory, 'wire');
+    expect(creep.withdraw).not.toHaveBeenCalledWith(factory, 'utrium_bar');
+  });
+});
+
 describe('hauler urgent responder', () => {
   beforeEach(() => {
     resetGameGlobals();

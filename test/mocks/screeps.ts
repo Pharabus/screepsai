@@ -59,6 +59,17 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).RESOURCE_ENERGY = 'energy';
 (globalThis as any).RESOURCE_BATTERY = 'battery';
 (globalThis as any).RESOURCE_POWER = 'power';
+(globalThis as any).RESOURCE_UTRIUM = 'U';
+(globalThis as any).RESOURCE_SILICON = 'silicon';
+(globalThis as any).RESOURCE_UTRIUM_BAR = 'utrium_bar';
+(globalThis as any).RESOURCE_WIRE = 'wire';
+
+// Commodities table (silicon-chain subset matching the real Screeps table —
+// see src/managers/factory.ts / src/roles/hauler.ts for what reads this).
+(globalThis as any).COMMODITIES = {
+  utrium_bar: { amount: 100, cooldown: 20, components: { U: 500, energy: 200 } },
+  wire: { amount: 20, cooldown: 8, components: { utrium_bar: 20, silicon: 100, energy: 40 } },
+};
 
 // Power spawn constants
 (globalThis as any).POWER_SPAWN_ENERGY_RATIO = 50;

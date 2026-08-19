@@ -5,22 +5,29 @@ beforeEach(() => {
   resetGameGlobals();
 });
 
-function makeFactory(batteryStock: number, freeCapacity = 50000): any {
+function makeFactory(
+  batteryStock: number,
+  freeCapacity = 50000,
+  extraStock: Record<string, number> = {},
+): any {
+  const stock: Record<string, number> = { [RESOURCE_BATTERY]: batteryStock, ...extraStock };
   return {
     id: 'factory1' as Id<StructureFactory>,
+    level: undefined,
     store: {
-      getUsedCapacity: (resource?: ResourceConstant) =>
-        resource === RESOURCE_BATTERY ? batteryStock : 0,
+      getUsedCapacity: (resource?: ResourceConstant) => (resource ? (stock[resource] ?? 0) : 0),
       getFreeCapacity: (_resource?: ResourceConstant) => freeCapacity,
     },
     produce: vi.fn(() => OK),
   };
 }
 
-function makeStorage(energy: number): any {
+function makeStorage(energy: number, extraStock: Record<string, number> = {}): any {
+  const stock: Record<string, number> = { [RESOURCE_ENERGY]: energy, ...extraStock };
   return {
+    my: true,
     store: {
-      getUsedCapacity: (resource?: ResourceConstant) => (resource === RESOURCE_ENERGY ? energy : 0),
+      getUsedCapacity: (resource?: ResourceConstant) => (resource ? (stock[resource] ?? 0) : 0),
     },
   };
 }
@@ -30,9 +37,11 @@ function setupRoom(opts: {
   storageEnergy: number;
   batteryStock: number;
   factoryId?: string;
+  storageStock?: Record<string, number>;
+  factoryStock?: Record<string, number>;
 }): Room {
-  const factory = makeFactory(opts.batteryStock);
-  const storage = makeStorage(opts.storageEnergy);
+  const factory = makeFactory(opts.batteryStock, 50000, opts.factoryStock);
+  const storage = makeStorage(opts.storageEnergy, opts.storageStock);
 
   (Game as any).rooms = {};
   (Memory as any).rooms = {};
@@ -106,5 +115,77 @@ describe('runFactory', () => {
     runFactory();
     const factory = (room as any)._factory;
     expect(factory.produce).not.toHaveBeenCalled();
+  });
+});
+
+describe('runFactory — silicon chain (wire)', () => {
+  it('produces utrium_bar when silicon is present but utrium_bar is short and U is available', () => {
+    const room = setupRoom({
+      rcl: 7,
+      storageEnergy: 130_000,
+      batteryStock: 0,
+      storageStock: { silicon: 500, U: 1000 },
+    });
+    runFactory();
+    const factory = (room as any)._factory;
+    expect(factory.produce).toHaveBeenCalledWith('utrium_bar');
+    expect(Memory.rooms['W1N1']?.factoryRecipe).toBe('utrium_bar');
+  });
+
+  it('produces wire once both silicon and utrium_bar are sufficiently stocked', () => {
+    const room = setupRoom({
+      rcl: 7,
+      storageEnergy: 130_000,
+      batteryStock: 0,
+      storageStock: { silicon: 500, U: 1000 },
+      factoryStock: { utrium_bar: 20 },
+    });
+    runFactory();
+    const factory = (room as any)._factory;
+    expect(factory.produce).toHaveBeenCalledWith('wire');
+    expect(Memory.rooms['W1N1']?.factoryRecipe).toBe('wire');
+  });
+
+  it('falls back to battery when silicon is present but no U is available (chain blocked)', () => {
+    const room = setupRoom({
+      rcl: 7,
+      storageEnergy: 130_000,
+      batteryStock: 0,
+      storageStock: { silicon: 500 }, // no U, no utrium_bar
+    });
+    runFactory();
+    const factory = (room as any)._factory;
+    expect(factory.produce).toHaveBeenCalledWith(RESOURCE_BATTERY);
+    expect(Memory.rooms['W1N1']?.factoryRecipe).toBe(RESOURCE_BATTERY);
+  });
+
+  it('ignores the silicon chain entirely when the room has never mined a deposit', () => {
+    const room = setupRoom({
+      rcl: 7,
+      storageEnergy: 130_000,
+      batteryStock: 0,
+      storageStock: { U: 1000 }, // U present but no silicon — chain never engages
+    });
+    runFactory();
+    const factory = (room as any)._factory;
+    expect(factory.produce).toHaveBeenCalledWith(RESOURCE_BATTERY);
+  });
+
+  it('counts terminal stock alongside storage when deciding chain viability', () => {
+    const room = setupRoom({
+      rcl: 7,
+      storageEnergy: 130_000,
+      batteryStock: 0,
+      storageStock: { silicon: 500 },
+    });
+    (room as any).terminal = {
+      my: true,
+      store: {
+        getUsedCapacity: (r?: ResourceConstant) => (r === 'U' ? 1000 : 0),
+      },
+    };
+    runFactory();
+    const factory = (room as any)._factory;
+    expect(factory.produce).toHaveBeenCalledWith('utrium_bar');
   });
 });
