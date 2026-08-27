@@ -4,6 +4,7 @@ vi.mock('../../src/utils/trafficManager', () => ({
   executeMove: vi.fn(),
   executeMoveAvoidCreeps: vi.fn(),
   invalidateSerialPath: vi.fn(),
+  mdbg: vi.fn(),
 }));
 
 import { moveTo, cleanStuckTracker, isInRoomInterior } from '../../src/utils/movement';

@@ -1,4 +1,4 @@
-import { executeMove, executeMoveAvoidCreeps, invalidateSerialPath } from './trafficManager';
+import { executeMove, executeMoveAvoidCreeps, invalidateSerialPath, mdbg } from './trafficManager';
 
 export interface MoveOpts {
   range?: number;
@@ -25,6 +25,10 @@ export function moveTo(
   const prev = stuckTicks.get(creep.name);
   if (prev && prev.x === creep.pos.x && prev.y === creep.pos.y) {
     prev.count++;
+    mdbg(
+      creep,
+      `moveTo: stuck at (${creep.pos.x},${creep.pos.y}) count=${prev.count} cycles=${prev.cycles} target=(${targetPos.x},${targetPos.y})`,
+    );
     if (prev.count >= STUCK_FORCE_THRESHOLD) {
       // Force a fresh repath and reset the per-cycle counter.
       prev.count = 0;
@@ -35,6 +39,7 @@ export function moveTo(
       // to 200 so PathFinder is forced to find genuine alternatives. Caps at
       // 200 to avoid treating every friendly as a wall permanently.
       const avoidCost = prev.cycles >= 3 ? 200 : 50;
+      mdbg(creep, `moveTo: FORCE repath, cycle ${prev.cycles}, avoidCost=${avoidCost}`);
       executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke, avoidCost);
       return;
     }

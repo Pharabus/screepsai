@@ -6,6 +6,15 @@ export const PRIORITY_HAULER = 50;
 export const PRIORITY_WORKER = 30;
 export const PRIORITY_DEFAULT = 10;
 
+// See Memory.moveDebug doc comment (types.d.ts) for what this traces and why.
+// Exported so movement.ts's stuck-detection escalation logic can log under the
+// same flag/tag rather than duplicating the gate.
+export function mdbg(creep: Creep, msg: string): void {
+  if (Memory.moveDebug) {
+    console.log(`[moveDebug] ${creep.name} @${Game.time} ${msg}`);
+  }
+}
+
 // Tracks which blocker creeps have already been nudged this tick so we don't
 // double-push a creep that was already moved.
 const pushedThisTick = new Set<string>();
@@ -72,22 +81,38 @@ export function resolveTraffic(): void {
 function pushBlocker(mover: Creep, nextPos: RoomPosition): void {
   if (nextPos.roomName !== mover.room.name) return;
   const blockers = mover.room.lookForAt(LOOK_CREEPS, nextPos.x, nextPos.y);
+  if (blockers.length === 0) {
+    mdbg(mover, `pushBlocker: no creep at next step (${nextPos.x},${nextPos.y})`);
+  }
   for (const blocker of blockers) {
     if (
       blocker.name === mover.name ||
       !blocker.my ||
       stationaryCreeps.has(blocker.name) ||
       pushedThisTick.has(blocker.name)
-    )
+    ) {
+      mdbg(
+        mover,
+        `pushBlocker: skip ${blocker.name} at (${nextPos.x},${nextPos.y}) ` +
+          `self=${blocker.name === mover.name} foreign=${!blocker.my} ` +
+          `stationary=${stationaryCreeps.has(blocker.name)} alreadyPushed=${pushedThisTick.has(blocker.name)}`,
+      );
       continue;
+    }
     if (
       (blocker.memory.movePriority ?? PRIORITY_DEFAULT) >
       (mover.memory.movePriority ?? PRIORITY_DEFAULT)
-    )
+    ) {
+      mdbg(
+        mover,
+        `pushBlocker: ${blocker.name} outranks mover (${blocker.memory.movePriority ?? PRIORITY_DEFAULT} > ${mover.memory.movePriority ?? PRIORITY_DEFAULT})`,
+      );
       continue;
+    }
     // Find a free adjacent tile to push the blocker toward.
     const costs = getRoomCostMatrix(blocker.room);
     const dirs: DirectionConstant[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let pushed = false;
     for (const dir of dirs) {
       const nx = blocker.pos.x + (DX[dir] ?? 0);
       const ny = blocker.pos.y + (DY[dir] ?? 0);
@@ -95,7 +120,12 @@ function pushBlocker(mover: Creep, nextPos: RoomPosition): void {
       if (costs.get(nx, ny) >= 255) continue;
       blocker.move(dir);
       pushedThisTick.add(blocker.name);
+      pushed = true;
+      mdbg(mover, `pushBlocker: pushed ${blocker.name} dir=${dir} toward (${nx},${ny})`);
       break;
+    }
+    if (!pushed) {
+      mdbg(mover, `pushBlocker: ${blocker.name} has no free adjacent tile to push toward`);
     }
   }
 }
@@ -114,10 +144,14 @@ export function executeMove(
 
   const path = getPath(creep, target, range);
   const nextPos = path[0];
-  if (!nextPos) return;
+  if (!nextPos) {
+    mdbg(creep, `executeMove: empty path to (${target.x},${target.y}) range ${range}`);
+    return;
+  }
 
   pushBlocker(creep, nextPos);
-  creep.move(creep.pos.getDirectionTo(nextPos));
+  const result = creep.move(creep.pos.getDirectionTo(nextPos));
+  mdbg(creep, `executeMove: move to (${nextPos.x},${nextPos.y}) -> ${result}`);
 
   if (stroke && path.length > 0) {
     const room = creep.room.name;
@@ -344,7 +378,14 @@ export function executeMoveAvoidCreeps(
   const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
   pathSerialCache.set(creep.name, { path: [...path], targetKey, builtAt: Game.time });
   const nextPos = path[0];
-  if (!nextPos) return;
+  if (!nextPos) {
+    mdbg(
+      creep,
+      `executeMoveAvoidCreeps: empty/incomplete path to (${target.x},${target.y}) ` +
+        `range ${range} avoidCost=${creepCost}`,
+    );
+    return;
+  }
 
   // executeMove's normal path calls pushBlocker before moving, but this
   // escalated (stuck-repath) branch never did — the repath treats other
@@ -361,7 +402,11 @@ export function executeMoveAvoidCreeps(
   // before timing out. Pushing here gives a stuck creep the same right-of-way
   // over equal-or-lower-priority creeps that an unstuck one already has.
   pushBlocker(creep, nextPos);
-  creep.move(creep.pos.getDirectionTo(nextPos));
+  const result = creep.move(creep.pos.getDirectionTo(nextPos));
+  mdbg(
+    creep,
+    `executeMoveAvoidCreeps: move to (${nextPos.x},${nextPos.y}) avoidCost=${creepCost} -> ${result}`,
+  );
 
   if (stroke && path.length > 0) {
     const room = creep.room.name;

@@ -626,6 +626,19 @@ interface Memory {
    */
   boostDebug?: boolean;
   /**
+   * When true, the stuck-detection escalation in movement.ts and pushBlocker
+   * (src/utils/trafficManager.ts) log per-tick diagnostics ([moveDebug] ...):
+   * stuck-tick counts, escalation branch taken, the computed next step, any
+   * blocker found on it, and whether the push found a free tile to nudge them
+   * toward. Built to diagnose a creep that logs "moving to X" every tick while
+   * never actually changing position (observed live: W42N59, a boost-seeking
+   * upgrader immobile near its own spawn for most of a 60-tick budget) — the
+   * existing boostDebug trace shows the creep's own state but nothing about
+   * *why* movement resolution failed underneath it. Temporary diagnostic flag;
+   * off by default.
+   */
+  moveDebug?: boolean;
+  /**
    * Per-room boost outcome counters (success / fail-open reasons), keyed by room
    * name. Always-on production signal (unlike boostDebug) so chronic boost
    * failures are visible via `boostStatus()`. See BoostRoomStat.
