@@ -346,6 +346,21 @@ export function executeMoveAvoidCreeps(
   const nextPos = path[0];
   if (!nextPos) return;
 
+  // executeMove's normal path calls pushBlocker before moving, but this
+  // escalated (stuck-repath) branch never did — the repath treats other
+  // creeps as an avoidance cost (this function's `creepCost`) rather than
+  // clearing them, so at a busy chokepoint with a constantly-rotating cast of
+  // transient occupants (not one persistent blocker), "path around whoever's
+  // there now" is stale by the time the move resolves, and the creep can
+  // stall indefinitely re-planning around traffic that's already moved on.
+  // Live-observed at W42N59 (2026-08-27): a freshly-spawned upgrader shared
+  // its spawn's tile with two obstacle-structure neighbours (terminal,
+  // factory) plus constant hauler traffic on the remaining exits — it spent
+  // ~14 ticks unable to leave the spawn tile at all, escalated into this
+  // branch, and still only covered 2 tiles in a 60-tick boost-wait budget
+  // before timing out. Pushing here gives a stuck creep the same right-of-way
+  // over equal-or-lower-priority creeps that an unstuck one already has.
+  pushBlocker(creep, nextPos);
   creep.move(creep.pos.getDirectionTo(nextPos));
 
   if (stroke && path.length > 0) {

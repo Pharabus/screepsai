@@ -4,6 +4,7 @@ import {
   resetBaseMatrixCache,
   resetSkTransitMatrixCache,
   executeMove,
+  executeMoveAvoidCreeps,
   getRoomCostMatrix,
   getRoomCostMatrixAvoidCreeps,
   getRoomCostMatrixNoExits,
@@ -583,6 +584,93 @@ describe('trafficManager', () => {
 
       // Blocker should only be pushed once even though two mover paths cross it.
       expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('executeMoveAvoidCreeps pushBlocker integration', () => {
+    // The escalated stuck-repath branch (executeMoveAvoidCreeps) previously
+    // never called pushBlocker at all — it only treated other creeps as an
+    // avoidance cost in the repath, so a chokepoint with a constantly-rotating
+    // cast of transient occupants could stall a stuck creep indefinitely (live:
+    // W42N59, a freshly-spawned upgrader trapped near its own spawn tile for
+    // most of a 60-tick boost-wait budget). These tests guard the fix.
+    it('pushes a blocking creep off the next tile', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'avoidBlocker1',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [blocker]),
+      });
+      blocker.room = room;
+
+      const mover = mockCreep({
+        name: 'stuckUpgrader1',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'upgrader' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      executeMoveAvoidCreeps(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not push a stationary blocker', () => {
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const stationary = mockCreep({
+        name: 'avoidStationary1',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'miner' },
+      });
+      stationary.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [stationary];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [stationary]),
+      });
+      stationary.room = room;
+
+      const mover = mockCreep({
+        name: 'stuckHauler1',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'hauler' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      registerStationary(stationary, PRIORITY_STATIC);
+      executeMoveAvoidCreeps(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(stationary.move).not.toHaveBeenCalled();
     });
   });
 
