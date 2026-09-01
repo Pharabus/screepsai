@@ -53,6 +53,26 @@ describe('buildBody', () => {
     // [ATTACK, MOVE] costs 80+50 = 130
     expect(buildBody([ATTACK, MOVE], 260)).toEqual([ATTACK, MOVE, ATTACK, MOVE]);
   });
+
+  it('never exceeds MAX_CREEP_SIZE (50) for a pattern length that does not divide 50 evenly', () => {
+    // Regression for a live incident (2026-09-01): default maxRepeats was
+    // `50 / pattern.length` (16.667 for a 3-part pattern) instead of floored.
+    // Math.min(floorRepeats, 16.667) returns the fractional 16.667 once
+    // floorRepeats >= 17, and `for (i = 0; i < 16.667; i++)` still runs 17 full
+    // iterations — a 51-part body that spawnCreep rejects with ERR_INVALID_ARGS
+    // every tick, forever. [WORK, CARRY, MOVE] costs 200/repeat; 5600 energy
+    // (RCL7 capacity) affords 28 repeats, well past the old bug's threshold.
+    const body = buildBody([WORK, CARRY, MOVE], 5600);
+    expect(body.length).toBeLessThanOrEqual(50);
+    expect(body.length).toBe(48); // floor(50/3) = 16 repeats * 3 parts
+  });
+
+  it('never exceeds MAX_CREEP_SIZE for a 4-part pattern either', () => {
+    // 50/4 = 12.5 is also fractional — same class of bug at a different length.
+    const body = buildBody([WORK, WORK, CARRY, MOVE], 10000);
+    expect(body.length).toBeLessThanOrEqual(50);
+    expect(body.length).toBe(48); // floor(50/4) = 12 repeats * 4 parts
+  });
 });
 
 describe('buildMinerBody', () => {

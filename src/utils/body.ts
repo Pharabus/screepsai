@@ -176,7 +176,19 @@ export function buildKeeperKillerBody(energyCap: number): BodyPartConstant[] | n
 export function buildBody(
   pattern: BodyPartConstant[],
   energyAvailable: number,
-  maxRepeats = 50 / pattern.length,
+  // MUST be floored: for a pattern length that doesn't evenly divide
+  // MAX_CREEP_SIZE (e.g. 3: WORK/CARRY/MOVE), the unfloored value (16.667) lets
+  // Math.min(floorRepeats, maxRepeats) return the fractional 16.667 whenever
+  // floorRepeats >= 17 — and `for (i = 0; i < 16.667; i++)` still runs 17 full
+  // iterations (i=0..16), producing a 51-part body. spawnCreep then rejects
+  // every call with ERR_INVALID_ARGS (ERR_INVALID_ARGS = -10), forever, for any
+  // room whose energyCapacityAvailable is high enough to want >16 repeats —
+  // live-observed (2026-08-31/09-01): the bootstrap-economy queue (harvester/
+  // builder/upgrader, all [WORK,CARRY,MOVE], no explicit maxRepeats) hit this at
+  // RCL7 (5600 capacity), spamming "Spawn error for X: -10" every tick in
+  // W44N59 and W44N57 with zero replacement creeps ever spawning — W44N57's
+  // entire population aged out with nothing rebuilding it.
+  maxRepeats = Math.floor(50 / pattern.length),
 ): BodyPartConstant[] {
   const patternCost = pattern.reduce((sum, part) => sum + (BODY_COSTS[part] ?? 0), 0);
   if (patternCost === 0) return [];
