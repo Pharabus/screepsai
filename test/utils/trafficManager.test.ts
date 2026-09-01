@@ -15,6 +15,7 @@ import {
   PRIORITY_STATIC,
   PRIORITY_WORKER,
   PRIORITY_DEFAULT,
+  markDispatched,
 } from '../../src/utils/trafficManager';
 import { resetTickCache } from '../../src/utils/tickCache';
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
@@ -454,10 +455,99 @@ describe('trafficManager', () => {
 
       resetTraffic();
       resetTickCache();
+      // The blocker must have already reached its own dispatch slot this tick
+      // (see the `notYetDispatched` gate) or the push is skipped outright.
+      markDispatched(blocker);
       executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
 
       // The blocker should have received a move() call to clear the tile.
       expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not push a blocker that has not reached its own dispatch slot this tick', () => {
+      // Regression for the mutual push-cancellation bug (live-observed
+      // 2026-08-27 through 2026-09-01): pushing a not-yet-dispatched blocker
+      // is pointless — that blocker's own moveTo() call, later this same
+      // tick, would immediately overwrite the push with its own direction.
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'undispatchedBlocker',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [blocker]),
+      });
+      blocker.room = room;
+
+      const mover = mockCreep({
+        name: 'miner2',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      resetTraffic();
+      resetTickCache();
+      // Deliberately do NOT call markDispatched(blocker) here.
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(blocker.move).not.toHaveBeenCalled();
+    });
+
+    it('resetTraffic clears dispatch state so a new tick starts fresh', () => {
+      // A blocker dispatched last tick must not be treated as dispatched this
+      // tick just because its name lingers in a stale Set.
+      const nextPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'staleDispatchBlocker',
+        pos: new RoomPosition(26, 25, 'W1N1'),
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [blocker]),
+      });
+      blocker.room = room;
+
+      const mover = mockCreep({
+        name: 'miner3',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [nextPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      markDispatched(blocker); // dispatched on the "previous" tick
+      resetTraffic(); // tick boundary
+      resetTickCache();
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(blocker.move).not.toHaveBeenCalled();
     });
 
     it('does not push a stationary creep', () => {
@@ -495,6 +585,7 @@ describe('trafficManager', () => {
       resetTraffic();
       resetTickCache();
       registerStationary(stationary, PRIORITY_STATIC);
+      markDispatched(stationary);
       executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
 
       expect(stationary.move).not.toHaveBeenCalled();
@@ -534,6 +625,7 @@ describe('trafficManager', () => {
 
       resetTraffic();
       resetTickCache();
+      markDispatched(highPriorityBlocker);
       executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
 
       expect(highPriorityBlocker.move).not.toHaveBeenCalled();
@@ -579,6 +671,7 @@ describe('trafficManager', () => {
 
       resetTraffic();
       resetTickCache();
+      markDispatched(blocker);
       executeMove(moverA, new RoomPosition(30, 25, 'W1N1'), 0);
       executeMove(moverB, new RoomPosition(30, 25, 'W1N1'), 0);
 
@@ -628,6 +721,7 @@ describe('trafficManager', () => {
 
       resetTraffic();
       resetTickCache();
+      markDispatched(blocker);
       executeMoveAvoidCreeps(mover, new RoomPosition(30, 25, 'W1N1'), 0);
 
       expect(blocker.move).toHaveBeenCalledTimes(1);
@@ -668,6 +762,7 @@ describe('trafficManager', () => {
       resetTraffic();
       resetTickCache();
       registerStationary(stationary, PRIORITY_STATIC);
+      markDispatched(stationary);
       executeMoveAvoidCreeps(mover, new RoomPosition(30, 25, 'W1N1'), 0);
 
       expect(stationary.move).not.toHaveBeenCalled();

@@ -19,6 +19,20 @@ export function mdbg(creep: Creep, msg: string): void {
 // double-push a creep that was already moved.
 const pushedThisTick = new Set<string>();
 
+// Tracks which creeps have already reached their per-tick dispatch slot (see
+// markDispatched, called from room.ts's runCreeps loop before any of a
+// creep's own movement logic runs). pushBlocker only pushes an already-
+// dispatched blocker — see the comment on that check for why.
+const dispatchedThisTick = new Set<string>();
+
+// Call once per creep, per tick, BEFORE its role (and therefore its own
+// moveTo()) runs — room.ts's runCreeps() does this unconditionally for every
+// creep it iterates, regardless of which branch (spawning/no-role/throttled/
+// normal dispatch) it ultimately takes.
+export function markDispatched(creep: Creep): void {
+  dispatchedThisTick.add(creep.name);
+}
+
 interface PathVis {
   roomName: string;
   points: RoomPosition[];
@@ -60,6 +74,7 @@ export function resetTraffic(): void {
   stationaryCreeps.clear();
   vizBuffer = [];
   pushedThisTick.clear();
+  dispatchedThisTick.clear();
 }
 
 export function resolveTraffic(): void {
@@ -85,17 +100,37 @@ function pushBlocker(mover: Creep, nextPos: RoomPosition): void {
     mdbg(mover, `pushBlocker: no creep at next step (${nextPos.x},${nextPos.y})`);
   }
   for (const blocker of blockers) {
+    // A blocker that hasn't reached its own dispatch slot yet THIS tick will
+    // call its own moveTo() later in the same runCreeps() iteration — and
+    // Screeps honors only the LAST move() intent set on a creep per tick, so
+    // that later call would silently overwrite the push we're about to issue.
+    // Two creeps needing to cross the same narrow point in opposite
+    // directions would then push each other back and forth forever with zero
+    // net progress: whichever mover runs first pushes a blocker who hasn't
+    // moved yet (wasted — self-overwritten moments later), and the reverse
+    // push suffers the same fate the following tick. Live-observed
+    // (2026-08-27 through 2026-09-01): W44N57 and W44N59 creep pairs stuck
+    // 50-130+ consecutive stuck-detection cycles at the same tile pair,
+    // repeatedly "pushing" each other with no net movement. Restricting a
+    // push to already-dispatched blockers means only a creep processed LATER
+    // this tick can ever successfully push one processed EARLIER — the
+    // earlier one is fully settled and won't move again — which breaks the
+    // cancellation while leaving normal pushes (and Screeps' native same-tick
+    // swap resolution, unaffected by any of this) exactly as before.
+    const notYetDispatched = !dispatchedThisTick.has(blocker.name);
     if (
       blocker.name === mover.name ||
       !blocker.my ||
       stationaryCreeps.has(blocker.name) ||
-      pushedThisTick.has(blocker.name)
+      pushedThisTick.has(blocker.name) ||
+      notYetDispatched
     ) {
       mdbg(
         mover,
         `pushBlocker: skip ${blocker.name} at (${nextPos.x},${nextPos.y}) ` +
           `self=${blocker.name === mover.name} foreign=${!blocker.my} ` +
-          `stationary=${stationaryCreeps.has(blocker.name)} alreadyPushed=${pushedThisTick.has(blocker.name)}`,
+          `stationary=${stationaryCreeps.has(blocker.name)} alreadyPushed=${pushedThisTick.has(blocker.name)} ` +
+          `notYetDispatched=${notYetDispatched}`,
       );
       continue;
     }

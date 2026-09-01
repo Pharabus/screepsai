@@ -1,6 +1,7 @@
 import { roles } from '../roles';
 import { profile } from '../utils/profiler';
 import { shouldThrottleCreep } from '../utils/creepThrottle';
+import { markDispatched } from '../utils/trafficManager';
 
 function cleanDeadCreepMemory(): void {
   for (const name in Memory.creeps) {
@@ -18,6 +19,14 @@ function runCreeps(): void {
     const creep = Game.creeps[name];
     if (!creep) continue;
     totalCreeps++;
+
+    // Mark this creep's dispatch slot reached BEFORE any of its own movement
+    // logic runs (regardless of which branch below it ultimately takes) — see
+    // pushBlocker's `notYetDispatched` check (trafficManager.ts) for why: a
+    // push only sticks for the rest of the tick if the pushed creep has no
+    // more moveTo() calls of its own coming, and iteration order here is what
+    // that check trusts to know which creeps are already "settled."
+    markDispatched(creep);
 
     // A creep still being spawned exists in Game.creeps but every action
     // (including move()) returns ERR_BUSY until spawning completes — the
