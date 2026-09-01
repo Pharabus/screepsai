@@ -1114,9 +1114,23 @@ function spliceExtensionFromPlan(roomName: string, x: number, y: number): void {
   if (idx >= 0) plan.extensionPositions.splice(idx, 1);
 }
 
+// A spawn down to exactly 1 open neighbour still technically isn't "boxed"
+// (creeps CAN get in/out), but under real traffic it's a severe chokepoint:
+// every delivery hauler and every newly-hatched creep funnels through that
+// one tile. Live-observed at W44N57 (2026-08-27): the secondary spawn at
+// (24,4) had exactly one walkable neighbour ((23,3) — every other neighbour
+// was an extension, the tower, or the storage), and under this room's
+// heavier feeder-hub traffic that single tile became a chronic multi-creep
+// gridlock — creeps stuck 37-62 stuck-detection cycles (100+ ticks each),
+// repeatedly pushing each other back and forth with no net progress, none of
+// it caught by the old zero-neighbour-only check. Raised to 2 so a spawn
+// gets a second door well before it's down to a hard single point of failure.
+const SPAWN_ACCESS_MIN = 2;
+
 /**
- * Destroy one extension (or extension site) that is boxing a built secondary spawn
- * with zero walkable 8-neighbours. Mirrors clearLabBlockers but for spawn access.
+ * Destroy one extension (or extension site) that leaves a built secondary
+ * spawn with fewer than SPAWN_ACCESS_MIN walkable 8-neighbours. Mirrors
+ * clearLabBlockers but for spawn access.
  *
  * Only checks planned spawn positions at index 1+ (the primary spawn has corridors
  * from the extension stamp's dx=0/dy=0 gap). One destroy per tick.
@@ -1151,7 +1165,7 @@ export function clearSpawnBlockers(room: Room): void {
     const spawnHere = spawns.find((s) => s.pos.x === pos.x && s.pos.y === pos.y);
     if (!spawnHere) continue;
 
-    const hasOpen = NEIGHBORS.some(([dx, dy]) => {
+    const openCount = NEIGHBORS.filter(([dx, dy]) => {
       const nx = pos.x + dx;
       const ny = pos.y + dy;
       if (nx < 0 || nx > 49 || ny < 0 || ny > 49) return false;
@@ -1175,8 +1189,8 @@ export function clearSpawnBlockers(room: Room): void {
             s.structureType === STRUCTURE_LAB,
         );
       return !hasObstacleSite;
-    });
-    if (hasOpen) continue;
+    }).length;
+    if (openCount >= SPAWN_ACCESS_MIN) continue;
 
     for (const [dx, dy] of NEIGHBORS) {
       const nx = pos.x + dx;

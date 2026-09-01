@@ -18,6 +18,7 @@ import {
   placeRemoteRoads,
   placeColonyBootstrapRoads,
   clearLabBlockers,
+  clearSpawnBlockers,
   clearBlockingExtensions,
   getPlannedReserved,
   applyRoadSiteOverlay,
@@ -1684,6 +1685,131 @@ describe('clearLabBlockers', () => {
     clearLabBlockers(room);
     expect(blocker1.destroy).toHaveBeenCalledTimes(1);
     expect(blocker2.destroy).not.toHaveBeenCalled();
+  });
+});
+
+describe('clearSpawnBlockers', () => {
+  beforeEach(() => resetGameGlobals());
+
+  // Secondary spawn at (24,4), matching the live W44N57 incident this guards
+  // against. `occupied` maps "dx,dy" offsets from the spawn to a structure
+  // type occupying that neighbour; any offset not in the map is open ground.
+  // Blocker objects are created once and reused across lookups so a test can
+  // assert directly on a specific neighbour's destroy()/remove() call.
+  function spawnBoxRoom(
+    rcl: number,
+    occupied: Record<string, string>,
+  ): { room: any; blockers: Record<string, any> } {
+    const secondary = { pos: new RoomPosition(24, 4, 'W1N1') };
+    const blockers: Record<string, any> = {};
+    for (const [key, structureType] of Object.entries(occupied)) {
+      blockers[key] = { structureType, destroy: vi.fn(), remove: vi.fn() };
+    }
+    const room = roomAt(rcl, {
+      find: vi.fn((type: number) => (type === FIND_MY_SPAWNS ? [secondary] : [])),
+      getTerrain: vi.fn(() => ({ get: () => 0 })),
+      lookForAt: vi.fn((listType: string, x: number, y: number) => {
+        if (listType === LOOK_CONSTRUCTION_SITES) return [];
+        const key = `${x - 24},${y - 4}`;
+        const blocker = blockers[key];
+        return blocker ? [blocker] : [];
+      }),
+    });
+    Memory.rooms['W1N1'] = {
+      layoutPlan: {
+        spawnPositions: [
+          { x: 25, y: 25 }, // primary — index 0, never checked
+          { x: 24, y: 4 }, // secondary — the one under test
+        ],
+        extensionPositions: [],
+      },
+    } as any;
+    return { room, blockers };
+  }
+
+  it('does nothing below RCL 7', () => {
+    const { room } = spawnBoxRoom(6, {});
+    clearSpawnBlockers(room);
+    expect(room.find).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when only one spawn is planned', () => {
+    const { room } = spawnBoxRoom(7, {});
+    Memory.rooms['W1N1']!.layoutPlan!.spawnPositions = [{ x: 25, y: 25 }];
+    clearSpawnBlockers(room);
+    expect(room.find).not.toHaveBeenCalled();
+  });
+
+  it('leaves a spawn alone once it has 2+ open neighbours', () => {
+    // Every neighbour except two diagonal corners is an extension — exactly
+    // SPAWN_ACCESS_MIN open tiles, the boundary this guard must not disturb.
+    const { room, blockers } = spawnBoxRoom(7, {
+      '0,-1': 'extension',
+      '1,-1': 'extension',
+      '-1,0': 'extension',
+      '1,0': 'extension',
+      '0,1': 'extension',
+      '1,1': 'extension',
+      // (-1,-1) and (-1,1) left open
+    });
+    clearSpawnBlockers(room);
+    for (const blocker of Object.values(blockers)) {
+      expect(blocker.destroy).not.toHaveBeenCalled();
+    }
+  });
+
+  it('destroys an extension when the spawn is down to exactly 1 open neighbour', () => {
+    // Live W44N57 shape: every neighbour but one is an obstacle. (-1,-1) is
+    // the sole open tile — the exact pattern that gridlocked W44N57's
+    // secondary spawn under real traffic despite technically being reachable.
+    const { room, blockers } = spawnBoxRoom(7, {
+      '0,-1': 'extension',
+      '1,-1': 'extension',
+      '1,0': 'extension',
+      '0,1': 'tower',
+      '1,1': 'storage',
+      '-1,0': 'extension',
+      '-1,1': 'extension',
+    });
+    clearSpawnBlockers(room);
+    // (0,-1) -> (24,3) is the first extension hit in NEIGHBORS order.
+    expect(blockers['0,-1'].destroy).toHaveBeenCalledTimes(1);
+    for (const [key, blocker] of Object.entries(blockers)) {
+      if (key !== '0,-1') expect(blocker.destroy).not.toHaveBeenCalled();
+    }
+  });
+
+  it('still destroys a blocker when the spawn is fully sealed (0 open neighbours)', () => {
+    const { room, blockers } = spawnBoxRoom(7, {
+      '-1,-1': 'extension',
+      '0,-1': 'extension',
+      '1,-1': 'extension',
+      '-1,0': 'extension',
+      '1,0': 'extension',
+      '-1,1': 'extension',
+      '0,1': 'extension',
+      '1,1': 'extension',
+    });
+    clearSpawnBlockers(room);
+    // First extension in NEIGHBORS order is (-1,-1).
+    expect(blockers['-1,-1'].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('destroys only one blocker per call even with multiple candidates', () => {
+    const { room, blockers } = spawnBoxRoom(7, {
+      '0,-1': 'extension',
+      '1,-1': 'extension',
+      '1,0': 'extension',
+      '0,1': 'extension',
+      '1,1': 'extension',
+      '-1,0': 'extension',
+      '-1,1': 'extension',
+    });
+    clearSpawnBlockers(room);
+    const destroyedCount = Object.values(blockers).filter(
+      (b) => b.destroy.mock.calls.length > 0,
+    ).length;
+    expect(destroyedCount).toBe(1);
   });
 });
 
