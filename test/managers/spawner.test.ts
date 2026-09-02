@@ -50,6 +50,99 @@ describe('buildSpawnQueue', () => {
     expect(roles).not.toContain('hauler');
   });
 
+  it('sizes bootstrap bodies off energyAvailable, not energyCapacityAvailable', () => {
+    // Regression for a live incident (2026-09-01/02): bootstrap roles used to
+    // pass `pattern` with no maxRepeats, so buildBody's own default
+    // (Math.floor(50/3) = 16 repeats = 48 parts = 3200 energy) sized off
+    // capacity -- a room recovering from zero spent its ENTIRE income on one
+    // huge harvester every cycle and could never also afford a builder, so
+    // its decayed source-container sites sat at 0 progress indefinitely
+    // (W44N57). Bodies must size off what's actually on hand (energyAvailable)
+    // and stay capped at a modest 4 repeats even when capacity is high.
+    (Memory as any).rooms = { W1N1: { minerEconomy: false } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyAvailable: 300, // can only afford 1 repeat (200/repeat)
+      energyCapacityAvailable: 5600, // RCL7-scale capacity -- must NOT be used
+    });
+
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    expect(harvester?.body).toEqual([WORK, CARRY, MOVE]);
+  });
+
+  it('caps bootstrap bodies at 4 repeats even with abundant available energy', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: false } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyAvailable: 5600,
+      energyCapacityAvailable: 5600,
+    });
+
+    const queue = buildSpawnQueue(room);
+    const harvester = queue.find((r) => r.role === 'harvester');
+
+    // 4 repeats * 3 parts = 12, NOT the old uncapped 48.
+    expect(harvester?.body?.length).toBe(12);
+  });
+
+  it('queues a recovery hauler in bootstrap when storage+terminal energy is stranded', () => {
+    // A room that fell OUT of miner economy (source containers decayed while
+    // its miners/haulers died) can still hold substantial storage/terminal
+    // energy from its prior mature state -- otherwise completely stranded,
+    // since no other bootstrap role ever touches storage/terminal.
+    (Memory as any).rooms = { W1N1: { minerEconomy: false } };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 3200 : 0) },
+      },
+      terminal: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 26845 : 0) },
+      },
+    });
+
+    const queue = buildSpawnQueue(room);
+    const roles = queue.map((r) => r.role);
+
+    expect(roles).toContain('hauler');
+  });
+
+  it('does not queue a recovery hauler in bootstrap when energy is below the stranded floor', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: false } };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        my: true,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 1000 : 0) },
+      },
+    });
+
+    const queue = buildSpawnQueue(room);
+    const roles = queue.map((r) => r.role);
+
+    expect(roles).not.toContain('hauler');
+  });
+
+  it('ignores a foreign (not-owned) storage/terminal when checking for stranded energy', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: false } };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage: {
+        my: false,
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 500_000 : 0) },
+      },
+    });
+
+    const queue = buildSpawnQueue(room);
+    const roles = queue.map((r) => r.role);
+
+    expect(roles).not.toContain('hauler');
+  });
+
   it('returns miner economy roles when minerEconomy is true', () => {
     (Memory as any).rooms = {
       W1N1: {

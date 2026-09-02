@@ -154,6 +154,19 @@ export const MINERAL_SHIP_ENERGY_BUFFER = 200;
  */
 export const HARVESTER_EMERGENCY_STORAGE_FLOOR = 5_000;
 
+/**
+ * Above this combined own storage+terminal energy, a room stuck in bootstrap
+ * economy (no source containers, so no miner/hauler pipeline) is worth
+ * spawning one small hauler to recover -- a room that fell OUT of miner
+ * economy (source containers decayed while its miners/haulers died) can
+ * still be sitting on substantial energy from its prior mature state, and
+ * that energy is otherwise completely stranded: the pure bootstrap role set
+ * (harvester/builder/repairer/upgrader) never touches storage or terminal.
+ * Below this floor there's too little sitting around to justify the spawn
+ * cost of a dedicated hauler over just letting harvester trickle handle it.
+ */
+export const BOOTSTRAP_STRANDED_ENERGY_FLOOR = 5_000;
+
 const MAX_BUY_PRICE_BY_SHARD: Record<string, number> = {
   shard0: 0.5,
   shard1: 0.5,

@@ -25,8 +25,9 @@ import {
   BOOST_LAB_MINERAL_TARGET,
   BOOST_LAB_MINERAL_MAINTAIN,
   HARVESTER_EMERGENCY_STORAGE_FLOOR,
+  BOOTSTRAP_STRANDED_ENERGY_FLOOR,
 } from '../utils/thresholds';
-import { myStorage } from '../utils/ownership';
+import { myStorage, myTerminal } from '../utils/ownership';
 import { compoundInTransit } from '../utils/boost';
 import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
 import {
@@ -1361,11 +1362,53 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
       });
     }
   } else {
-    // Bootstrap economy: builders before upgraders so containers get built quickly
-    queue.push({ role: 'harvester', pattern: [WORK, CARRY, MOVE], minCount: 2 });
-    queue.push({ role: 'builder', pattern: [WORK, CARRY, MOVE], minCount: buildersNeeded(room) });
-    queue.push({ role: 'repairer', pattern: [WORK, CARRY, MOVE], minCount: repairersNeeded(room) });
-    queue.push({ role: 'upgrader', pattern: [WORK, CARRY, MOVE], minCount: 1 });
+    // Bootstrap economy: builders before upgraders so containers get built quickly.
+    //
+    // Bodies are sized off room.energyAvailable (what's actually on hand right
+    // now), NOT energyCapacityAvailable, with a modest maxRepeats cap -- a room
+    // recovering from zero (or one that fell OUT of miner economy, e.g. its
+    // source containers decayed while its miners/haulers died) needs several
+    // small, quickly-affordable creeps spread across roles, not one huge
+    // creep that hoards an entire cycle's income. Passing `pattern` (with no
+    // `body`/low maxRepeats) here used to let buildBody's own default
+    // maxRepeats size off capacity uncapped (50/3 = 16 repeats = 48 parts =
+    // 3200 energy at RCL7's 5600 capacity) -- live-observed (2026-09-01/02):
+    // W44N57 spent its entire income on a single 48-part harvester every
+    // cycle and could never also afford a builder, so its two decayed
+    // source-container sites sat at literal 0/5000 progress for over a day
+    // of real time, unable to ever restore minerEconomy and escape bootstrap.
+    // bootstrapMaxRepeats (4) mirrors the miner-economy branch's own
+    // emergency-harvester/builder caps above -- a proven-sane bootstrap body
+    // size (12 parts, 800 energy at most).
+    const bootstrapMaxRepeats = 4;
+    const bootstrapBody = (): BodyPartConstant[] =>
+      buildBody([WORK, CARRY, MOVE], room.energyAvailable, bootstrapMaxRepeats);
+
+    // A room stuck in bootstrap can still be sitting on substantial storage
+    // and/or terminal energy left over from a prior mature state -- that
+    // energy is otherwise completely stranded, since nothing else in this
+    // branch ever touches storage/terminal. One small hauler recovers it
+    // immediately instead of waiting on harvester trickle to refill the
+    // spawn from scratch. Pushed BEFORE the other bootstrap roles below (but
+    // after the Priority 0 defenders pushed at the top of this function) so,
+    // once affordable, it's the first bootstrap creep spawned -- front-
+    // loading the energy injection that unblocks every other role's own
+    // body cost this same recovery.
+    const strandedEnergy =
+      (myStorage(room)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0) +
+      (myTerminal(room)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0);
+    if (strandedEnergy > BOOTSTRAP_STRANDED_ENERGY_FLOOR) {
+      queue.push({
+        role: 'hauler',
+        body: buildBody([CARRY, CARRY, MOVE, MOVE], room.energyAvailable, 4),
+        minCount: 1,
+      });
+    }
+
+    queue.push({ role: 'harvester', body: bootstrapBody(), minCount: 2 });
+    queue.push({ role: 'builder', body: bootstrapBody(), minCount: buildersNeeded(room) });
+    queue.push({ role: 'repairer', body: bootstrapBody(), minCount: repairersNeeded(room) });
+    queue.push({ role: 'upgrader', body: bootstrapBody(), minCount: 1 });
   }
 
   // Transport missions (operator-created via deliverEnergy): couriers spawn from
