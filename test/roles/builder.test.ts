@@ -65,6 +65,77 @@ describe('builder', () => {
     });
   });
 
+  describe('tunnel road prioritisation', () => {
+    // A road build cost of CONSTRUCTION_COST_ROAD_WALL_RATIO (150x) the base
+    // cost means it crosses wall terrain -- a deliberate tunnel shortcut that
+    // the planner only places to save a large detour. It must not get stuck
+    // behind cheap plain-road sites just because they share the same nominal
+    // STRUCTURE_ROAD priority tier.
+    function roadSite(id: string, progressTotal: number) {
+      return {
+        structureType: STRUCTURE_ROAD,
+        id,
+        progressTotal,
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+      };
+    }
+
+    it('picks a tunnel road site over a cheap plain road site', () => {
+      const plainRoad = roadSite('plain', 300);
+      const tunnelRoad = roadSite('tunnel', 45000);
+      const creep = mockCreep({
+        memory: { role: 'builder', state: 'BUILD' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+        // find() order deliberately lists the plain road first -- the old
+        // stable-sort-by-tied-priority behaviour would have kept it first.
+        room: mockRoom({ find: vi.fn(() => [plainRoad, tunnelRoad]) }),
+      });
+      creep.build = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      expect(creep.build).toHaveBeenCalledWith(tunnelRoad);
+    });
+
+    it('still picks a container over a tunnel road', () => {
+      const tunnelRoad = roadSite('tunnel', 45000);
+      const container = {
+        structureType: STRUCTURE_CONTAINER,
+        id: 'container1',
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+      };
+      const creep = mockCreep({
+        memory: { role: 'builder', state: 'BUILD' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+        room: mockRoom({ find: vi.fn(() => [tunnelRoad, container]) }),
+      });
+      creep.build = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      expect(creep.build).toHaveBeenCalledWith(container);
+    });
+
+    it('does not treat a swamp-cost road (5x) as a tunnel', () => {
+      const swampRoad = roadSite('swamp', 1500);
+      const plainRoad = roadSite('plain', 300);
+      const creep = mockCreep({
+        memory: { role: 'builder', state: 'BUILD' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+        room: mockRoom({ find: vi.fn(() => [swampRoad, plainRoad]) }),
+      });
+      creep.build = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      // Tied priority (both plain STRUCTURE_ROAD) -- stable sort keeps find() order.
+      expect(creep.build).toHaveBeenCalledWith(swampRoad);
+    });
+  });
+
   describe.skip('lab stamp road clearance (removed — builder no longer dismantles stamp tiles)', () => {
     // These tests covered Pass 2 dismantle scan which was removed in v1.0.151.
     // The isAccessible filter in pickLabPositions is the correct fix; see layoutPlanner.test.ts.

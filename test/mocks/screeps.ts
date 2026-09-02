@@ -55,6 +55,28 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).STRUCTURE_OBSERVER = 'observer';
 (globalThis as any).STRUCTURE_POWER_BANK = 'powerBank';
 
+// Construction cost constants (real Screeps values — see @types/screeps)
+(globalThis as any).CONSTRUCTION_COST = {
+  spawn: 15000,
+  extension: 3000,
+  road: 300,
+  constructedWall: 1,
+  rampart: 1,
+  link: 5000,
+  storage: 30000,
+  tower: 5000,
+  observer: 8000,
+  powerSpawn: 100000,
+  extractor: 5000,
+  lab: 50000,
+  terminal: 100000,
+  container: 5000,
+  nuker: 100000,
+  factory: 100000,
+};
+(globalThis as any).CONSTRUCTION_COST_ROAD_SWAMP_RATIO = 5;
+(globalThis as any).CONSTRUCTION_COST_ROAD_WALL_RATIO = 150;
+
 // Resource constants
 (globalThis as any).RESOURCE_ENERGY = 'energy';
 (globalThis as any).RESOURCE_BATTERY = 'battery';
