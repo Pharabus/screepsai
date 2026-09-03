@@ -22,12 +22,22 @@ const BUILD_PRIORITY: Partial<Record<BuildableStructureConstant, number>> = {
 // around -- live-observed (2026-09-02): W44N57's 45000-cost tunnel at (37,11)
 // sat at 0 progress, tied for the same priority as four ~300-1500-cost plain
 // roads, so it never got picked ahead of them despite being the one site
-// actually worth prioritising. Tunnels are treated as a near-economy
-// priority (behind container/storage, well ahead of a plain road) rather
-// than lumped in with cheap roads any single builder finishes in a few trips
-// regardless of order.
+// actually worth prioritising.
+//
+// Ranked AHEAD of CONTAINER/STORAGE, not just ahead of plain roads: a tunnel
+// bridges a genuine terrain gap, and a structure on the far side of that same
+// gap can be flat-out unreachable without it. Live case, same room: the
+// tunnel at (37,11) sits in a 1-tile-wide wall neck, and the source container
+// at (39,19) is on the far side of it -- ranking the container above the
+// tunnel (the original choice here) sent every builder chasing a target
+// PathFinder could only reach an INCOMPLETE path toward, and moveTo walked
+// them to the closest reachable point of that incomplete path and stopped --
+// a dead-end swamp pocket at (34-35,23-24), nowhere near either site,
+// clustered there indefinitely. The tunnel side (36,11) is directly,
+// fully-connected to the open core with no obstruction, so once it actually
+// outranks the unreachable container, builders path there cleanly instead.
 const TUNNEL_ROAD_COST = CONSTRUCTION_COST[STRUCTURE_ROAD] * CONSTRUCTION_COST_ROAD_WALL_RATIO;
-const TUNNEL_ROAD_PRIORITY = 4.5; // behind STORAGE (4), ahead of plain ROAD (6)
+const TUNNEL_ROAD_PRIORITY = 2.5; // behind TOWER (2), ahead of CONTAINER (3)
 
 function buildPriority(site: ConstructionSite): number {
   if (site.structureType === STRUCTURE_ROAD && site.progressTotal >= TUNNEL_ROAD_COST) {

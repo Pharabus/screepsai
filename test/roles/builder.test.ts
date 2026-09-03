@@ -98,7 +98,13 @@ describe('builder', () => {
       expect(creep.build).toHaveBeenCalledWith(tunnelRoad);
     });
 
-    it('still picks a container over a tunnel road', () => {
+    it('picks a tunnel road over a container', () => {
+      // Ranked ahead of container/storage on purpose: a structure on the far
+      // side of the exact wall gap a tunnel bridges can be genuinely
+      // unreachable without it (live case: W44N57's source container at
+      // (39,19), unreachable across the (37,11) wall neck -- ranking the
+      // container first sent every builder chasing an incomplete path that
+      // dead-ended far from either site).
       const tunnelRoad = roadSite('tunnel', 45000);
       const container = {
         structureType: STRUCTURE_CONTAINER,
@@ -109,13 +115,33 @@ describe('builder', () => {
         memory: { role: 'builder', state: 'BUILD' },
         store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
         pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
-        room: mockRoom({ find: vi.fn(() => [tunnelRoad, container]) }),
+        room: mockRoom({ find: vi.fn(() => [container, tunnelRoad]) }),
       });
       creep.build = vi.fn(() => OK);
 
       builder.run(creep);
 
-      expect(creep.build).toHaveBeenCalledWith(container);
+      expect(creep.build).toHaveBeenCalledWith(tunnelRoad);
+    });
+
+    it('still picks a tower over a tunnel road', () => {
+      const tunnelRoad = roadSite('tunnel', 45000);
+      const tower = {
+        structureType: STRUCTURE_TOWER,
+        id: 'tower1',
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+      };
+      const creep = mockCreep({
+        memory: { role: 'builder', state: 'BUILD' },
+        store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+        pos: new (globalThis as any).RoomPosition(26, 5, 'W1N1'),
+        room: mockRoom({ find: vi.fn(() => [tunnelRoad, tower]) }),
+      });
+      creep.build = vi.fn(() => OK);
+
+      builder.run(creep);
+
+      expect(creep.build).toHaveBeenCalledWith(tower);
     });
 
     it('does not treat a swamp-cost road (5x) as a tunnel', () => {
