@@ -1604,6 +1604,53 @@ describe('buildersNeeded — mineral-priority lean profile', () => {
   });
 });
 
+describe('buildersNeeded — decayed source container deadlock', () => {
+  const manySites = Array(17).fill({ id: 'site' });
+  const findManySites = vi.fn((type: number) =>
+    type === FIND_MY_CONSTRUCTION_SITES ? manySites : [],
+  );
+
+  it('does not zero out when a linkId is stale but its container has decayed away', () => {
+    // A source can keep a linkId forever (never cleared once assigned) even
+    // after its container is destroyed and re-queued as a construction site --
+    // gating on linkId alone falsely reads this as a mature, fully-piped
+    // economy and would zero builders out via the low-storage floor below,
+    // even though a builder is the only thing that can ever rebuild the
+    // container and let storage recover. See src/managers/spawner.ts.
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, linkId: 'link1' as any }, // containerId gone
+          { id: 'src2' as any, x: 20, y: 20, linkId: 'link2' as any },
+        ],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: findManySites,
+      storage: { my: true, store: { getUsedCapacity: () => 0 } },
+    });
+    expect(buildersNeeded(room)).toBe(3);
+  });
+
+  it('still gates on low storage once every source has both linkId and containerId', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, linkId: 'link1' as any, containerId: 'cnt1' as any },
+          { id: 'src2' as any, x: 20, y: 20, linkId: 'link2' as any, containerId: 'cnt2' as any },
+        ],
+      },
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: findManySites,
+      storage: { my: true, store: { getUsedCapacity: () => 0 } },
+    });
+    expect(buildersNeeded(room)).toBe(0);
+  });
+});
+
 describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
   it('queues 10-WORK miner body for reserved remote room', () => {
     (Memory as any).rooms = {

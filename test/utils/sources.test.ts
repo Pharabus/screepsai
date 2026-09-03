@@ -547,6 +547,58 @@ describe('sources', () => {
       expect(moveTo).toHaveBeenCalledWith(creep, srcB, expect.any(Object));
     });
 
+    it('prefers a source with a complete real path over a closer-but-unreachable one', () => {
+      const near = { id: 'sNear' as Id<Source>, pos: new RoomPosition(26, 25, 'W1N1') };
+      const far = { id: 'sFar' as Id<Source>, pos: new RoomPosition(40, 40, 'W1N1') };
+
+      Game.creeps = {};
+
+      const room = mockRoom({ find: vi.fn(() => [near, far]) });
+
+      const creep = mockCreep({
+        name: 'test_creep',
+        room,
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        harvest: vi.fn(() => ERR_NOT_IN_RANGE),
+      });
+
+      (PathFinder.search as any) = vi.fn((_from: any, to: any) => {
+        // The nearby source sits behind an unbuilt wall -- no complete path.
+        if (to.pos === near.pos) return { path: [], ops: 0, cost: 0, incomplete: true };
+        return { path: new Array(20).fill(0), ops: 20, cost: 20, incomplete: false };
+      });
+
+      harvestFromBestSource(creep);
+
+      expect(moveTo).toHaveBeenCalledWith(creep, far, expect.any(Object));
+      expect(creep.memory.sourceId).toBe('sFar');
+    });
+
+    it('sticks with a previously committed source instead of re-scoring', () => {
+      const srcA = { id: 'sA' as Id<Source>, pos: new RoomPosition(10, 10, 'W1N1'), energy: 500 };
+      const srcB = { id: 'sB' as Id<Source>, pos: new RoomPosition(40, 40, 'W1N1'), energy: 500 };
+
+      Game.creeps = {};
+      Game.getObjectById = vi.fn(() => srcA) as any;
+
+      const room = mockRoom({ find: vi.fn(() => [srcA, srcB]) });
+      const pathFinderSpy = vi.fn();
+      (PathFinder.search as any) = pathFinderSpy;
+
+      const creep = mockCreep({
+        name: 'test_creep',
+        room,
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        memory: { role: 'harvester', sourceId: 'sA' },
+        harvest: vi.fn(() => ERR_NOT_IN_RANGE),
+      });
+
+      harvestFromBestSource(creep);
+
+      expect(moveTo).toHaveBeenCalledWith(creep, srcA, expect.any(Object));
+      expect(pathFinderSpy).not.toHaveBeenCalled();
+    });
+
     it('harvests directly when in range', () => {
       const source = {
         id: 'sA' as Id<Source>,

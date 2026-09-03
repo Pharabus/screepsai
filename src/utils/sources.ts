@@ -97,6 +97,17 @@ export function withdrawFromLogistics(creep: Creep): boolean {
 function findBestSource(creep: Creep): Source | undefined {
   const sources = creep.room.find(FIND_SOURCES_ACTIVE);
   if (sources.length === 0) return undefined;
+  if (sources.length === 1) return sources[0];
+
+  // Commit to a source once chosen and keep it while still active, instead of
+  // re-scoring (and potentially flip-flopping) every tick. This also makes the
+  // PathFinder distance check below affordable — it's paid once per assignment,
+  // not once per tick for every uncommitted harvester.
+  if (creep.memory.sourceId) {
+    const committed = Game.getObjectById(creep.memory.sourceId);
+    if (committed && committed.energy > 0) return committed;
+    delete creep.memory.sourceId;
+  }
 
   const harvesters = Object.values(Game.creeps).filter(
     (c) => c.room.name === creep.room.name && c.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
@@ -109,7 +120,18 @@ function findBestSource(creep: Creep): Source | undefined {
     const assigned = harvesters.filter(
       (c) => c.name !== creep.name && source.pos.inRangeTo(c, 2),
     ).length;
-    const distance = creep.pos.getRangeTo(source);
+    // Real walkable distance, not raw straight-line range -- a wall (e.g. an
+    // unbuilt tunnel road) can put a source on paper close but, in practice,
+    // unreachable or requiring a huge detour. Live-observed W44N57: a harvester
+    // kept chasing the source on the far side of an unbuilt wall tunnel because
+    // straight-line range favored it, while the real walk was a long detour (or
+    // outright impossible pre-tunnel).
+    const search = PathFinder.search(
+      creep.pos,
+      { pos: source.pos, range: 1 },
+      { maxOps: 2000, swampCost: 5 },
+    );
+    const distance = search.incomplete ? Infinity : search.path.length;
     // Favor fewer assigned creeps, break ties by distance
     const score = assigned * 100 + distance;
     if (score < bestScore) {
@@ -118,6 +140,7 @@ function findBestSource(creep: Creep): Source | undefined {
     }
   }
 
+  if (bestSource) creep.memory.sourceId = bestSource.id;
   return bestSource;
 }
 

@@ -441,19 +441,29 @@ export function buildersNeeded(room: Room): number {
   const storage = room.storage;
   const mem = Memory.rooms[room.name];
   const sources = mem?.sources;
-  const allSourcesLinked =
-    sources !== undefined && sources.length > 0 && sources.every((s) => s.linkId);
+  // Requires containerId, not just linkId: a source's linkId is never cleared
+  // once assigned, even after its container decays away -- so a room whose
+  // source containers have been destroyed (and are themselves sites in the
+  // construction queue, needing builders to rebuild) still reads as "linked."
+  // That falsely signaled a mature, fully-piped economy and zeroed builders
+  // out via the low-storage gate below -- a permanent deadlock, since nothing
+  // but a builder can ever rebuild the missing container and let storage
+  // energy climb again. Live-observed W44N57: both source containers gone,
+  // both sites sitting at 0/5000, minerEconomy false, yet the old link-only
+  // check still read true off two stale linkId values.
+  const sourcePipelineComplete =
+    sources !== undefined && sources.length > 0 && sources.every((s) => s.linkId && s.containerId);
   // Energy gate: suppress builders when storage is too low.
   // Under holisticEconomy, count storage + terminal energy so a room with
   // combined energy above the floor still spawns builders.
   // Flag-off: existing storage-only check (unchanged).
   // The sites===0 early return below is preserved regardless of flag.
   if (Memory.holisticEconomy) {
-    if (storage && allSourcesLinked && colonyEnergy(room) < STORAGE_ENERGY_FLOOR) return 0;
+    if (storage && sourcePipelineComplete && colonyEnergy(room) < STORAGE_ENERGY_FLOOR) return 0;
   } else {
     if (
       storage &&
-      allSourcesLinked &&
+      sourcePipelineComplete &&
       storage.store.getUsedCapacity(RESOURCE_ENERGY) < STORAGE_ENERGY_FLOOR
     )
       return 0;

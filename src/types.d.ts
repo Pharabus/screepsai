@@ -62,6 +62,12 @@ interface CreepMemory {
   /** Movement priority used by pushBlocker — higher priority creeps may push lower-priority blockers */
   movePriority?: number;
   /**
+   * Source this creep has committed to for self-harvesting (src/utils/sources.ts
+   * findBestSource). Sticking with one choice avoids re-scoring — and repathing to
+   * a possibly different source — every single tick.
+   */
+  sourceId?: Id<Source>;
+  /**
    * Mission this creep is assigned to — set at spawn time for remote haulers and reservers.
    * Format: 'remoteMining:<roomName>'. Used by missions.ts to scan live creeps and keep
    * RemoteMiningMission.haulerIds / reserverId in sync without needing spawn callbacks.
