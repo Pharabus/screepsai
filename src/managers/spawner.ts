@@ -1030,12 +1030,30 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
   if (isMinerEconomy) {
     // Miner economy: miners first (energy production), then haulers (distribution),
     // then harvesters as emergency bootstrap if both die, then upgraders/builders.
-    const miners = minersNeeded(room);
-    if (miners > 0) {
+    //
+    // minCount is the room's fixed number of mineable source-container slots,
+    // NOT minersNeeded()'s gap count added to the current live count. That
+    // gap+alive formula assumed entry.minerName always reflects a spawned
+    // replacement immediately, but assignMiner() is only called from the
+    // miner's OWN POSITION state once it physically reaches its source --
+    // for several ticks after a replacement spawns (longer still on a room
+    // with far-apart sources), the memory-side minerName is still stale/dead,
+    // so minersNeeded() keeps reporting the same gap while
+    // countCreepsByRole() already counts the in-flight replacement, summing
+    // to one MORE than actually wanted. A second, genuinely superfluous miner
+    // gets queued -- and once both real sources are filled, it has no source
+    // to claim at all (findOwnedSource/findUnminedSource both come up empty)
+    // and POSITION's "no source" branch only moves for remote-room creeps,
+    // so a local extra miner just sits frozen forever, doing nothing.
+    // Live-observed (2026-09-07): W44N57 (2 sources, both replaced multiple
+    // times during its earlier bootstrap crisis) accumulated 2 such orphaned
+    // miners, motionless indefinitely at neither source's position.
+    const minerSlots = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
+    if (minerSlots > 0) {
       queue.push({
         role: 'miner',
         body: buildMinerBody(room.energyCapacityAvailable),
-        minCount: miners + countCreepsByRole('miner', room.name),
+        minCount: minerSlots,
       });
     }
     // Mineral-priority outposts (e.g. W44N59) exist to mine their deposit, not

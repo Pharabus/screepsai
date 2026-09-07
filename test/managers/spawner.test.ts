@@ -297,6 +297,43 @@ describe('buildSpawnQueue', () => {
     expect(roles).toContain('miner');
   });
 
+  // Regression (2026-09-07): minCount used to be minersNeeded()'s gap count
+  // ADDED to the current live miner count. A source's minerName only updates
+  // once a replacement miner physically walks all the way to it and calls
+  // assignMiner() -- so for however many ticks that takes, minersNeeded()
+  // still reports the (stale) gap while the just-spawned replacement is
+  // ALREADY counted as live, summing to one MORE than the room actually has
+  // slots for. The extra miner then has no source to claim once both real
+  // slots are genuinely filled, and sits permanently idle (its own POSITION
+  // state has no "no work, no target room" movement fallback). minCount must
+  // be the fixed slot count (sources with a container), independent of
+  // current liveness.
+  it('caps miner minCount at the number of source slots, not gap + live count', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_1' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any, minerName: undefined },
+        ],
+      },
+    };
+    // A replacement for src2 already spawned and is alive, but hasn't yet
+    // reached its source to call assignMiner() -- entry.minerName is still
+    // unset, so minersNeeded() still reports a gap for src2.
+    (Game as any).creeps = {
+      miner_1: { memory: { role: 'miner' } },
+      miner_2: { memory: { role: 'miner' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const queue = buildSpawnQueue(room);
+    const minerEntry = queue.find((r) => r.role === 'miner');
+
+    // 2 source slots total -- not 1 (gap) + 2 (live) = 3.
+    expect(minerEntry?.minCount).toBe(2);
+  });
+
   it('bootstrap harvester minCount is 2', () => {
     (Memory as any).rooms = { W1N1: {} };
     const room = mockRoom({ name: 'W1N1' });
