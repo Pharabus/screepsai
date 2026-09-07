@@ -142,6 +142,105 @@ const HOSTILE_REJECT_WINDOW = 20_000;
 /** Recent-scout-hostile window (transient invaders age out faster). */
 const SCOUT_HOSTILE_WINDOW = 1500;
 
+// ---------------------------------------------------------------------------
+// Terrain-openness scoring
+//
+// scoreClaimTarget previously had zero signal for how fragmented a candidate
+// room's terrain is around its likely core - only source count, distance, and
+// mineral diversity. Live investigation of W44N57 (a chronic traffic-jam room)
+// found the room's core is threaded with natural walls that leave only ~55%
+// of the area around the spawn actually reachable, with recurring 1-2-tile
+// chokepoints - the root cause of repeated stuck-creep incidents that no
+// amount of traffic-code fixing could resolve, because the constraint is
+// terrain, not logic. Checking claimCandidates() against this same method
+// found the then-top-scored candidate (2 sources, score 18) was terrain-WORSE
+// than W44N57 at every anchor tried (best case ~57% reachable), while a
+// lower-scored 1-source candidate reached ~84% reachable with zero
+// chokepoints - i.e. the existing formula would have picked the worse room.
+// This term closes that gap using only Game.map.getRoomTerrain (world-static
+// data, needs no vision) plus whatever position data a scout already
+// recorded - no live room object required.
+/** Radius of the core box to flood-fill around each candidate anchor - matches
+ *  the ~29x29 window RoomLayout analysis uses for owned rooms. */
+const TERRAIN_OPENNESS_RADIUS = 14;
+/** Reference point the term is centred on: W42N59's measured reachable
+ *  fraction (0.637) - our worst *currently-viable* colony. Below this, a
+ *  candidate is more fragmented than a room we already know is workable;
+ *  above it, more open. Rooms score neutral at exactly this level. */
+const TERRAIN_OPENNESS_BASELINE = 0.65;
+/** Points per fraction-point of openness above/below the baseline. Tuned so
+ *  the swing between a maze-like candidate (~0.55) and an open one (~0.85)
+ *  moves the score by roughly one source-count's worth of points (30 * 0.3 =
+ *  9), enough to reorder candidates the source-count term alone would
+ *  otherwise misrank, without letting terrain alone dominate a genuine
+ *  2-source vs 1-source difference. */
+const TERRAIN_OPENNESS_WEIGHT = 30;
+
+/**
+ * Fraction of the TERRAIN_OPENNESS_RADIUS box around `anchor` that is
+ * reachable (8-directional flood fill, walls only) from the anchor itself.
+ * Returns 0 if the anchor tile is itself a wall.
+ */
+function reachableFraction(terrain: RoomTerrain, anchor: { x: number; y: number }): number {
+  const minX = Math.max(0, anchor.x - TERRAIN_OPENNESS_RADIUS);
+  const maxX = Math.min(49, anchor.x + TERRAIN_OPENNESS_RADIUS);
+  const minY = Math.max(0, anchor.y - TERRAIN_OPENNESS_RADIUS);
+  const maxY = Math.min(49, anchor.y + TERRAIN_OPENNESS_RADIUS);
+  const walkable = (x: number, y: number): boolean => terrain.get(x, y) !== TERRAIN_MASK_WALL;
+  if (!walkable(anchor.x, anchor.y)) return 0;
+
+  const total = (maxX - minX + 1) * (maxY - minY + 1);
+  const reachable = new Set<string>([`${anchor.x},${anchor.y}`]);
+  const queue: [number, number][] = [[anchor.x, anchor.y]];
+  let head = 0;
+  while (head < queue.length) {
+    const [x, y] = queue[head++]!;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+        const key = `${nx},${ny}`;
+        if (reachable.has(key) || !walkable(nx, ny)) continue;
+        reachable.add(key);
+        queue.push([nx, ny]);
+      }
+    }
+  }
+  return reachable.size / total;
+}
+
+/**
+ * Best-case core openness for a candidate room, or null when there isn't
+ * enough scouted position data to pick an anchor (fails open - an older or
+ * thinner scout record just means this term contributes nothing, matching
+ * the mineral-diversity bonus's own "skip silently" convention).
+ *
+ * Tries every position a scout actually recorded (controller + each source -
+ * deliberately NOT the mineral, which is often off to the side rather than
+ * near the eventual core) as a stand-in spawn anchor, since the real anchor
+ * isn't chosen until the room is claimed and laid out. Taking the best of
+ * these is a coarse but cheap proxy for "is there a good spot to build here
+ * at all" - exactly how the live W44N57-vs-candidates comparison was done by
+ * hand.
+ */
+export function claimTargetOpenness(roomName: string, mem: RoomMemory): number | null {
+  const anchors: { x: number; y: number }[] = [];
+  if (mem.scoutedControllerPos) anchors.push(mem.scoutedControllerPos);
+  for (const s of mem.scoutedSourceData ?? []) anchors.push({ x: s.x, y: s.y });
+  if (anchors.length === 0) return null;
+
+  // Game.map.getRoomTerrain is world-static map data - available for any room
+  // name regardless of vision, so this needs no live Game.rooms[roomName].
+  const terrain = Game.map.getRoomTerrain(roomName);
+  let best = 0;
+  for (const anchor of anchors) {
+    best = Math.max(best, reachableFraction(terrain, anchor));
+  }
+  return best;
+}
+
 export interface ClaimEvaluation {
   score: number;
   reason?: string;
@@ -151,7 +250,8 @@ export interface ClaimEvaluation {
  * Score a candidate room for claiming. Returns -1 if the room is not viable.
  *
  * Scoring favours rooms with more sources, a mineral that differs from the home
- * room (diversifies lab inputs), shorter linear distance, and lower hostile risk.
+ * room (diversifies lab inputs), shorter linear distance, lower hostile risk,
+ * and a more open (less wall-fragmented) core - see claimTargetOpenness().
  */
 export function scoreClaimTarget(targetRoomName: string, homeRoomName: string): ClaimEvaluation {
   const tmem = Memory.rooms[targetRoomName];
@@ -208,6 +308,13 @@ export function scoreClaimTarget(targetRoomName: string, homeRoomName: string): 
     if (ownedMinerals.size > 0 && !ownedMinerals.has(candidateMineral)) {
       score += 5;
     }
+  }
+
+  // Terrain-openness term - see claimTargetOpenness() above for why this
+  // exists. Null (no anchor data scouted yet) contributes nothing.
+  const openness = claimTargetOpenness(targetRoomName, tmem);
+  if (openness !== null) {
+    score += (openness - TERRAIN_OPENNESS_BASELINE) * TERRAIN_OPENNESS_WEIGHT;
   }
 
   return { score };

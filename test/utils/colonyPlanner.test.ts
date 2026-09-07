@@ -11,6 +11,7 @@ import {
   getColonyScores,
   resetColonyScoreCache,
   findClaimCandidates,
+  claimTargetOpenness,
 } from '../../src/utils/colonyPlanner';
 
 /** Read a colony mission directly from the registry by target room name. */
@@ -691,6 +692,160 @@ describe('scoreClaimTarget — mineral diversity bonus', () => {
     Game.map.getRoomLinearDistance = ((_a: string, _b: string) => 5) as any;
     scoutedViable('W2N1', 'O');
     expect(scoreClaimTarget('W2N1', 'W1N1').score).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Terrain-openness term in scoreClaimTarget
+// ---------------------------------------------------------------------------
+
+/** A terrain where every tile within `keepRadius` (Chebyshev) of `anchor` is
+ *  open and everything else is wall - gives full control over the reachable
+ *  fraction a flood fill from `anchor` will find. */
+function pocketTerrain(anchor: { x: number; y: number }, keepRadius: number): RoomTerrain {
+  return {
+    get: (x: number, y: number) => {
+      const dx = Math.abs(x - anchor.x);
+      const dy = Math.abs(y - anchor.y);
+      return Math.max(dx, dy) <= keepRadius ? 0 : TERRAIN_MASK_WALL;
+    },
+  } as RoomTerrain;
+}
+
+describe('claimTargetOpenness', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('returns null when no controller or source positions were scouted', () => {
+    Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2, scoutedHasController: true } as any;
+    expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBeNull();
+  });
+
+  it('returns ~1 for a fully open core', () => {
+    const anchor = { x: 25, y: 25 };
+    Game.map.getRoomTerrain = (() => pocketTerrain(anchor, 14)) as any;
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBeCloseTo(1, 2);
+  });
+
+  it('returns a small fraction for a tightly walled-in core', () => {
+    const anchor = { x: 25, y: 25 };
+    Game.map.getRoomTerrain = (() => pocketTerrain(anchor, 2)) as any;
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    const openness = claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)!;
+    expect(openness).toBeGreaterThan(0);
+    expect(openness).toBeLessThan(0.1);
+  });
+
+  it('returns 0 when the only anchor tile is itself a wall', () => {
+    const anchor = { x: 25, y: 25 };
+    // keepRadius -1 means every tile, including the anchor, is wall.
+    Game.map.getRoomTerrain = (() => pocketTerrain(anchor, -1)) as any;
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBe(0);
+  });
+
+  it('takes the best of controller and source anchors', () => {
+    const badAnchor = { x: 25, y: 25 };
+    const goodAnchor = { x: 10, y: 10 };
+    // Only goodAnchor's neighbourhood is open; badAnchor is walled in.
+    Game.map.getRoomTerrain = (() => ({
+      get: (x: number, y: number) => {
+        const dGood = Math.max(Math.abs(x - goodAnchor.x), Math.abs(y - goodAnchor.y));
+        return dGood <= 14 ? 0 : TERRAIN_MASK_WALL;
+      },
+    })) as any;
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: badAnchor,
+      scoutedSourceData: [{ id: 'src1' as any, x: goodAnchor.x, y: goodAnchor.y }],
+    } as any;
+    expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBeCloseTo(1, 2);
+  });
+});
+
+describe('scoreClaimTarget — terrain openness term', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    setMyUsername();
+    setLinearDistance({ 'W1N1|W2N1': 1, 'W1N1|W2N2': 1 });
+  });
+
+  it('scores an open-core candidate higher than an equally-sourced fragmented one', () => {
+    const anchor = { x: 25, y: 25 };
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    Memory.rooms['W2N2'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+
+    Game.map.getRoomTerrain = ((roomName: string) =>
+      pocketTerrain(anchor, roomName === 'W2N1' ? 14 : 2)) as any;
+
+    const open = scoreClaimTarget('W2N1', 'W1N1').score;
+    const fragmented = scoreClaimTarget('W2N2', 'W1N1').score;
+    expect(open).toBeGreaterThan(fragmented);
+  });
+
+  it('can outrank a more-sourced but severely fragmented room (the W41N58-vs-W44N58 case)', () => {
+    // Mirrors the live finding: a 2-source candidate whose best-case core is
+    // only ~57% reachable should not automatically outscore a 1-source
+    // candidate whose core is ~84% reachable.
+    const anchor = { x: 25, y: 25 };
+    Memory.rooms['W2N1'] = {
+      // 2-source, fragmented core
+      scoutedAt: 100,
+      scoutedSources: 2,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    Memory.rooms['W2N2'] = {
+      // 1-source, open core
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+
+    // keepRadius 4 -> reachable = 9x9=81 / 841 ~= 0.096 (worse than the live
+    // 0.575 measured for W41N58, chosen to make the reordering unambiguous).
+    Game.map.getRoomTerrain = ((roomName: string) =>
+      pocketTerrain(anchor, roomName === 'W2N1' ? 4 : 14)) as any;
+
+    const fragmentedTwoSource = scoreClaimTarget('W2N1', 'W1N1').score;
+    const openOneSource = scoreClaimTarget('W2N2', 'W1N1').score;
+    expect(openOneSource).toBeGreaterThan(fragmentedTwoSource);
+  });
+
+  it('leaves the score unchanged when no anchor position was scouted (fails open)', () => {
+    Memory.rooms['W2N1'] = { scoutedAt: 100, scoutedSources: 2, scoutedHasController: true } as any;
+    // score = 2*10 - 1*2 = 18, exactly as before this feature existed.
+    expect(scoreClaimTarget('W2N1', 'W1N1').score).toBe(18);
   });
 });
 
