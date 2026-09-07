@@ -70,6 +70,53 @@ export function deliverToSpawnOrExtension(creep: Creep): boolean {
   return true;
 }
 
+// Same cached-target pattern as deliverToSpawnOrExtension, restricted to
+// towers. Exists for roles (currently just the bootstrap harvester) that need
+// a stable tower-fill fallback but don't go through hauler.ts's own separate
+// tower logic (getRoomScan's towersNeedingEnergy). Deliberately NOT merged
+// into deliverToSpawnOrExtension: that function's "claimed" set is scoped to
+// hauler/remoteHauler roles specifically, and folding towers in would let a
+// hauler and this tower-only caller silently contend over the same claim
+// bookkeeping without either seeing the other's targetId.
+export function deliverToTower(creep: Creep): boolean {
+  type FillTarget = StructureTower;
+  const isTower = (s: AnyStructure): s is FillTarget =>
+    s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+
+  const adjacent = creep.pos.findInRange(FIND_MY_STRUCTURES, 1).filter(isTower);
+  if (adjacent.length > 0) {
+    creep.transfer(adjacent[0]!, RESOURCE_ENERGY);
+    delete creep.memory.targetId;
+    return true;
+  }
+
+  if (creep.memory.targetId) {
+    const target = Game.getObjectById(creep.memory.targetId as Id<StructureTower>);
+    if (target && isTower(target) && !creep.pos.isNearTo(target)) {
+      moveTo(creep, target, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffffff' },
+      });
+      return true;
+    }
+    delete creep.memory.targetId;
+  }
+
+  const targets = creep.room
+    .find(FIND_MY_STRUCTURES)
+    .filter((s): s is FillTarget => isTower(s) && !creep.pos.isNearTo(s));
+  if (targets.length === 0) return false;
+
+  targets.sort((a, b) => creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b));
+  const target = targets[0]!;
+  creep.memory.targetId = target.id as Id<StructureTower>;
+  moveTo(creep, target, {
+    priority: PRIORITY_HAULER,
+    visualizePathStyle: { stroke: '#ffffff' },
+  });
+  return true;
+}
+
 export function deliverToControllerContainer(creep: Creep): boolean {
   const mem = Memory.rooms[creep.room.name];
   if (!mem?.controllerContainerId) return false;

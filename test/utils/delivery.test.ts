@@ -1,5 +1,9 @@
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
-import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../../src/utils/delivery';
+import {
+  deliverToSpawnOrExtension,
+  deliverToTower,
+  deliverToControllerContainer,
+} from '../../src/utils/delivery';
 import { resetTickCache } from '../../src/utils/tickCache';
 
 vi.mock('../../src/utils/movement', () => ({
@@ -234,6 +238,93 @@ describe('deliverToSpawnOrExtension', () => {
     deliverToSpawnOrExtension(creep);
 
     expect(creep.memory.targetId).toBe('ext2');
+  });
+});
+
+function mockTower(id: string, x: number, y: number, freeCapacity: number): any {
+  return {
+    id,
+    structureType: STRUCTURE_TOWER,
+    pos: new RoomPosition(x, y, 'W1N1'),
+    store: {
+      getFreeCapacity: (resource?: string) => (resource === RESOURCE_ENERGY ? freeCapacity : 0),
+    },
+  };
+}
+
+describe('deliverToTower', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    vi.clearAllMocks();
+  });
+
+  it('caches a target across ticks instead of re-picking from scratch', () => {
+    const tower1 = mockTower('tower1', 27, 25, 500);
+
+    Game.getObjectById = vi.fn(() => tower1) as any;
+
+    const room = mockRoom();
+    const creep = mockCreep({
+      room,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      memory: { role: 'harvester', state: 'DELIVER', targetId: 'tower1' },
+      store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+    });
+
+    const result = deliverToTower(creep);
+
+    expect(result).toBe(true);
+    expect(creep.memory.targetId).toBe('tower1');
+    expect(room.find).not.toHaveBeenCalled();
+  });
+
+  it('picks the closest tower needing energy when no cached target exists', () => {
+    const near = mockTower('near', 27, 25, 500);
+    const far = mockTower('far', 40, 40, 500);
+
+    const room = mockRoom({ find: vi.fn(() => [near, far]) });
+    const creep = mockCreep({
+      room,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      memory: { role: 'harvester', state: 'DELIVER' },
+      store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+    });
+
+    deliverToTower(creep);
+
+    expect(creep.memory.targetId).toBe('near');
+  });
+
+  it('transfers opportunistically to an adjacent tower and clears the cache', () => {
+    const adjTower = mockTower('adjTower', 26, 25, 500);
+    const findInRange = vi.fn(() => [adjTower]);
+
+    const creep = mockCreep({
+      pos: Object.assign(new RoomPosition(25, 25, 'W1N1'), { findInRange }),
+      memory: { role: 'harvester', state: 'DELIVER', targetId: 'farTower' },
+      store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+    });
+
+    const result = deliverToTower(creep);
+
+    expect(result).toBe(true);
+    expect(creep.transfer).toHaveBeenCalledWith(adjTower, RESOURCE_ENERGY);
+    expect(creep.memory.targetId).toBeUndefined();
+  });
+
+  it('returns false when no tower needs energy', () => {
+    const room = mockRoom({ find: vi.fn(() => []) });
+    const creep = mockCreep({
+      room,
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      memory: { role: 'harvester', state: 'DELIVER' },
+      store: { getUsedCapacity: () => 50, getFreeCapacity: () => 0 },
+    });
+
+    const result = deliverToTower(creep);
+
+    expect(result).toBe(false);
   });
 });
 
