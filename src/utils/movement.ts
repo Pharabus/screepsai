@@ -1,4 +1,10 @@
-import { executeMove, executeMoveAvoidCreeps, invalidateSerialPath, mdbg } from './trafficManager';
+import {
+  executeMove,
+  executeMoveAvoidCreeps,
+  executeMoveHardAvoidCreeps,
+  invalidateSerialPath,
+  mdbg,
+} from './trafficManager';
 
 export interface MoveOpts {
   range?: number;
@@ -36,8 +42,26 @@ export function moveTo(
       invalidateSerialPath(creep.name);
       // Escalate avoidance cost on repeated failures: a creep stuck through
       // 3+ full cycles (≥9 ticks) has a detour that costs more than 50 — bump
-      // to 200 so PathFinder is forced to find genuine alternatives. Caps at
-      // 200 to avoid treating every friendly as a wall permanently.
+      // to 200 so PathFinder is forced to find genuine alternatives.
+      //
+      // Beyond that, soft cost alone can top out ineffective: a cost, however
+      // high, only DETERS PathFinder from crossing a busy tile -- it never
+      // forbids it, so in a genuinely crowded cluster where every alternate
+      // route also crosses some other creep, PathFinder just keeps re-picking
+      // the cheapest-available route straight through the blocker, forever.
+      // Live-observed (2026-09-07): a W43N58 hauler cycled through avoidCost
+      // 200 for 69+ cycles (200+ ticks) with zero net progress. From cycle 5
+      // onward, try a hard-block pass first (every other friendly creep's
+      // tile treated as a genuine obstacle, forcing a real detour or an
+      // honest "none exists" result) before falling back to the normal
+      // avoidCost=200 attempt.
+      if (prev.cycles >= 5) {
+        mdbg(creep, `moveTo: FORCE repath, cycle ${prev.cycles}, hard-avoid attempt`);
+        if (executeMoveHardAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke)) {
+          return;
+        }
+        mdbg(creep, `moveTo: hard-avoid found no detour, falling back to soft avoidance`);
+      }
       const avoidCost = prev.cycles >= 3 ? 200 : 50;
       mdbg(creep, `moveTo: FORCE repath, cycle ${prev.cycles}, avoidCost=${avoidCost}`);
       executeMoveAvoidCreeps(creep, targetPos, range, opts?.visualizePathStyle?.stroke, avoidCost);

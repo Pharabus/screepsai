@@ -5,6 +5,7 @@ import {
   resetSkTransitMatrixCache,
   executeMove,
   executeMoveAvoidCreeps,
+  executeMoveHardAvoidCreeps,
   getRoomCostMatrix,
   getRoomCostMatrixAvoidCreeps,
   getRoomCostMatrixNoExits,
@@ -415,6 +416,78 @@ describe('trafficManager', () => {
 
       executeMove(creep, new RoomPosition(26, 25, 'W1N1'), 1);
       expect(creep.move).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('executeMoveHardAvoidCreeps', () => {
+    it('moves along the returned path when a detour exists', () => {
+      const room = mockRoom({ find: vi.fn(() => []) });
+      const creep = mockCreep({ name: 'c1', pos: new RoomPosition(25, 25, 'W1N1'), room });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [new RoomPosition(26, 25, 'W1N1')],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+
+      const result = executeMoveHardAvoidCreeps(creep, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(result).toBe(true);
+      expect(creep.move).toHaveBeenCalled();
+    });
+
+    it('returns false without moving when no detour exists', () => {
+      const room = mockRoom({ find: vi.fn(() => []) });
+      const creep = mockCreep({ name: 'c1', pos: new RoomPosition(25, 25, 'W1N1'), room });
+
+      (globalThis as any).PathFinder.search = () => ({
+        path: [],
+        ops: 0,
+        cost: 0,
+        incomplete: true,
+      });
+
+      const result = executeMoveHardAvoidCreeps(creep, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(result).toBe(false);
+      expect(creep.move).not.toHaveBeenCalled();
+    });
+
+    it('returns true without moving when already in range', () => {
+      const creep = mockCreep({ name: 'c1', pos: new RoomPosition(25, 25, 'W1N1') });
+
+      const result = executeMoveHardAvoidCreeps(creep, new RoomPosition(26, 25, 'W1N1'), 1);
+
+      expect(result).toBe(true);
+      expect(creep.move).not.toHaveBeenCalled();
+    });
+
+    it('hard-blocks other friendly creeps (255), never the mover itself', () => {
+      const other = mockCreep({ name: 'other', pos: new RoomPosition(27, 25, 'W1N1') });
+      const room = mockRoom({
+        name: 'W1N1',
+        find: vi.fn((type: number) => (type === FIND_MY_CREEPS ? [other] : [])),
+        getTerrain: () => ({ get: () => 0 }),
+      });
+      const creep = mockCreep({ name: 'c1', pos: new RoomPosition(25, 25, 'W1N1'), room });
+      Game.rooms['W1N1'] = room;
+
+      let capturedCosts: any;
+      (globalThis as any).PathFinder.search = (_from: any, _to: any, opts: any) => {
+        capturedCosts = opts.roomCallback('W1N1');
+        return {
+          path: [new RoomPosition(26, 25, 'W1N1')],
+          ops: 0,
+          cost: 0,
+          incomplete: false,
+        };
+      };
+
+      executeMoveHardAvoidCreeps(creep, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(capturedCosts.get(27, 25)).toBe(255);
+      expect(capturedCosts.get(25, 25)).not.toBe(255); // the mover's own tile
     });
   });
 

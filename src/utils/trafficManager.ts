@@ -452,6 +452,79 @@ export function executeMoveAvoidCreeps(
   }
 }
 
+// Last-resort escalation for a creep stuck through many repath cycles even at
+// the maximum soft avoidance cost (200). A soft cost only DETERS PathFinder
+// from crossing a busy tile -- it doesn't forbid it, so in a genuinely
+// crowded cluster where every alternate route ALSO crosses some other
+// creep, PathFinder just keeps picking the cheapest-available route straight
+// through the blocker anyway, forever. Live-observed (2026-09-07): a hauler
+// in W43N58 cycled through the avoidCost=200 tier 69+ times (200+ ticks) with
+// zero net progress, and a separate mutual-block in W44N57 (harvester/miner/
+// hauler pairs repeatedly wedging at the same tile near a boxed-in
+// storage-link approach) never resolved on its own either.
+//
+// This treats every OTHER friendly creep's tile as a genuine 255 obstacle
+// (not just expensive) for one search, forcing PathFinder to either find a
+// real detour or report the path incomplete. Returns false (no move issued)
+// on an incomplete/empty result so the caller can fall back to the softer
+// avoidCost=200 pass instead of idling outright -- a hard block only helps
+// when an actual detour exists; if the room is a genuine dead end otherwise,
+// best-effort pushing through remains the only option.
+export function executeMoveHardAvoidCreeps(
+  creep: Creep,
+  target: RoomPosition,
+  range: number,
+  stroke?: string,
+): boolean {
+  if (creep.pos.inRangeTo(target, range)) return true;
+  const crossRoom = creep.pos.roomName !== target.roomName;
+  const result = PathFinder.search(
+    creep.pos,
+    { pos: target, range },
+    {
+      plainCost: 2,
+      swampCost: 10,
+      maxRooms: crossRoom ? 16 : 1,
+      maxOps: crossRoom ? 10000 : 5000,
+      roomCallback: (roomName: string): boolean | CostMatrix => {
+        const room = Game.rooms[roomName];
+        if (!room) {
+          const owner = Memory.rooms?.[roomName]?.scoutedOwner;
+          if (owner && owner !== getMyUsername()) return false;
+          return new PathFinder.CostMatrix();
+        }
+        const costs = getRoomCostMatrix(room).clone();
+        if (!crossRoom) blockExitTiles(costs, room);
+        for (const other of room.find(FIND_MY_CREEPS)) {
+          if (other.name === creep.name) continue;
+          if (costs.get(other.pos.x, other.pos.y) < 255) {
+            costs.set(other.pos.x, other.pos.y, 255);
+          }
+        }
+        return costs;
+      },
+    },
+  );
+  if (result.incomplete || result.path.length === 0) return false;
+
+  const targetKey = `${target.x},${target.y},${target.roomName},${range}`;
+  pathSerialCache.set(creep.name, { path: [...result.path], targetKey, builtAt: Game.time });
+  const nextPos = result.path[0]!;
+  // No pushBlocker call here by design: every candidate tile on this path is,
+  // by construction, free of any OTHER friendly creep this tick.
+  const moveResult = creep.move(creep.pos.getDirectionTo(nextPos));
+  mdbg(creep, `executeMoveHardAvoidCreeps: move to (${nextPos.x},${nextPos.y}) -> ${moveResult}`);
+
+  if (stroke) {
+    const room = creep.room.name;
+    const localPoints = [creep.pos, ...result.path].filter((p) => p.roomName === room);
+    if (localPoints.length > 1) {
+      vizBuffer.push({ roomName: room, points: localPoints, stroke });
+    }
+  }
+  return true;
+}
+
 // Heap-cached base matrix — terrain + structures only. Walking FIND_STRUCTURES
 // every tick was a meaningful chunk of pathfinding cost, but structures rarely
 // change tick-to-tick, so we cache and only rebuild when the structure position
