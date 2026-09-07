@@ -334,6 +334,38 @@ describe('buildSpawnQueue', () => {
     expect(minerEntry?.minCount).toBe(2);
   });
 
+  // Regression (2026-09-07): countCreepsByRole('miner', homeRoom) buckets by
+  // homeRoom+role only, so it sums local AND remote miners together (a remote
+  // miner's memory.homeRoom is also set to the local room). The dispatch loop
+  // used that same total to decide whether the local miner request was
+  // satisfied, so a remote miner could silently fill a local source slot.
+  // Live-observed: W44N57 stuck at 1 local + 1 remote miner (total 2) never
+  // spawning a 2nd local miner despite having 2 local source slots.
+  it('miner currentCount is local-only and excludes remote miners under the same homeRoom', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_local' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any, minerName: undefined },
+        ],
+      },
+    };
+    (Game as any).creeps = {
+      miner_local: { memory: { role: 'miner', homeRoom: 'W1N1' } },
+      miner_remote: { memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+    };
+
+    const room = mockRoom({ name: 'W1N1' });
+    const queue = buildSpawnQueue(room);
+    const minerEntry = queue.find((r) => r.role === 'miner');
+
+    // 2 local source slots, only 1 local miner alive -- the remote miner must
+    // not count toward this room's own slots.
+    expect(minerEntry?.minCount).toBe(2);
+    expect(minerEntry?.currentCount).toBe(1);
+  });
+
   it('bootstrap harvester minCount is 2', () => {
     (Memory as any).rooms = { W1N1: {} };
     const room = mockRoom({ name: 'W1N1' });

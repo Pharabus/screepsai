@@ -137,6 +137,13 @@ type SpawnRequest = {
   role: CreepRoleName;
   minCount: number;
   memory?: CreepMemory;
+  // Overrides the "how many do we already have" side of the minCount check
+  // (see the dispatch loop below). Only needed when countCreepsByRole's
+  // default homeRoom+role bucket would count creeps this request doesn't
+  // mean to — currently just the local miner request, whose minerSlots
+  // target must not be satisfied by remote miners sharing the same
+  // role+homeRoom (see countLocalMiners()).
+  currentCount?: number;
 } & (
   | { pattern: BodyPartConstant[]; body?: never; maxRepeats?: number }
   | { body: BodyPartConstant[]; pattern?: never; maxRepeats?: never }
@@ -244,6 +251,31 @@ function hasActiveLocalMiner(room: Room): boolean {
         return true;
     }
     return false;
+  });
+}
+
+/**
+ * Count miners assigned to THIS room's own sources - excludes remote miners.
+ *
+ * countCreepsByRole('miner', room.name) buckets by homeRoom+role only, so it
+ * sums local AND remote miners together (a remote miner's memory.homeRoom is
+ * also set to the local room - see the remote-mining spawn block below).
+ * Comparing the local miner request's fixed minerSlots target against that
+ * combined total lets remote miners silently satisfy local source slots:
+ * live-observed (2026-09-07) W44N57 sitting at 1 local miner + 1 remote miner
+ * (totalMiners=2) never queuing a 2nd local miner despite minerSlots=2,
+ * because 2 >= 2 was already "true" from the dispatch loop's point of view.
+ */
+function countLocalMiners(room: Room): number {
+  return cached('spawner:localMiners:' + room.name, () => {
+    let count = 0;
+    for (const c of Object.values(Game.creeps)) {
+      if (c.memory.role !== 'miner') continue;
+      if (c.memory.targetRoom) continue; // remote miner - not one of this room's own slots
+      if (resolveHomeRoom(c) !== room.name) continue;
+      count++;
+    }
+    return count;
   });
 }
 
@@ -1048,12 +1080,18 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     // Live-observed (2026-09-07): W44N57 (2 sources, both replaced multiple
     // times during its earlier bootstrap crisis) accumulated 2 such orphaned
     // miners, motionless indefinitely at neither source's position.
+    // currentCount must be local-only (countLocalMiners), not the shared
+    // countCreepsByRole('miner', room.name) bucket the dispatch loop defaults
+    // to - that bucket also includes this room's remote miners (their
+    // memory.homeRoom is this room too), which would otherwise let a remote
+    // miner silently satisfy a local source slot. See countLocalMiners().
     const minerSlots = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
     if (minerSlots > 0) {
       queue.push({
         role: 'miner',
         body: buildMinerBody(room.energyCapacityAvailable),
         minCount: minerSlots,
+        currentCount: countLocalMiners(room),
       });
     }
     // Mineral-priority outposts (e.g. W44N59) exist to mine their deposit, not
@@ -1554,7 +1592,8 @@ export function runSpawner(): void {
     }
 
     for (const request of queue) {
-      if (countCreepsByRole(request.role, room.name) >= request.minCount) continue;
+      const current = request.currentCount ?? countCreepsByRole(request.role, room.name);
+      if (current >= request.minCount) continue;
 
       const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
       if (!spawn) break;
