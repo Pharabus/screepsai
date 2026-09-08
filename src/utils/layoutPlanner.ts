@@ -9,10 +9,10 @@ export const LAB_STAMP: [number, number][] = [
   [0, 1], // output — RCL 6 cap (3 total)
   [1, 0], // output
   [2, 1], // output
-  [1, 2], // output
+  [1, 2], // output — RCL 7 cap (6 total) - was mislabeled at index 8 (9 total)
   [2, 0], // output
   [0, 2], // output
-  [2, 2], // output — RCL 7 cap (9 total)
+  [2, 2], // output
   [-1, 1], // output — RCL 8 cap (10 total)
 ];
 

@@ -1028,6 +1028,29 @@ describe('construction RCL gating', () => {
       expect(overflowSite.remove).not.toHaveBeenCalled();
     });
 
+    // Regression (2026-09-08): live W44N57/W44N59 both had a permanently-empty
+    // tile stuck in overflowLabPositions - the MAX_LABS[7] miscalibration (9
+    // instead of the engine's real 6) let placeAdjacencyValidLab keep trying
+    // for labs the room could never actually get, and createConstructionSite's
+    // return value was never checked, so the failed attempt got recorded as a
+    // success anyway. Every following placeLabs cycle then saw a "used" tile
+    // that in reality held nothing, and (with the cap now fixed) would never
+    // get pruned/retried since current >= max short-circuits before reaching
+    // the overflow search at all.
+    it('does NOT record an overflow position when createConstructionSite fails', () => {
+      const occupied = new Set<string>([`${IN1.x},${IN1.y}`, `${IN2.x},${IN2.y}`]);
+      installOccupancy(occupied);
+      const room = labOverflowRoom();
+      room.createConstructionSite = vi.fn(() => ERR_RCL_NOT_ENOUGH);
+      (Memory as any).rooms = { W1N1: planWithInputsOnly() };
+      (Game as any).time = 1;
+
+      placeLabs(room);
+
+      expect(room.createConstructionSite).toHaveBeenCalled();
+      expect((Memory as any).rooms.W1N1.overflowLabPositions ?? []).toEqual([]);
+    });
+
     it('does NOT place a non-adjacent lab when no adjacency-valid tile is free', () => {
       // Occupy every tile within range 2 of both inputs (the only valid region).
       const occupied = new Set<string>();
@@ -1049,7 +1072,9 @@ describe('construction RCL gating', () => {
     });
 
     it('does NOT exceed MAX_LABS — no overflow when already at the cap', () => {
-      // 9 labs already (RCL7 cap). placeLabs returns before any placement.
+      // 9 labs already, comfortably past the RCL7 cap (6). placeLabs returns
+      // before any placement regardless of how far over the (former, wrong)
+      // cap of 9 this goes.
       const labs = Array.from({ length: 9 }, (_, i) => ({
         structureType: STRUCTURE_LAB,
         id: `lab${i}`,

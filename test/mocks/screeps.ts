@@ -166,6 +166,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).ERR_INVALID_ARGS = -10;
 (globalThis as any).ERR_GCL_NOT_ENOUGH = -15;
 (globalThis as any).ERR_BUSY = -4;
+(globalThis as any).ERR_RCL_NOT_ENOUGH = -14;
 
 // Market order types
 (globalThis as any).ORDER_BUY = 'buy';

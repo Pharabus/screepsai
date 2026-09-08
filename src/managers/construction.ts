@@ -48,9 +48,18 @@ const MAX_LINKS: Record<number, number> = {
   8: 6,
 };
 
+// RCL7 was wrong for a long time (9, not the engine's real 6) - confirmed
+// live 2026-09-08 by reading CONTROLLER_STRUCTURES.lab directly from a
+// running shard3 bot: {6:3, 7:6, 8:10}. Harmless in practice at RCL7 (the
+// accessibility-driven stamp+overflow placement already topped out at 6
+// anyway on every room checked), but it meant placeLabs kept trying for 3
+// more labs it could never get, and each failed attempt via
+// placeAdjacencyValidLab used to be silently recorded as if it succeeded
+// (see the createConstructionSite return-value check there) - a stale,
+// permanently-empty tracked position on both W44N57 and W44N59.
 export const MAX_LABS: Record<number, number> = {
   6: 3,
-  7: 9,
+  7: 6,
   8: 10,
 };
 
@@ -1400,7 +1409,14 @@ function placeAdjacencyValidLab(
       // safe pick that later makes a *different* candidate unsafe is caught on
       // the next cycle rather than needing to reason about it up front.
       if (wouldSealLiveStructure(room, x, y)) continue;
-      room.createConstructionSite(pos, STRUCTURE_LAB);
+      // Only record success - a failed placement (e.g. the room is actually
+      // already at the real engine cap; see the MAX_LABS[7] fix above) must
+      // not be recorded as if it happened, or the stale entry sits in
+      // overflowLabPositions forever pointing at an empty tile, and every
+      // subsequent placeLabs cycle silently retries the same losing call.
+      // Live-observed (2026-09-08): both W44N57 and W44N59 had exactly this -
+      // a tracked overflow position with no lab structure or site on it.
+      if (room.createConstructionSite(pos, STRUCTURE_LAB) !== OK) continue;
       (mem.overflowLabPositions ??= []).push({ x, y });
       return; // one per tick
     }
