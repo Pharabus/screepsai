@@ -275,8 +275,48 @@ function countLocalMiners(room: Room): number {
       if (resolveHomeRoom(c) !== room.name) continue;
       count++;
     }
-    return count;
+    return count + countSpawningByRole(room, 'miner', { localOnly: true });
   });
+}
+
+/**
+ * Count creeps of `role` currently spawning at any of `room`'s own spawns -
+ * not yet in Game.creeps, so a naive count misses them entirely.
+ *
+ * A creep spawning at a multi-part body takes multiple ticks (3/part) before
+ * it's born into Game.creeps, but Memory.creeps[name] and spawn.spawning are
+ * both set the instant spawnCreep() succeeds. Without counting these, a room
+ * with 2+ idle spawns can double-queue the same tightly-capped role: the gap
+ * reads as unfilled for the entire spawn duration (the first replacement
+ * hasn't "arrived" yet by any Game.creeps-based count), so a second idle
+ * spawn acts on the same stale gap on the very next tick.
+ *
+ * Live-observed (2026-09-09): W44N59 (2 spawns, single energy source, so
+ * minerSlots=1) had its one local miner die; both spawns each spawned a
+ * replacement one tick apart while the first was still mid-spawn. Both
+ * eventually appeared in Game.creeps, but the room's only source's slot was
+ * already claimed by the first, so the second sat in POSITION state forever
+ * with nothing to mine (miner.ts's "no source found" branch only moves a
+ * creep that has a targetRoom - a local miner with none just freezes) - one
+ * of the "idle creeps" this was written to investigate. `localOnly` mirrors
+ * countLocalMiners' distinction so a spawning remote miner (memory.homeRoom
+ * also stamped to this room) doesn't count toward the local-only tally.
+ */
+function countSpawningByRole(
+  room: Room,
+  role: CreepRoleName,
+  opts?: { localOnly?: boolean },
+): number {
+  let count = 0;
+  for (const spawn of room.find(FIND_MY_SPAWNS)) {
+    const name = spawn.spawning?.name;
+    if (!name) continue;
+    const mem = Memory.creeps[name];
+    if (!mem || mem.role !== role) continue;
+    if (opts?.localOnly && mem.targetRoom) continue;
+    count++;
+  }
+  return count;
 }
 
 /**
@@ -1592,7 +1632,12 @@ export function runSpawner(): void {
     }
 
     for (const request of queue) {
-      const current = request.currentCount ?? countCreepsByRole(request.role, room.name);
+      // See countSpawningByRole's doc comment: a role's minCount check must
+      // also count a same-role creep currently spawning at one of this room's
+      // OTHER spawns, or a multi-spawn room can double-queue it mid-spawn.
+      const current =
+        request.currentCount ??
+        countCreepsByRole(request.role, room.name) + countSpawningByRole(room, request.role);
       if (current >= request.minCount) continue;
 
       const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);

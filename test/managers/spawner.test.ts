@@ -366,6 +366,42 @@ describe('buildSpawnQueue', () => {
     expect(minerEntry?.currentCount).toBe(1);
   });
 
+  // Regression (2026-09-09): a creep currently spawning isn't in Game.creeps
+  // yet (it takes 3 ticks/part before it's born), so a naive count reads a
+  // real gap as still open for the whole spawn duration. A room with 2+ idle
+  // spawns can act on that same stale gap again on the very next tick,
+  // double-queuing the role. Live: W44N59 (2 spawns, single source, so
+  // minerSlots=1) had its one local miner die; both spawns each started a
+  // replacement a tick apart while the first was still mid-spawn - the
+  // second had no source left to claim and sat frozen in POSITION forever.
+  it('miner currentCount counts a same-role creep currently spawning, not just live Game.creeps', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [{ id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any }],
+      },
+    };
+    (Game as any).creeps = {}; // the previous miner already died
+    // A replacement is mid-spawn at one of the room's OTHER spawns.
+    (Memory as any).creeps = { miner_W1N1_99: { role: 'miner', homeRoom: 'W1N1' } };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) =>
+        type === FIND_MY_SPAWNS
+          ? [{ spawning: { name: 'miner_W1N1_99' } }, { spawning: null }]
+          : [],
+      ),
+    });
+
+    const queue = buildSpawnQueue(room);
+    const minerEntry = queue.find((r) => r.role === 'miner');
+
+    expect(minerEntry?.minCount).toBe(1);
+    // Must already read 1 (not 0) so the room's second idle spawn doesn't
+    // queue a duplicate for the same single source slot.
+    expect(minerEntry?.currentCount).toBe(1);
+  });
+
   it('bootstrap harvester minCount is 2', () => {
     (Memory as any).rooms = { W1N1: {} };
     const room = mockRoom({ name: 'W1N1' });
