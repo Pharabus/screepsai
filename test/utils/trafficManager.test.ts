@@ -623,6 +623,69 @@ describe('trafficManager', () => {
       expect(blocker.move).not.toHaveBeenCalled();
     });
 
+    it('does not push a blocker that already issued a successful move this tick', () => {
+      // Regression (2026-09-09): being dispatched is not the same as having
+      // already moved. A dispatched blocker that already called its own
+      // successful move() this tick is already vacating its tile on its own
+      // - pushing it anyway is pushBlocker's own move() call overwriting the
+      // LAST intent Screeps honors, silently discarding whatever direction
+      // the blocker's own role logic already chose. Live-observed W44N59: a
+      // hauler correctly repathed through a just-widened chokepoint every
+      // tick (its own executeMoveHardAvoidCreeps call succeeded) but a
+      // later-processed creep wanting the same tile kept overwriting that
+      // move with its own push, so the hauler never actually got anywhere.
+      const blockerPos = new RoomPosition(26, 25, 'W1N1');
+      const blocker = mockCreep({
+        name: 'alreadyMovingBlocker',
+        pos: blockerPos,
+        memory: { role: 'hauler' },
+      });
+      blocker.my = true;
+
+      const room = mockRoom({
+        find: vi.fn((type: number) => {
+          if (type === FIND_MY_CREEPS) return [blocker];
+          return [];
+        }),
+        lookForAt: vi.fn(() => [blocker]),
+      });
+      blocker.room = room;
+
+      const mover = mockCreep({
+        name: 'pusherOfMovingBlocker',
+        pos: new RoomPosition(25, 25, 'W1N1'),
+        room,
+        memory: { role: 'miner' },
+      });
+
+      resetTraffic();
+      resetTickCache();
+      markDispatched(blocker);
+
+      // The blocker is dispatched first this tick and moves under its own
+      // steam to some other free tile.
+      (globalThis as any).PathFinder.search = () => ({
+        path: [new RoomPosition(27, 26, 'W1N1')],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+      executeMove(blocker, new RoomPosition(30, 30, 'W1N1'), 0);
+      expect(blocker.move).toHaveBeenCalledTimes(1);
+
+      // The mover then tries to step onto the blocker's (already-vacating)
+      // tile. pushBlocker must not call blocker.move() a second time.
+      (globalThis as any).PathFinder.search = () => ({
+        path: [blockerPos],
+        ops: 0,
+        cost: 0,
+        incomplete: false,
+      });
+      executeMove(mover, new RoomPosition(30, 25, 'W1N1'), 0);
+
+      expect(blocker.move).toHaveBeenCalledTimes(1);
+    });
+
     it('does not push a stationary creep', () => {
       const nextPos = new RoomPosition(26, 25, 'W1N1');
       const stationary = mockCreep({

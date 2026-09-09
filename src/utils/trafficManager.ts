@@ -25,6 +25,26 @@ const pushedThisTick = new Set<string>();
 // dispatched blocker — see the comment on that check for why.
 const dispatchedThisTick = new Set<string>();
 
+// Tracks which creeps have already issued a SUCCESSFUL creep.move() this tick
+// via executeMove/executeMoveAvoidCreeps/executeMoveHardAvoidCreeps.
+//
+// pushBlocker only pushes an already-dispatched blocker so a later-processed
+// mover can't self-overwrite an earlier-processed blocker's still-pending
+// move (see that comment). But "already dispatched" only means the blocker's
+// role already ran THIS tick - it says nothing about whether that run
+// actually issued a move. If it did (the blocker already decided, on its
+// own, to vacate its current tile), pushBlocker's own `blocker.move(dir)`
+// call is the LAST move() intent Screeps honors this tick, silently
+// discarding the blocker's own - often better - choice in favor of a
+// direction pushBlocker picked with no knowledge of it. Live-observed
+// (2026-09-09): W44N59, a hauler correctly repathed through a just-widened
+// chokepoint every tick (`executeMoveHardAvoidCreeps: move to (7,21) -> 0`,
+// success) but never actually got there - a creep processed later each tick
+// wanted the hauler's current tile for itself and pushed it sideways instead,
+// permanently discarding the good move. Checking this set lets pushBlocker
+// skip a blocker that's already leaving, instead of shoving it somewhere else.
+const movedThisTick = new Set<string>();
+
 // Call once per creep, per tick, BEFORE its role (and therefore its own
 // moveTo()) runs — room.ts's runCreeps() does this unconditionally for every
 // creep it iterates, regardless of which branch (spawning/no-role/throttled/
@@ -75,6 +95,7 @@ export function resetTraffic(): void {
   vizBuffer = [];
   pushedThisTick.clear();
   dispatchedThisTick.clear();
+  movedThisTick.clear();
 }
 
 export function resolveTraffic(): void {
@@ -114,23 +135,35 @@ function pushBlocker(mover: Creep, nextPos: RoomPosition): void {
     // repeatedly "pushing" each other with no net movement. Restricting a
     // push to already-dispatched blockers means only a creep processed LATER
     // this tick can ever successfully push one processed EARLIER — the
-    // earlier one is fully settled and won't move again — which breaks the
-    // cancellation while leaving normal pushes (and Screeps' native same-tick
-    // swap resolution, unaffected by any of this) exactly as before.
+    // earlier one won't call moveTo() again this tick, so the push can't be
+    // immediately self-overwritten the way the original bug required — while
+    // leaving normal pushes (and Screeps' native same-tick swap resolution,
+    // unaffected by any of this) exactly as before.
+    //
+    // "Won't call moveTo() again" is not the same as "hasn't moved" though -
+    // an already-dispatched blocker may have already issued its OWN
+    // successful move this same tick (movedThisTick), in which case it's
+    // already vacating nextPos on its own. Pushing it anyway is redundant at
+    // best and actively harmful at worst: our move() call is the LAST intent
+    // Screeps honors this tick, so it silently discards whatever (possibly
+    // better-informed) direction the blocker's own role logic already chose.
+    // See movedThisTick's doc comment for the live case this fixes.
     const notYetDispatched = !dispatchedThisTick.has(blocker.name);
+    const alreadyMoving = movedThisTick.has(blocker.name);
     if (
       blocker.name === mover.name ||
       !blocker.my ||
       stationaryCreeps.has(blocker.name) ||
       pushedThisTick.has(blocker.name) ||
-      notYetDispatched
+      notYetDispatched ||
+      alreadyMoving
     ) {
       mdbg(
         mover,
         `pushBlocker: skip ${blocker.name} at (${nextPos.x},${nextPos.y}) ` +
           `self=${blocker.name === mover.name} foreign=${!blocker.my} ` +
           `stationary=${stationaryCreeps.has(blocker.name)} alreadyPushed=${pushedThisTick.has(blocker.name)} ` +
-          `notYetDispatched=${notYetDispatched}`,
+          `notYetDispatched=${notYetDispatched} alreadyMoving=${alreadyMoving}`,
       );
       continue;
     }
@@ -186,6 +219,7 @@ export function executeMove(
 
   pushBlocker(creep, nextPos);
   const result = creep.move(creep.pos.getDirectionTo(nextPos));
+  if (result === OK) movedThisTick.add(creep.name);
   mdbg(creep, `executeMove: move to (${nextPos.x},${nextPos.y}) -> ${result}`);
 
   if (stroke && path.length > 0) {
@@ -438,6 +472,7 @@ export function executeMoveAvoidCreeps(
   // over equal-or-lower-priority creeps that an unstuck one already has.
   pushBlocker(creep, nextPos);
   const result = creep.move(creep.pos.getDirectionTo(nextPos));
+  if (result === OK) movedThisTick.add(creep.name);
   mdbg(
     creep,
     `executeMoveAvoidCreeps: move to (${nextPos.x},${nextPos.y}) avoidCost=${creepCost} -> ${result}`,
@@ -513,6 +548,7 @@ export function executeMoveHardAvoidCreeps(
   // No pushBlocker call here by design: every candidate tile on this path is,
   // by construction, free of any OTHER friendly creep this tick.
   const moveResult = creep.move(creep.pos.getDirectionTo(nextPos));
+  if (moveResult === OK) movedThisTick.add(creep.name);
   mdbg(creep, `executeMoveHardAvoidCreeps: move to (${nextPos.x},${nextPos.y}) -> ${moveResult}`);
 
   if (stroke) {
