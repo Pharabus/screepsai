@@ -13,6 +13,22 @@ export const BOOST_LAB_MINERAL_TARGET = 1500;
  * in-transit compound — see compoundInTransit / upgraderBoostWanted.)
  */
 export const BOOST_LAB_MINERAL_MAINTAIN = 500;
+/**
+ * Lower start threshold used ONLY for the defender preference walk
+ * (KHO2/LHO2) in roomBoostCompound - the full BOOST_LAB_MINERAL_TARGET (1500)
+ * exists to avoid flappy switching between the upgrader's two competing
+ * compounds (XGH2O vs GH2O) on a trickle, a tie-break concern that doesn't
+ * apply the same way to defense: a defender that spawns unboosted because
+ * stock sat at 800 instead of 1500 costs a fight, not a suboptimal upgrade
+ * rate. Set just above BOOST_LAB_MINERAL_MAINTAIN (one boost's worth, ~450)
+ * so a reservation that starts here doesn't immediately trip the release.
+ * Live-observed (2026-09-10): W42N59 (the lab hub) sat at KHO2 185/LHO2 0/
+ * GH2O 675 for 300k+ ticks with boostStatus 93 timeouts vs 4 successes -
+ * the single input-lab-pair reaction chain is too slow to ever comfortably
+ * clear 1500 for a still-growing hub, so defensive boosting was effectively
+ * dead on arrival there.
+ */
+export const BOOST_LAB_MINERAL_TARGET_DEFENSE = 700;
 /** Target energy to maintain in the reserved boost lab (under LAB_ENERGY_CAPACITY=2000). */
 export const BOOST_LAB_ENERGY_TARGET = 1000;
 /**

@@ -23,6 +23,7 @@ import { STORAGE_ENERGY_FLOOR } from '../utils/sources';
 import {
   REPAIR_THRESHOLD,
   BOOST_LAB_MINERAL_TARGET,
+  BOOST_LAB_MINERAL_TARGET_DEFENSE,
   BOOST_LAB_MINERAL_MAINTAIN,
   HARVESTER_EMERGENCY_STORAGE_FLOOR,
   BOOTSTRAP_STRANDED_ENERGY_FLOOR,
@@ -831,22 +832,25 @@ function boostLabGateOpen(room: Room, mem: RoomMemory): boolean {
 
 /**
  * Walks `preference` and returns the first compound whose stock clears its
- * threshold. The threshold is HYSTERETIC per compound: BOOST_LAB_MINERAL_TARGET
- * (1500) to switch onto it, but only BOOST_LAB_MINERAL_MAINTAIN (500) to keep
- * it once it's the reserved one — a single boost consumes ~450 units (30/part
- * × ~15 work), which would otherwise unreserve the lab after every boost and
- * strand the next creep. Requiring the full TARGET to switch (not just
- * MAINTAIN) means we only move to a higher-priority compound once it's
- * genuinely well-stocked, not the instant a trickle of it appears.
+ * threshold. The threshold is HYSTERETIC per compound: `startThreshold`
+ * (defaults to BOOST_LAB_MINERAL_TARGET, 1500) to switch onto it, but only
+ * BOOST_LAB_MINERAL_MAINTAIN (500) to keep it once it's the reserved one — a
+ * single boost consumes ~450 units (30/part × ~15 work), which would
+ * otherwise unreserve the lab after every boost and strand the next creep.
+ * Requiring the full start threshold to switch (not just MAINTAIN) means we
+ * only move to a higher-priority compound once it's genuinely well-stocked,
+ * not the instant a trickle of it appears. Callers with a lower time-cost
+ * tolerance for waiting (see BOOST_LAB_MINERAL_TARGET_DEFENSE) pass a lower
+ * `startThreshold`.
  */
 function pickBoostCompound(
   room: Room,
   mem: RoomMemory,
   preference: ResourceConstant[],
+  startThreshold: number = BOOST_LAB_MINERAL_TARGET,
 ): ResourceConstant | undefined {
   for (const compound of preference) {
-    const threshold =
-      mem.boostCompound === compound ? BOOST_LAB_MINERAL_MAINTAIN : BOOST_LAB_MINERAL_TARGET;
+    const threshold = mem.boostCompound === compound ? BOOST_LAB_MINERAL_MAINTAIN : startThreshold;
     if (totalBoostCompoundStock(room, mem, compound) >= threshold) return compound;
   }
   return undefined;
@@ -877,13 +881,23 @@ export function upgraderBoostWanted(room: Room): boolean {
  * upgrader's own preference when there's no active defensive demand, or
  * defensive demand exists but neither KHO2 nor LHO2 is stocked (keep the
  * economy boost running rather than reserve nothing).
+ *
+ * The defender walk uses BOOST_LAB_MINERAL_TARGET_DEFENSE (700), lower than
+ * the upgrader's default 1500 — see its doc comment: a defender delayed
+ * waiting for a well-stocked lab costs a fight, so it only needs enough
+ * stock for the boost itself, not the upgrader's flap-avoidance margin.
  */
 export function roomBoostCompound(room: Room): ResourceConstant | undefined {
   const mem = Memory.rooms[room.name];
   if (!mem || !boostLabGateOpen(room, mem)) return undefined;
 
   if (defenderBoostsWanted(room)) {
-    const defense = pickBoostCompound(room, mem, DEFENDER_BOOST_PREFERENCE);
+    const defense = pickBoostCompound(
+      room,
+      mem,
+      DEFENDER_BOOST_PREFERENCE,
+      BOOST_LAB_MINERAL_TARGET_DEFENSE,
+    );
     if (defense) return defense;
   }
 

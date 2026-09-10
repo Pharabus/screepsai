@@ -3374,6 +3374,40 @@ describe('roomBoostCompound', () => {
     expect(roomBoostCompound(room)).toBe('GH2O');
   });
 
+  it('reserves KHO2 for a defender at the lower BOOST_LAB_MINERAL_TARGET_DEFENSE (700), below the upgrader threshold (1500)', () => {
+    // Regression for the live W42N59 case (2026-09-10): the lab hub's slow
+    // single-input-lab-pair reaction chain kept KHO2/LHO2/GH2O stock in the
+    // hundreds for 300k+ ticks, so requiring the full 1500 upgrader
+    // threshold left defenderBoostsWanted permanently unsatisfiable there.
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 700, LHO2: 0 },
+      {
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBe('KHO2');
+  });
+
+  it('does not reserve KHO2 for a defender below BOOST_LAB_MINERAL_TARGET_DEFENSE, still falls through', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    recordAggressivePlayer('Bully');
+    const room = roomWithStock(
+      { GH2O: 2000, KHO2: 699, LHO2: 0 },
+      {
+        find: vi.fn(() => [{ owner: { username: 'Bully' }, body: [{ type: ATTACK, hits: 100 }] }]),
+      },
+    );
+    expect(roomBoostCompound(room)).toBe('GH2O');
+  });
+
+  it('upgrader preference (no threat) still requires the full 1500 threshold, unaffected by the lower defense threshold', () => {
+    (Memory as any).rooms = { W1N1: baseRoomMem() };
+    const room = roomWithStock({ GH2O: 700, KHO2: 0, LHO2: 0 });
+    expect(roomBoostCompound(room)).toBeUndefined();
+  });
+
   it('returns undefined when the boost-lab gate is closed (RCL 6) even with a threat present', () => {
     (Memory as any).rooms = { W1N1: baseRoomMem() };
     recordAggressivePlayer('Bully');
