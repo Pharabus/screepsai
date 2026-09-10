@@ -10,6 +10,7 @@ import {
   BUY_BATCH_SIZE,
   MIN_BUY_ENERGY_BASE,
   LAB_BUY_CREDIT_RESERVE,
+  BOOST_LAB_MINERAL_TARGET_DEFENSE,
 } from '../utils/thresholds';
 import { buildAvailableMap, getChainBuyNeeds, getLabHubName, isLabHub } from './labs';
 import { getChainIntermediates, GOAL_CAPS } from '../utils/reactions';
@@ -574,8 +575,21 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
 const BOOST_SHIP_PRIORITY: ResourceConstant[] = ['KHO2', 'LHO2', 'GH2O'] as ResourceConstant[];
 /** Per-shipment payload — matches the todo's "500-1000 units" suggestion. */
 const BOOST_SHIP_AMOUNT = 500;
-/** Stop topping a colony up once its stash of a compound reaches this. */
-const BOOST_COLONY_STASH_TARGET = 500;
+/**
+ * Stop topping a colony up once its stash of a compound reaches this.
+ *
+ * Must clear BOOST_LAB_MINERAL_TARGET_DEFENSE (700, spawner.ts roomBoostCompound)
+ * with real margin, not just barely — a stash sitting exactly at the old 500
+ * meant a feeder colony's defensive reservation could never even START
+ * (500 < 700), so W44N57/W44N59 had literally zero recorded boost attempts
+ * ever (live-observed 2026-09-10: boostStats had no entry for either room —
+ * not "failing", just structurally unreachable). The +300 margin over the
+ * defense threshold means a stash that just cleared it can absorb one full
+ * boost (~450 compound) and still land above BOOST_LAB_MINERAL_MAINTAIN
+ * (500), keeping the reservation alive through at least one use instead of
+ * dropping it the instant a defender boosts.
+ */
+const BOOST_COLONY_STASH_TARGET = BOOST_LAB_MINERAL_TARGET_DEFENSE + 300;
 /** Hub must hold at least this fraction of a compound's GOAL_CAPS ceiling before donating any of it — keeps its own reservation intact. */
 const BOOST_SHIP_SURPLUS_FRACTION = 0.75;
 const _lastBoostSend = new Map<string, number>();

@@ -2442,7 +2442,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { hubTerminal } = makeSetup(
       { KHO2: 2000, GH2O: 4000 },
-      { KHO2: 500 }, // colony already at BOOST_COLONY_STASH_TARGET for KHO2
+      { KHO2: 1000 }, // colony already at BOOST_COLONY_STASH_TARGET for KHO2
     );
 
     runTerminal();
@@ -2459,6 +2459,22 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     runTerminal();
 
     expect(hubTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("keeps topping up a colony sitting at 500 — the old stash target left a colony permanently unable to clear roomBoostCompound's defense reservation threshold", () => {
+    // Regression for the live W44N57/W44N59 case (2026-09-10): both feeder
+    // colonies sat pinned at exactly KHO2:500 (the old BOOST_COLONY_STASH_TARGET)
+    // forever — below BOOST_LAB_MINERAL_TARGET_DEFENSE (700), so
+    // roomBoostCompound's defender walk could never start a reservation there.
+    // boostStats had zero recorded attempts for either room, not just failures.
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 }, { KHO2: 500 });
+
+    runTerminal();
+
+    expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
     consoleSpy.mockRestore();
   });
 
