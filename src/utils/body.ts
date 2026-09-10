@@ -168,6 +168,47 @@ export function buildKeeperKillerBody(energyCap: number): BodyPartConstant[] | n
 }
 
 /**
+ * Build a power-bank attacker body: pure ATTACK+MOVE at 1:1 ratio, capped at
+ * 25/25 (MAX_CREEP_SIZE). Power banks don't attack back (StructurePowerBank
+ * has no combat capability of its own), so no TOUGH is needed — incidental
+ * threats near the bank are the healer's problem, not this body's.
+ *
+ * Sizing: ATTACK_POWER = 30, so a maxed body does 750 dmg/tick against
+ * POWER_BANK_HITS = 2,000,000 (fixed for every bank regardless of its power
+ * amount — confirmed live via probe, not assumed). One full attacker alone
+ * cracks a bank in ~2667 ticks; the default 2-attacker squad
+ * (POWER_SQUAD_DEFAULT_ATTACKERS in main.ts) halves that to ~1333 ticks,
+ * comfortably inside the >=3000-tick decay floor recordHighwayIntel already
+ * filters sightings to (POWER_BANK_MIN_DECAY), with margin for travel time.
+ */
+export function buildPowerAttackerBody(energyCapacity: number): BodyPartConstant[] {
+  return buildBody([ATTACK, MOVE], energyCapacity, 25);
+}
+
+/**
+ * Build a power-bank healer body: pure HEAL+MOVE at 1:1 ratio, capped at
+ * 25/25. Sticks at range 1 of the nearest powerAttacker/powerHauler in the
+ * squad's target room, healing through any incidental damage (the bank
+ * itself never deals damage — see buildPowerAttackerBody).
+ */
+export function buildPowerHealerBody(energyCapacity: number): BodyPartConstant[] {
+  return buildBody([HEAL, MOVE], energyCapacity, 25);
+}
+
+/**
+ * Build a power-bank hauler body: pure CARRY+MOVE at 1:1 ratio (highway
+ * rooms have no roads, so off-road speed matters). Capped at 25/25 = 1250
+ * capacity per hauler — a squad's haulersNeeded count (main.ts
+ * powerBankSquad) is only an initial estimate sized against this; a hauler
+ * makes multiple trips if the bank's actual power exceeds what the squad
+ * can carry in one wave, so an under-estimate just costs extra round trips,
+ * never a stranded drop.
+ */
+export function buildPowerHaulerBody(energyCapacity: number): BodyPartConstant[] {
+  return buildBody([CARRY, MOVE], energyCapacity, 25);
+}
+
+/**
  * Build the largest creep body that fits within the available energy,
  * repeating a pattern of body parts up to a maximum number of repetitions.
  *

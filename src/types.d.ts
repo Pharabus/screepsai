@@ -19,7 +19,10 @@ type CreepRoleName =
   | 'keeperKiller'
   | 'courier'
   | 'dismantler'
-  | 'depositMiner';
+  | 'depositMiner'
+  | 'powerAttacker'
+  | 'powerHealer'
+  | 'powerHauler';
 
 interface CreepMemory {
   role: CreepRoleName;
@@ -349,6 +352,29 @@ interface RoomMemory {
     lastCooldown: number;
     recordedAtTick: number;
   }[];
+  /**
+   * Power Bank assigned for squad mining, set via the powerBankSquad()
+   * console command (main.ts) against a highway room already holding a
+   * scoutedPowerBank entry (see that field's doc comment above). Mirrors
+   * depositTarget's manual/operator-triggered pattern — power banks are
+   * speculative one-off opportunities, not part of automatic empire-wide
+   * selection. attackersNeeded/haulersNeeded are computed once at
+   * assignment time from the bank's power/decay snapshot (see
+   * powerBankSquad's doc comment for the sizing math) rather than
+   * re-derived every tick. Cleared by the powerHauler role itself once the
+   * bank is destroyed and its power drop is fully collected (mirrors
+   * depositMiner's self-clearing abandon()).
+   */
+  powerBankTarget?: {
+    room: string;
+    x: number;
+    y: number;
+    id: Id<StructurePowerBank>;
+    power: number;
+    attackersNeeded: number;
+    haulersNeeded: number;
+    assignedAtTick: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

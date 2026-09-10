@@ -2093,6 +2093,98 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
       expect(queue.find((r) => r.role === 'depositMiner')).toBeUndefined();
     });
   });
+
+  describe('power bank squad queueing', () => {
+    const powerBankTarget = {
+      room: 'W2N1',
+      x: 20,
+      y: 20,
+      id: 'bank1' as Id<StructurePowerBank>,
+      power: 2000,
+      attackersNeeded: 2,
+      haulersNeeded: 2,
+      assignedAtTick: 1,
+    };
+
+    it('queues powerAttacker/powerHealer/powerHauler up to their targets when none are alive', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], powerBankTarget } };
+      (Game as any).creeps = {};
+      (Game as any).rooms = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+      const queue = buildSpawnQueue(room);
+
+      const attacker = queue.find((r) => r.role === 'powerAttacker');
+      expect(attacker).toBeDefined();
+      expect(attacker?.minCount).toBe(2);
+      expect((attacker?.memory as any)?.targetRoom).toBe('W2N1');
+      expect(attacker?.body?.every((p) => p === ATTACK || p === MOVE)).toBe(true);
+
+      const healer = queue.find((r) => r.role === 'powerHealer');
+      expect(healer).toBeDefined();
+      expect(healer?.minCount).toBe(1);
+      expect(healer?.body?.every((p) => p === HEAL || p === MOVE)).toBe(true);
+
+      const hauler = queue.find((r) => r.role === 'powerHauler');
+      expect(hauler).toBeDefined();
+      expect(hauler?.minCount).toBe(2);
+      expect(hauler?.body?.every((p) => p === CARRY || p === MOVE)).toBe(true);
+    });
+
+    it('does not queue any power squad role when no powerBankTarget is set', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Game as any).creeps = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'powerAttacker')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHealer')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHauler')).toBeUndefined();
+    });
+
+    it('stops queueing attackers/healer once the live count meets the target', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], powerBankTarget } };
+      (Game as any).creeps = {
+        a1: { memory: { role: 'powerAttacker', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+        a2: { memory: { role: 'powerAttacker', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+        h1: { memory: { role: 'powerHealer', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      };
+      (Game as any).rooms = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'powerAttacker')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHealer')).toBeUndefined();
+      // Haulers still short of their target — should still queue.
+      expect(queue.find((r) => r.role === 'powerHauler')).toBeDefined();
+    });
+
+    it('stops queueing attacker/healer once the bank is confirmed destroyed, but keeps queueing haulers', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], powerBankTarget } };
+      (Game as any).creeps = {};
+      const bankRoom = mockRoom({ name: 'W2N1' });
+      (Game as any).rooms = { W2N1: bankRoom };
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 5000 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'powerAttacker')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHealer')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHauler')).toBeDefined();
+    });
+
+    it('does not queue power squad roles when energy capacity is below one body unit', () => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [], powerBankTarget } };
+      (Game as any).creeps = {};
+      (Game as any).rooms = {};
+
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 90 });
+      const queue = buildSpawnQueue(room);
+      expect(queue.find((r) => r.role === 'powerAttacker')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHealer')).toBeUndefined();
+      expect(queue.find((r) => r.role === 'powerHauler')).toBeUndefined();
+    });
+  });
 });
 
 describe('huntersNeeded', () => {

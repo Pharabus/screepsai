@@ -4,6 +4,9 @@ import {
   buildHunterBody,
   buildKeeperKillerBody,
   buildMinerBody,
+  buildPowerAttackerBody,
+  buildPowerHaulerBody,
+  buildPowerHealerBody,
   buildRemoteMinerBody,
   buildUpgraderBody,
 } from '../../src/utils/body';
@@ -298,5 +301,65 @@ describe('buildKeeperKillerBody', () => {
     const lastAttackIdx = body.lastIndexOf(ATTACK);
     const firstRangedIdx = body.indexOf(RANGED_ATTACK);
     expect(firstRangedIdx).toBeGreaterThan(lastAttackIdx);
+  });
+});
+
+describe('buildPowerAttackerBody', () => {
+  it('returns empty below the cost of one ATTACK+MOVE pair', () => {
+    expect(buildPowerAttackerBody(129)).toEqual([]);
+  });
+
+  it('builds a 1:1 ATTACK:MOVE pair at the minimum affordable energy', () => {
+    const body = buildPowerAttackerBody(130);
+    expect(body).toEqual([ATTACK, MOVE]);
+  });
+
+  it('caps at 25 ATTACK + 25 MOVE (MAX_CREEP_SIZE) regardless of energy surplus', () => {
+    const body = buildPowerAttackerBody(50000);
+    expect(body.filter((p) => p === ATTACK)).toHaveLength(25);
+    expect(body.filter((p) => p === MOVE)).toHaveLength(25);
+    expect(body).toHaveLength(50);
+  });
+
+  it('scales linearly with available energy below the cap', () => {
+    const body = buildPowerAttackerBody(650); // 5 pairs x 130
+    expect(body.filter((p) => p === ATTACK)).toHaveLength(5);
+    expect(body.filter((p) => p === MOVE)).toHaveLength(5);
+  });
+});
+
+describe('buildPowerHealerBody', () => {
+  it('returns empty below the cost of one HEAL+MOVE pair', () => {
+    expect(buildPowerHealerBody(299)).toEqual([]);
+  });
+
+  it('builds a 1:1 HEAL:MOVE pair at the minimum affordable energy', () => {
+    const body = buildPowerHealerBody(300);
+    expect(body).toEqual([HEAL, MOVE]);
+  });
+
+  it('caps at 25 HEAL + 25 MOVE regardless of energy surplus', () => {
+    const body = buildPowerHealerBody(50000);
+    expect(body.filter((p) => p === HEAL)).toHaveLength(25);
+    expect(body.filter((p) => p === MOVE)).toHaveLength(25);
+    expect(body).toHaveLength(50);
+  });
+});
+
+describe('buildPowerHaulerBody', () => {
+  it('returns empty below the cost of one CARRY+MOVE pair', () => {
+    expect(buildPowerHaulerBody(99)).toEqual([]);
+  });
+
+  it('builds a 1:1 CARRY:MOVE pair at the minimum affordable energy', () => {
+    const body = buildPowerHaulerBody(100);
+    expect(body).toEqual([CARRY, MOVE]);
+  });
+
+  it('caps at 25 CARRY + 25 MOVE (1250 capacity) regardless of energy surplus', () => {
+    const body = buildPowerHaulerBody(50000);
+    expect(body.filter((p) => p === CARRY)).toHaveLength(25);
+    expect(body.filter((p) => p === MOVE)).toHaveLength(25);
+    expect(body).toHaveLength(50);
   });
 });

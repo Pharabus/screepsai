@@ -1,6 +1,9 @@
 import {
   buildBody,
   buildDepositMinerBody,
+  buildPowerAttackerBody,
+  buildPowerHealerBody,
+  buildPowerHaulerBody,
   buildHunterBody,
   buildKeeperKillerBody,
   buildMinerBody,
@@ -1282,6 +1285,75 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
             targetRoom: depositTarget.room,
           },
         });
+      }
+    }
+    // Power bank squad: operator-set via the powerBankSquad() console
+    // command (main.ts) against a highway room already holding a
+    // scoutedPowerBank entry. Mirrors depositMiner's manual/speculative
+    // pattern — no automatic empire-wide selection. Three coordinated roles
+    // (unlike depositMiner's single self-hauling role) because the bank's
+    // fixed 2,000,000 hp needs real sustained melee DPS, not one creep's
+    // light yield. Attacker/healer requests stop once the bank is confirmed
+    // destroyed (visible room, no structure at the target id); haulers keep
+    // spawning until the whole squad's job is done — the powerHauler role
+    // itself clears powerBankTarget once the drop is fully collected, which
+    // also stops all three requests naturally.
+    const powerBankTarget = Memory.rooms[room.name]?.powerBankTarget;
+    if (powerBankTarget) {
+      const liveAttackers = countCreepsByRoleAndTarget('powerAttacker', powerBankTarget.room);
+      const liveHealers = countCreepsByRoleAndTarget('powerHealer', powerBankTarget.room);
+      const liveHaulers = countCreepsByRoleAndTarget('powerHauler', powerBankTarget.room);
+      const bankRoomVisible = !!Game.rooms[powerBankTarget.room];
+      const bankAlive = !bankRoomVisible || !!Game.getObjectById(powerBankTarget.id);
+
+      if (bankAlive && liveAttackers < powerBankTarget.attackersNeeded) {
+        const body = buildPowerAttackerBody(room.energyCapacityAvailable);
+        if (body.length > 0) {
+          queue.push({
+            role: 'powerAttacker',
+            body,
+            minCount:
+              countCreepsByRole('powerAttacker', room.name) +
+              (powerBankTarget.attackersNeeded - liveAttackers),
+            memory: {
+              role: 'powerAttacker' as CreepRoleName,
+              homeRoom: room.name,
+              targetRoom: powerBankTarget.room,
+            },
+          });
+        }
+      }
+      if (bankAlive && liveHealers < 1) {
+        const body = buildPowerHealerBody(room.energyCapacityAvailable);
+        if (body.length > 0) {
+          queue.push({
+            role: 'powerHealer',
+            body,
+            minCount: countCreepsByRole('powerHealer', room.name) + 1,
+            memory: {
+              role: 'powerHealer' as CreepRoleName,
+              homeRoom: room.name,
+              targetRoom: powerBankTarget.room,
+            },
+          });
+        }
+      }
+      if (liveHaulers < powerBankTarget.haulersNeeded) {
+        const body = buildPowerHaulerBody(room.energyCapacityAvailable);
+        if (body.length > 0) {
+          queue.push({
+            role: 'powerHauler',
+            body,
+            minCount:
+              countCreepsByRole('powerHauler', room.name) +
+              (powerBankTarget.haulersNeeded - liveHaulers),
+            memory: {
+              role: 'powerHauler' as CreepRoleName,
+              homeRoom: room.name,
+              targetRoom: powerBankTarget.room,
+            },
+          });
+        }
       }
     }
     // Colony expansion: claimer + colonyBuilder for any target room parented here.

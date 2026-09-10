@@ -20,6 +20,9 @@ import { keeperKiller } from './keeperKiller';
 import { courier } from './courier';
 import { dismantler } from './dismantler';
 import { depositMiner } from './depositMiner';
+import { powerAttacker } from './powerAttacker';
+import { powerHealer } from './powerHealer';
+import { powerHauler } from './powerHauler';
 
 export type { Role };
 
@@ -45,4 +48,7 @@ export const roles: Record<CreepRoleName, Role> = {
   courier,
   dismantler,
   depositMiner,
+  powerAttacker,
+  powerHealer,
+  powerHauler,
 };

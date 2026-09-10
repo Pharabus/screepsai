@@ -489,6 +489,149 @@ export const depositStatus = (): string => {
   return lines.join('\n');
 };
 
+// Max room-to-room hops for a power bank target, mirroring
+// DEPOSIT_MAX_ROOM_HOPS's live-validated reachability guard above — the same
+// grid-adjacent-but-far-walkable-detour risk applies to highway rooms.
+const POWER_BANK_MAX_ROOM_HOPS = 3;
+
+// Default number of powerAttackers dispatched per squad — see
+// buildPowerAttackerBody's doc comment (src/utils/body.ts) for the DPS math
+// this is sized against (2 maxed attackers crack a bank in ~1333 ticks,
+// comfortably inside the >=3000-tick decay floor sightings are filtered to).
+const POWER_SQUAD_DEFAULT_ATTACKERS = 2;
+
+// Max haulers dispatched per squad, mirroring defenderComposition's 4-cap
+// convention (src/managers/spawner.ts).
+const POWER_SQUAD_MAX_HAULERS = 4;
+
+// Capacity of one maxed powerHauler body (25 CARRY x 50) — sizes only the
+// squad's initial hauler-count estimate, not a hard limit: a hauler makes
+// multiple trips if the bank's actual power exceeds this (see
+// buildPowerHaulerBody's doc comment).
+const POWER_HAULER_CAPACITY_ESTIMATE = 1250;
+
+/**
+ * Assign a scouted highway Power Bank as the mining target for `homeRoom`.
+ * Mirrors mineDeposit()/buyPower() — power banks are speculative,
+ * operator-triggered opportunities, not part of automatic empire-wide
+ * selection. The bank must already have a scoutedPowerBank entry, recorded
+ * automatically by an owned room's Observer scanning highway rooms (see
+ * src/managers/observer.ts / src/utils/roomIntel.ts). Use scoutedPowerBanks()
+ * to list current sightings before committing.
+ *
+ *   powerBankSquad('W42N59', 'W40N59')
+ *   powerBankSquad('W42N59', 'W40N59', 3)   // override attacker count
+ */
+export const powerBankSquad = (
+  homeRoom: string,
+  bankRoom: string,
+  attackerCount = POWER_SQUAD_DEFAULT_ATTACKERS,
+): string => {
+  const home = Game.rooms[homeRoom];
+  if (!home?.controller?.my) return `powerBankSquad refused: ${homeRoom} is not an owned room`;
+  const bank = Memory.rooms[bankRoom]?.scoutedPowerBank;
+  if (!bank) return `powerBankSquad refused: no scouted power bank recorded for ${bankRoom}`;
+  if (attackerCount < 1 || attackerCount > 4) {
+    return 'powerBankSquad refused: attackerCount must be between 1 and 4';
+  }
+
+  const route = Game.map.findRoute(homeRoom, bankRoom);
+  if (route === ERR_NO_PATH) {
+    return `powerBankSquad refused: no room route exists from ${homeRoom} to ${bankRoom}`;
+  }
+  if (route.length > POWER_BANK_MAX_ROOM_HOPS) {
+    return (
+      `powerBankSquad refused: ${bankRoom} is ${route.length} room-hops from ${homeRoom} ` +
+      `(max ${POWER_BANK_MAX_ROOM_HOPS}) — grid-adjacent rooms can still require a long walkable ` +
+      `detour if there's no direct border exit; not worth the round trip`
+    );
+  }
+
+  const homeMem = (Memory.rooms[homeRoom] ??= {});
+  homeMem.powerBankTarget = {
+    room: bankRoom,
+    x: bank.x,
+    y: bank.y,
+    id: bank.id,
+    power: bank.power,
+    attackersNeeded: attackerCount,
+    haulersNeeded: Math.min(
+      POWER_SQUAD_MAX_HAULERS,
+      Math.max(1, Math.ceil(bank.power / POWER_HAULER_CAPACITY_ESTIMATE)),
+    ),
+    assignedAtTick: Game.time,
+  };
+  return (
+    `powerBankSquad: ${homeRoom} will crack the power bank at ${bankRoom} ` +
+    `(${bank.x},${bank.y}), ${bank.power} power, ${route.length} room-hop(s) away — ` +
+    `${homeMem.powerBankTarget.attackersNeeded} attacker(s), 1 healer, ` +
+    `${homeMem.powerBankTarget.haulersNeeded} hauler(s)`
+  );
+};
+
+/** Cancels a room's power-bank squad target. Live squad members finish their
+ *  current attack/trip, then retreat and recycle instead of respawning. */
+export const stopPowerBankSquad = (homeRoom: string): string => {
+  const mem = Memory.rooms[homeRoom];
+  if (!mem?.powerBankTarget) return `${homeRoom} has no active power bank target`;
+  const { room, power } = mem.powerBankTarget;
+  delete mem.powerBankTarget;
+  return `Cleared power bank target for ${homeRoom} (was ${power} power at ${room})`;
+};
+
+/**
+ * Lists every currently-scouted power bank empire-wide, not just ones
+ * already assigned to a squad — surfaces a sighting before it decays away
+ * unseen (todo.md recorded two live near-misses lost this way before any
+ * squad consumer existed).
+ */
+export const scoutedPowerBanks = (): string => {
+  const lines: string[] = [];
+  for (const [roomName, mem] of Object.entries(Memory.rooms)) {
+    const bank = mem.scoutedPowerBank;
+    if (!bank) continue;
+    const remainingDecay = bank.ticksToDecay - (Game.time - bank.recordedAtTick);
+    if (remainingDecay <= 0) continue; // stale sighting, already decayed
+    lines.push(
+      `${roomName} (${bank.x},${bank.y}): ${bank.power} power, ~${remainingDecay} ticks to decay, ` +
+        `${bank.freeAdjacentTiles} free tile(s)`,
+    );
+  }
+  if (lines.length === 0) return 'No currently-known power banks.';
+  return lines.join('\n');
+};
+
+/** Lists every room with an active power-bank squad target, live creep
+ *  counts by role, and the bank's live HP/power if visible. */
+export const powerBankStatus = (): string => {
+  const lines: string[] = [];
+  for (const room of Object.values(Game.rooms)) {
+    if (!room.controller?.my) continue;
+    const target = Memory.rooms[room.name]?.powerBankTarget;
+    if (!target) continue;
+    const attackers = Object.values(Game.creeps).filter(
+      (c) => c.memory.role === 'powerAttacker' && c.memory.targetRoom === target.room,
+    ).length;
+    const healers = Object.values(Game.creeps).filter(
+      (c) => c.memory.role === 'powerHealer' && c.memory.targetRoom === target.room,
+    ).length;
+    const haulers = Object.values(Game.creeps).filter(
+      (c) => c.memory.role === 'powerHauler' && c.memory.targetRoom === target.room,
+    ).length;
+    const bank = Game.getObjectById(target.id);
+    const state = bank
+      ? `${bank.hits}/${POWER_BANK_HITS} hp, ${bank.power} power`
+      : 'not currently visible (or destroyed)';
+    lines.push(
+      `${room.name} -> ${target.room} (${target.x},${target.y}): ` +
+        `${attackers}/${target.attackersNeeded} attacker(s), ${healers}/1 healer, ` +
+        `${haulers}/${target.haulersNeeded} hauler(s), bank: ${state}`,
+    );
+  }
+  if (lines.length === 0) return 'No active power bank squads.';
+  return lines.join('\n');
+};
+
 // Register console globals (Screeps IVM evaluates console input against `global`)
 global.stats = stats;
 global.resetStats = resetStats;
@@ -515,6 +658,10 @@ global.powerStatus = powerStatus;
 global.mineDeposit = mineDeposit;
 global.stopMiningDeposit = stopMiningDeposit;
 global.depositStatus = depositStatus;
+global.powerBankSquad = powerBankSquad;
+global.stopPowerBankSquad = stopPowerBankSquad;
+global.scoutedPowerBanks = scoutedPowerBanks;
+global.powerBankStatus = powerBankStatus;
 
 export const loop = ErrorMapper.wrapLoop(() => {
   profile('main.loop', () => {

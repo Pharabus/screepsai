@@ -96,6 +96,11 @@ const ROLE_TIERS: Record<CreepRoleName, ThrottleTier | null> = {
   miner: null,
   claimer: null,
   colonyBuilder: null,
+  // powerAttacker/powerHealer — same combat-must-act-every-tick reasoning as
+  // defender/healer above: a skipped attacker tick wastes DPS against a
+  // decaying bank, a skipped healer tick risks losing an attacker.
+  powerAttacker: null,
+  powerHealer: null,
 
   // TIER_LIGHT — income-adjacent logistics
   hauler: TIER_LIGHT,
@@ -105,6 +110,7 @@ const ROLE_TIERS: Record<CreepRoleName, ThrottleTier | null> = {
   mineralMiner: TIER_LIGHT,
   harvester: TIER_LIGHT,
   depositMiner: TIER_LIGHT,
+  powerHauler: TIER_LIGHT,
 
   // TIER_HEAVY — discretionary work, shed first
   upgrader: TIER_HEAVY,
