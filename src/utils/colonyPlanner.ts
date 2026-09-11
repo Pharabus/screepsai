@@ -178,8 +178,32 @@ const TERRAIN_OPENNESS_WEIGHT = 30;
 
 /**
  * Fraction of the TERRAIN_OPENNESS_RADIUS box around `anchor` that is
- * reachable (8-directional flood fill, walls only) from the anchor itself.
- * Returns 0 if the anchor tile is itself a wall.
+ * reachable (8-directional flood fill, walls only) from the anchor's
+ * surroundings.
+ *
+ * Seeds the flood fill from the anchor's walkable NEIGHBOURS, not the anchor
+ * tile itself. A Source/Mineral/Controller's own tile is ALWAYS
+ * terrain-flagged wall in Screeps' world-gen — they're object tiles, not
+ * standable ground, and a creep always interacts at range 1, never by
+ * standing on them. Live-confirmed 2026-09-11: every one of our 4 owned,
+ * fully-functional rooms' controller tile AND every one of their sources'
+ * tiles reads TERRAIN_MASK_WALL. The original version required the anchor
+ * tile itself to be walkable before seeding anything, which made this
+ * function return exactly 0 for every real controller/source anchor,
+ * always — the entire terrain-differentiation feature (see
+ * TERRAIN_OPENNESS_WEIGHT's doc comment) was silently dead code since it
+ * shipped: `claimTargetOpenness` could only ever contribute the same flat
+ * `-TERRAIN_OPENNESS_BASELINE * TERRAIN_OPENNESS_WEIGHT` constant to every
+ * candidate's score, never the intended per-room differentiation (harmless
+ * to relative ranking, since it was a uniform offset, but the absolute
+ * scores it produced — e.g. a room evaluating as `score=3.5` instead of the
+ * intended ~23 — were confusing and the feature did nothing).
+ *
+ * The anchor's own tile still counts toward the reachable area (it's part
+ * of the buildable footprint), it just isn't required to be walkable to
+ * start the fill. If the anchor has zero walkable neighbours (boxed in on
+ * all 8 sides — a genuinely unbuildable spot), this still correctly returns
+ * 0.
  */
 function reachableFraction(terrain: RoomTerrain, anchor: { x: number; y: number }): number {
   const minX = Math.max(0, anchor.x - TERRAIN_OPENNESS_RADIUS);
@@ -187,11 +211,23 @@ function reachableFraction(terrain: RoomTerrain, anchor: { x: number; y: number 
   const minY = Math.max(0, anchor.y - TERRAIN_OPENNESS_RADIUS);
   const maxY = Math.min(49, anchor.y + TERRAIN_OPENNESS_RADIUS);
   const walkable = (x: number, y: number): boolean => terrain.get(x, y) !== TERRAIN_MASK_WALL;
-  if (!walkable(anchor.x, anchor.y)) return 0;
 
   const total = (maxX - minX + 1) * (maxY - minY + 1);
   const reachable = new Set<string>([`${anchor.x},${anchor.y}`]);
-  const queue: [number, number][] = [[anchor.x, anchor.y]];
+  const queue: [number, number][] = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = anchor.x + dx;
+      const ny = anchor.y + dy;
+      if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+      if (!walkable(nx, ny)) continue;
+      reachable.add(`${nx},${ny}`);
+      queue.push([nx, ny]);
+    }
+  }
+  if (queue.length === 0) return 0; // boxed in on all sides - genuinely unbuildable
+
   let head = 0;
   while (head < queue.length) {
     const [x, y] = queue[head++]!;

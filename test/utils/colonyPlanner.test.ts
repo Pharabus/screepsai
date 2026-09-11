@@ -761,6 +761,31 @@ describe('claimTargetOpenness', () => {
     expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBe(0);
   });
 
+  it('returns a meaningful non-zero fraction when the anchor tile itself is wall but its surroundings are open', () => {
+    // Regression for the real-world Screeps convention (live-confirmed
+    // 2026-09-11 across all 4 owned rooms): a Source/Controller's own tile
+    // is ALWAYS terrain-flagged wall - it's an object tile, not standable
+    // ground. The old implementation required the anchor tile itself to be
+    // walkable before seeding anything, so this exact scenario (which is
+    // every real anchor, always) silently returned a flat 0 forever.
+    const anchor = { x: 25, y: 25 };
+    Game.map.getRoomTerrain = (() => ({
+      get: (x: number, y: number) => {
+        if (x === anchor.x && y === anchor.y) return TERRAIN_MASK_WALL;
+        const dx = Math.abs(x - anchor.x);
+        const dy = Math.abs(y - anchor.y);
+        return Math.max(dx, dy) <= 14 ? 0 : TERRAIN_MASK_WALL;
+      },
+    })) as any;
+    Memory.rooms['W2N1'] = {
+      scoutedAt: 100,
+      scoutedSources: 1,
+      scoutedHasController: true,
+      scoutedControllerPos: anchor,
+    } as any;
+    expect(claimTargetOpenness('W2N1', Memory.rooms['W2N1']!)).toBeCloseTo(1, 2);
+  });
+
   it('takes the best of controller and source anchors', () => {
     const badAnchor = { x: 25, y: 25 };
     const goodAnchor = { x: 10, y: 10 };
