@@ -2478,7 +2478,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     consoleSpy.mockRestore();
   });
 
-  it('does not run for a non-hub room', () => {
+  it('does not send when there are no active colonies to receive it', () => {
     (Game as any).time = SEND_TICK;
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const hubTerminal: any = {
@@ -2493,7 +2493,9 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
       terminal: hubTerminal,
     });
     (Game as any).rooms = { W1N1: notHub };
-    // No labIds anywhere → getLabHubName() returns undefined → isLabHub(W1N1) is false
+    // No labIds anywhere → getLabHubName() returns undefined → isLabHub(W1N1) is false,
+    // but that's not why this is empty — no colony was seeded at all, so
+    // allColonies() has nothing to iterate regardless of hub status.
     (Memory as any).rooms = { W1N1: {} };
     (Game as any).market = {
       getAllOrders: vi.fn(() => []),
@@ -2504,6 +2506,68 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     runTerminal();
 
     expect(hubTerminal.send).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("ships surplus from a room that is NOT the current lab hub — a former hub's stockpile must stay donatable after hub election moves", () => {
+    // Regression for the live hub-election case (2026-09-13): W43N58 held a
+    // stockpile of boost compound produced while it was hub, then hub election
+    // moved to W42N59 (room-name tie-break at equal RCL) leaving W43N58 with
+    // no way to donate under the old isLabHub gate, even though its colonies'
+    // stashes stayed pinned at BOOST_COLONY_STASH_TARGET's old value forever.
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 });
+    // Override: this room has zero labs, so it is definitely not the elected hub.
+    (Memory as any).rooms.W1N1 = {};
+
+    runTerminal();
+
+    expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
+    consoleSpy.mockRestore();
+  });
+
+  it('ships to a colony whose homeRoom is a different room entirely — receivers come from allColonies(), not coloniesForHome(sender)', () => {
+    // The other half of the same live bug: every colony's homeRoom is fixed at
+    // claim time and need not match whichever room currently holds surplus.
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 });
+    // W2N1's homeRoom is some third room, not the sender (W1N1).
+    (Memory as any).missions.colony.W2N1.homeRoom = 'W9N9';
+
+    runTerminal();
+
+    expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
+    consoleSpy.mockRestore();
+  });
+
+  it('does not let two different senders both ship to the same colony in one tick', () => {
+    (Game as any).time = SEND_TICK;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { hubTerminal } = makeSetup({ KHO2: 2000 });
+
+    const secondSenderTerminal: any = {
+      store: makeBoostStore({ energy: 50_000, KHO2: 2000 }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const secondSender = mockRoom({
+      name: 'W3N1',
+      controller: { my: true, level: 7 },
+      storage: { store: makeBoostStore({}) },
+      terminal: secondSenderTerminal,
+    });
+    (Game as any).rooms.W3N1 = secondSender;
+    (Memory as any).rooms.W3N1 = {};
+
+    runTerminal();
+
+    // Exactly one of the two senders should have shipped to W2N1 this tick —
+    // not both.
+    const totalSends =
+      hubTerminal.send.mock.calls.length + secondSenderTerminal.send.mock.calls.length;
+    expect(totalSends).toBe(1);
     consoleSpy.mockRestore();
   });
 

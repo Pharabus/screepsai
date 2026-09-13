@@ -566,7 +566,7 @@ function sendMineralsToHub(room: Room, terminal: StructureTerminal): void {
  * already arrived, so a colony needs the stock on hand *before* it's needed
  * (see roomBoostCompound in spawner.ts, which decides how a colony actually
  * uses whatever arrives). Only compounds with (a) a defined GOAL_CAPS ceiling
- * — used below as the "hub has genuine surplus" gate — and (b) an actual
+ * — used below as the "sender has genuine surplus" gate — and (b) an actual
  * creep-boost consumer today. GHO2 (TOUGH) is excluded: no current role has
  * TOUGH parts, so shipping it would be pure waste. XGH2O is excluded too: it
  * has no GOAL_CAPS entry yet (still uncapped/aspirational), so there's nothing
@@ -590,18 +590,52 @@ const BOOST_SHIP_AMOUNT = 500;
  * dropping it the instant a defender boosts.
  */
 const BOOST_COLONY_STASH_TARGET = BOOST_LAB_MINERAL_TARGET_DEFENSE + 300;
-/** Hub must hold at least this fraction of a compound's GOAL_CAPS ceiling before donating any of it — keeps its own reservation intact. */
+/** Sender must hold at least this fraction of a compound's GOAL_CAPS ceiling before donating any of it — keeps its own reservation intact. */
 const BOOST_SHIP_SURPLUS_FRACTION = 0.75;
 const _lastBoostSend = new Map<string, number>();
+/**
+ * Per-tick dedupe so two different senders can't both ship to the same colony
+ * in one tick — see the isLabHub note below for why more than one sender is
+ * now possible. Separate from `_receiversThisTick` (energy sends) since a room
+ * can validly receive an energy send and a boost send in the same tick.
+ */
+const _boostReceiversThisTick = new Set<string>();
 
+/**
+ * Ships surplus boost-tier compound from `home`'s own storage+terminal to
+ * whichever active colony needs it most. Deliberately **not** gated to the
+ * currently-elected lab hub (`isLabHub`), and looks up receivers via
+ * `allColonies()` rather than `coloniesForHome(home.name)` — both were tried
+ * and found broken by a live hub-election change (2026-09-13):
+ *
+ * `getLabHubName()` auto-elects whichever owned room has the most labs (ties
+ * broken by RCL, then controller progress, then room name) — it is NOT the
+ * same concept as a colony's `homeRoom` (the nearest owned room at claim
+ * time, fixed forever in the mission registry). These happened to be the same
+ * room (W43N58) for a long time, so gating this function to "the current hub"
+ * and looking up receivers via "colonies whose home is the calling room" both
+ * silently assumed hub === home. Once W42N59 also reached RCL8 it won the
+ * room-name tie-break and hub election moved to it — but every colony's
+ * `homeRoom` is still W43N58 (fixed at claim time), so
+ * `coloniesForHome("W42N59")` returned zero receivers even after this fix's
+ * predecessor kept the isLabHub gate: the new hub had no colonies pointing at
+ * it, and the old hub (W43N58, still sitting on 1955 KHO2 / 335 LHO2 / 382
+ * GH2O produced before the handover) was no longer allowed to send because it
+ * wasn't hub anymore. Net effect: W44N57/W44N59 stayed pinned at exactly 500
+ * KHO2 for tens of thousands of ticks with a much larger stockpile stranded
+ * one room over. Fix: any owned room may donate (the surplus-fraction gate
+ * below is what actually decides "genuine surplus", not hub status), and the
+ * receiver list is every active colony empire-wide, not just ones sharing the
+ * sender's original homeRoom.
+ */
 function sendBoostsToColonies(home: Room, terminal: StructureTerminal): void {
-  if (!isLabHub(home)) return; // only the hub accumulates these compounds
-
-  const candidates: Array<{ colonyRoom: string; compound: ResourceConstant; hubStock: number }> =
+  const candidates: Array<{ colonyRoom: string; compound: ResourceConstant; senderStock: number }> =
     [];
 
-  for (const { room: colonyRoom, state } of coloniesForHome(home.name)) {
-    if (state.status === 'claiming') continue; // no terminal exists yet
+  for (const { room: colonyRoom, state } of allColonies()) {
+    if (colonyRoom === home.name) continue; // don't ship to self
+    if (_boostReceiversThisTick.has(colonyRoom)) continue; // another sender already served it this tick
+    if (state.status !== 'active') continue; // no terminal exists yet at claiming/bootstrapping
     const target = Game.rooms[colonyRoom];
     if (!target?.controller?.my) continue;
     const colonyTerminal = target.terminal;
@@ -614,10 +648,10 @@ function sendBoostsToColonies(home: Room, terminal: StructureTerminal): void {
     for (const compound of BOOST_SHIP_PRIORITY) {
       const cap = GOAL_CAPS[compound];
       if (!cap) continue; // only ship compounds with a defined surplus ceiling
-      const hubStock =
+      const senderStock =
         terminal.store.getUsedCapacity(compound) +
         (home.storage?.store.getUsedCapacity(compound) ?? 0);
-      if (hubStock < cap * BOOST_SHIP_SURPLUS_FRACTION) continue;
+      if (senderStock < cap * BOOST_SHIP_SURPLUS_FRACTION) continue;
 
       const colonyStock =
         (colonyTerminal.store.getUsedCapacity(compound) ?? 0) +
@@ -625,15 +659,15 @@ function sendBoostsToColonies(home: Room, terminal: StructureTerminal): void {
       if (colonyStock >= BOOST_COLONY_STASH_TARGET) continue;
       if (colonyTerminal.store.getFreeCapacity(compound) < BOOST_SHIP_AMOUNT) continue;
 
-      candidates.push({ colonyRoom, compound, hubStock });
+      candidates.push({ colonyRoom, compound, senderStock });
       break; // priority order already applied — one candidate per colony
     }
   }
 
   if (candidates.length === 0) return;
 
-  // Deepest hub surplus first — least risk to the hub's own reserve.
-  candidates.sort((a, b) => b.hubStock - a.hubStock);
+  // Deepest sender surplus first — least risk to the sender's own reserve.
+  candidates.sort((a, b) => b.senderStock - a.senderStock);
   const best = candidates[0]!;
 
   const amount = Math.min(BOOST_SHIP_AMOUNT, terminal.store.getUsedCapacity(best.compound));
@@ -651,6 +685,7 @@ function sendBoostsToColonies(home: Room, terminal: StructureTerminal): void {
   const result = terminal.send(best.compound, amount, best.colonyRoom, 'boost distribution');
   if (result === OK) {
     _lastBoostSend.set(`${home.name}->${best.colonyRoom}`, Game.time);
+    _boostReceiversThisTick.add(best.colonyRoom);
     console.log(
       `[terminal] ${home.name}: sent ${amount} ${best.compound} to ${best.colonyRoom} (cost ${cost} energy)`,
     );
@@ -669,11 +704,13 @@ export function resetBoostSendCache(): void {
 /** Clears the per-tick receiver set — call in tests' beforeEach to prevent cross-test contamination. */
 export function resetReceiversThisTick(): void {
   _receiversThisTick.clear();
+  _boostReceiversThisTick.clear();
 }
 
 export function runTerminal(): void {
-  // Clear the per-tick receiver dedupe set so a new tick starts fresh.
+  // Clear the per-tick receiver dedupe sets so a new tick starts fresh.
   _receiversThisTick.clear();
+  _boostReceiversThisTick.clear();
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
@@ -705,10 +742,12 @@ export function runTerminal(): void {
       buyForLabs(room, terminal);
     }
 
-    // Hub-to-colony boost distribution: push surplus boost compound out to
-    // each colony's terminal so its own defenders/upgraders can be boosted
-    // locally. Hub-only — a colony has no reaction surplus to push.
-    if (amHub && terminal.cooldown === 0) {
+    // Boost distribution: push surplus boost compound out to whichever active
+    // colony needs it, from whichever owned room actually holds the surplus.
+    // NOT hub-gated (see sendBoostsToColonies's doc comment) — a room that
+    // used to be the lab hub can still be sitting on a real stockpile after
+    // hub election moves elsewhere, and that stock must stay donatable.
+    if (terminal.cooldown === 0) {
       sendBoostsToColonies(room, terminal);
     }
 
