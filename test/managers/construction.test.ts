@@ -2357,6 +2357,36 @@ describe('clearBlockingExtensions', () => {
       expect(staleTower.remove).toHaveBeenCalledTimes(1);
     });
 
+    it('leaves an overflow tower site alone when its position is tracked in overflowedTowers (live W44N57 regression)', () => {
+      // Regression (2026-09-23): placeTowers' overflow branch (all planned
+      // towerPositions already built/blocked) placed a tower outside the plan
+      // and recorded it in RoomMemory.overflowedTowers, but clearStaleSites
+      // never consulted that list — so it deleted the legitimate overflow
+      // tower every single cycle, and placeTowers deterministically recreated
+      // it at the same spot next cycle: an infinite place/delete loop that
+      // also permanently capped the room below its real tower maximum.
+      const overflowTower = mkSite(STRUCTURE_TOWER, 25, 10);
+      const room = roomWithSites([overflowTower]);
+      Memory.rooms = {
+        W1N1: {
+          overflowedTowers: ['25,10'],
+          layoutPlan: {
+            version: 8,
+            storagePos: { x: 17, y: 25 },
+            terminalPos: { x: 16, y: 24 },
+            towerPositions: [{ x: 14, y: 22 }], // does NOT include (25,10)
+            labPositions: [],
+            extensionPositions: [],
+            spawnPositions: [{ x: 25, y: 25 }],
+          },
+        },
+      };
+
+      clearBlockingExtensions(room);
+
+      expect(overflowTower.remove).not.toHaveBeenCalled();
+    });
+
     it('leaves a lab site alone when its position is still in the current plan', () => {
       const wantedLab = mkSite(STRUCTURE_LAB, 19, 27);
       const room = roomWithSites([wantedLab]);

@@ -4,6 +4,7 @@ import { isInRoomInterior, moveTo } from '../utils/movement';
 import { registerStationary, PRIORITY_STATIC, PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { handleRemoteThreat } from '../utils/remoteThreat';
+import { markIdle } from '../utils/idle';
 
 function getSourcePos(creep: Creep): RoomPosition | undefined {
   const roomName = creep.memory.targetRoom ?? creep.room.name;
@@ -42,6 +43,25 @@ const states: StateMachineDefinition = {
               priority: PRIORITY_WORKER,
               visualizePathStyle: { stroke: '#ffaa00' },
             });
+          } else if (!creep.memory.targetRoom) {
+            // Genuine local orphan: every local source is already claimed by a
+            // live miner and there's no remote room to travel to establish
+            // visibility for. Without this branch the creep silently did
+            // nothing forever (bare `return undefined` below), parked wherever
+            // it happened to spawn. Live-observed (2026-09-23, W44N57): an
+            // orphaned miner froze on the sole walkable neighbour of a
+            // freshly-built RCL8 second spawn, permanently sealing it and
+            // snarling every other creep routing through that cluster — a
+            // stationary creep is cost-255 (impassable) to the traffic
+            // manager, same as a wall. markIdle() routes it to the standard
+            // parking zone (away from the spawn/extension core) instead, and
+            // (with 'miner' now in idle.ts's RECYCLE_THRESHOLDS) it eventually
+            // recycles the body back into spawn energy rather than squatting
+            // forever. This is a backstop for whatever produced the orphan in
+            // the first place (a spawn-queue miscount, a container churning
+            // mid-construction, etc.) — it doesn't matter why one appears,
+            // it must never be able to camp on a live tile indefinitely.
+            markIdle(creep);
           }
           return undefined;
         }

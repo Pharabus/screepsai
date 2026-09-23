@@ -8,6 +8,11 @@ const RECYCLE_THRESHOLDS: Partial<Record<CreepRoleName, number>> = {
   defender: 100,
   rangedDefender: 100,
   healer: 100,
+  // A miner only ever calls markIdle() when it's a genuine local orphan (see
+  // miner.ts's POSITION state) — every real source is already covered by
+  // another live miner, so there is never a reason for it to become useful
+  // again. Recycle rather than let it squat in the parking zone forever.
+  miner: 150,
 };
 
 const COMBAT_ROLES = new Set<CreepRoleName>(['defender', 'rangedDefender', 'healer']);

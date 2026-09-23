@@ -946,15 +946,31 @@ export function placeLinks(room: Room): void {
  * overflow lab looked identical to a genuinely-orphaned stale one and got
  * deleted the moment it was placed — see `overflowLabPositions`' doc comment
  * (`types.d.ts`) for the live regression this fixes.
+ *
+ * **Tower positions must include `overflowedTowers` too** — `placeTowers`
+ * has had this exact same overflow path since before the lab fix above, and
+ * it was never given the equivalent treatment: `RoomMemory.overflowedTowers`
+ * already existed (tracking placed overflow positions to dedupe the log line)
+ * but was never consulted here. Live-observed (2026-09-23, W44N57 at RCL8):
+ * once every planned tower slot was blocked (already built), `placeTowers`
+ * fell into its overflow branch, deterministically found the same open tile
+ * near spawn every time, and this function deleted it as "not in current
+ * plan" on the very next 5-tick cycle — an infinite place/delete loop that
+ * burned a construction-site API call forever and permanently capped the
+ * room's tower count below RCL8's real maximum.
  */
 function clearStaleSites(room: Room): boolean {
   const mem = Memory.rooms[room.name];
   const plan = mem?.layoutPlan;
   if (!plan) return false;
+  const overflowTowerPositions = (mem?.overflowedTowers ?? []).map((key) => {
+    const [x, y] = key.split(',').map(Number);
+    return { x: x!, y: y! };
+  });
   const planned: [string, { x: number; y: number }[]][] = [
     [STRUCTURE_EXTENSION, plan.extensionPositions],
     [STRUCTURE_LAB, [...plan.labPositions, ...(mem?.overflowLabPositions ?? [])]],
-    [STRUCTURE_TOWER, plan.towerPositions],
+    [STRUCTURE_TOWER, [...plan.towerPositions, ...overflowTowerPositions]],
     [STRUCTURE_SPAWN, plan.spawnPositions ?? []],
   ];
   for (const [structureType, positions] of planned) {

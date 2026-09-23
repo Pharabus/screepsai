@@ -12,8 +12,13 @@ vi.mock('../../src/utils/trafficManager', () => ({
   PRIORITY_WORKER: 2,
 }));
 
+vi.mock('../../src/utils/idle', () => ({
+  markIdle: vi.fn(),
+}));
+
 import { moveTo, isInRoomInterior } from '../../src/utils/movement';
 import { registerStationary } from '../../src/utils/trafficManager';
+import { markIdle } from '../../src/utils/idle';
 
 describe('miner', () => {
   beforeEach(() => {
@@ -290,6 +295,42 @@ describe('miner', () => {
       miner.run(creep);
 
       expect(creep.memory.state).toBe('HARVEST');
+    });
+
+    it('marks a local orphan (no targetRoom, no unmined source) idle instead of freezing forever', () => {
+      // Regression for the live W44N57 case (2026-09-23): both real sources
+      // already have live miners, and this creep is a purely local miner (no
+      // targetRoom to travel to establish visibility elsewhere). Before this
+      // fix, the POSITION state's `!sourceId` branch had no case for this —
+      // it silently did nothing forever, camping wherever it happened to
+      // spawn (which sealed a freshly-built RCL8 second spawn live, since it
+      // was the spawn's only walkable neighbour).
+      Memory.rooms['W1N1'] = {
+        sources: [
+          {
+            id: 's1' as Id<Source>,
+            x: 10,
+            y: 20,
+            containerId: 'c1' as Id<StructureContainer>,
+            minerName: 'miner_other', // already claimed by a different, live miner
+          },
+        ],
+      } as any;
+      Game.creeps['miner_other'] = mockCreep({ name: 'miner_other', memory: { role: 'miner' } });
+
+      Game.getObjectById = vi.fn(() => undefined) as any;
+
+      const creep = mockCreep({
+        name: 'miner_orphan',
+        memory: { role: 'miner', state: 'POSITION' }, // no targetId, no targetRoom
+        room: mockRoom({ name: 'W1N1' }),
+        pos: new RoomPosition(23, 3, 'W1N1'),
+      });
+
+      miner.run(creep);
+
+      expect(markIdle).toHaveBeenCalledWith(creep);
+      expect(moveTo).not.toHaveBeenCalled();
     });
   });
 

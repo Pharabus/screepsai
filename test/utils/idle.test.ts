@@ -270,6 +270,16 @@ describe('idle', () => {
       const creep = mockCreep({ memory: { role: 'defender' } });
       expect(shouldRecycle(creep, 100)).toBe(true);
     });
+
+    it('returns true for miner past its threshold (not a combat role — no threat gating)', () => {
+      // Regression companion to miner.ts's local-orphan markIdle() fix: a
+      // genuine orphan has no path back to usefulness, so it should recycle
+      // like any other permanently-idle role, unlike combat roles which stay
+      // alive near a recent threat.
+      const creep = mockCreep({ memory: { role: 'miner' } });
+      expect(shouldRecycle(creep, 149)).toBe(false);
+      expect(shouldRecycle(creep, 150)).toBe(true);
+    });
   });
 
   describe('resetIdle', () => {
