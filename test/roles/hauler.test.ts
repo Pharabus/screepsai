@@ -1188,7 +1188,11 @@ describe('hauler urgent responder', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
   });
 
-  it('no hauler responds when storage has no energy', () => {
+  it('empty hauler with empty storage does not attempt a withdraw that can only fail', () => {
+    // Storage being empty must not disable urgent-responder identification —
+    // just the "withdraw from storage" behavior specifically, which falls
+    // through to the normal pickup search instead (see the loaded-hauler
+    // regression test below for the case this whole mechanism exists for).
     const storage = {
       pos: new RoomPosition(25, 25, 'W1N1'),
       store: mockStore({}, 500000),
@@ -1212,6 +1216,46 @@ describe('hauler urgent responder', () => {
 
     hauler.run(creep);
 
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
+  });
+
+  it('loaded hauler still gets flagged urgent and delivers when storage is completely empty (live W44N57 regression)', () => {
+    // Regression for the live 2026-09-24 case: W44N57's towers ran dry (0%
+    // energy) through repeated Invader attacks while storage sat at 0 for
+    // thousands of ticks. getUrgentResponder used to bail out entirely
+    // whenever storage had no energy, so this rescue mechanism — built
+    // specifically to rush energy to a starved tower/spawn — was completely
+    // inert during exactly the scenario it exists for. A hauler already
+    // carrying cargo (from a source container, not storage) must still be
+    // identified as the urgent responder and sent straight to DELIVER.
+    const storage = {
+      pos: new RoomPosition(25, 25, 'W1N1'),
+      store: mockStore({}, 500000), // empty storage
+    };
+    const towerNeedingEnergy = {
+      structureType: STRUCTURE_TOWER,
+      store: mockStore({ energy: 100 }, 1000), // well under the 25% floor
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      storage,
+      find: vi.fn((type: number) => (type === FIND_MY_STRUCTURES ? [towerNeedingEnergy] : [])),
+    });
+
+    const creep = mockCreep({
+      name: 'hauler_near',
+      room,
+      memory: { role: 'hauler', state: 'PICKUP' },
+      store: mockStore({ energy: 700 }, 800), // already carrying cargo from elsewhere
+      pos: new RoomPosition(26, 25, 'W1N1'),
+    });
+
+    Game.creeps = { hauler_near: creep } as any;
+    (Memory as any).rooms = { W1N1: {} };
+
+    hauler.run(creep);
+
+    expect(creep.memory.state).toBe('DELIVER');
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, RESOURCE_ENERGY);
   });
 

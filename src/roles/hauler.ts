@@ -155,7 +155,19 @@ export const hauler: Role = {
 function getUrgentResponder(room: Room): string | undefined {
   return cached(`urgentResponder:${room.name}`, () => {
     const storage = room.storage;
-    if (!storage || storage.store.getUsedCapacity(RESOURCE_ENERGY) === 0) return undefined;
+    // Deliberately NOT gated on storage having energy — only on storage
+    // existing at all (needed as a reference point for "nearest to base").
+    // pickup()'s urgent-responder branch below falls back to a normal
+    // pickup search when storage can't actually supply the withdrawal, so
+    // this identification step doesn't need storage to be non-empty. A room
+    // whose storage is empty is exactly the room most at risk of towers or
+    // the spawn starving, so disabling the whole mechanism there was
+    // actively counterproductive: live-observed (W44N57, 2026-09-24) towers
+    // sat at 0% energy through repeated Invader attacks while storage was
+    // empty for thousands of ticks — this urgent-response path, built
+    // specifically to rush energy to a starved tower, was completely inert
+    // the entire time because of this now-removed check.
+    if (!storage) return undefined;
 
     const myStructures = room.find(FIND_MY_STRUCTURES);
     const hasSpawnNeed = myStructures.some(
@@ -313,8 +325,15 @@ function pickup(creep: Creep): boolean {
       Game.getObjectById(creep.memory.targetId) &&
       creep.pos.getRangeTo(Game.getObjectById(creep.memory.targetId)!) <= 3;
 
-    if (!hasNearbyCommitment) {
-      const storage = creep.room.storage!;
+    const storage = creep.room.storage!;
+    // getUrgentResponder no longer requires storage to hold energy (see its
+    // doc comment) — so this branch must check that itself before trying to
+    // withdraw, and fall through to the normal pickup search (source
+    // containers, dropped energy, etc.) when storage is dry rather than
+    // issuing a withdraw() that can only fail.
+    const storageHasEnergy = storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+
+    if (!hasNearbyCommitment && storageHasEnergy) {
       creep.memory.targetId = storage.id;
       if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         moveTo(creep, storage, {
