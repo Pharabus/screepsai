@@ -9,18 +9,37 @@ const BODY_COSTS: Partial<Record<BodyPartConstant, number>> = {
   [TOUGH]: 10,
 };
 
+// A local miner walks to its source exactly once in its whole lifetime, so
+// extra MOVE parts are normally wasted budget — the base 1 MOVE is plenty for
+// a typical nearby, well-roaded source. But a genuinely far/swampy outlier
+// source makes that one trip itself the problem: with only 1 MOVE, an 8-part
+// body (6 WORK + 1 CARRY = 7 non-MOVE parts) entering a single swamp tile
+// takes 70 fatigue, clearing at just 2/tick — ~35 ticks per swamp tile
+// crossed. Live-observed (2026-09-24): W44N57's source at (39,20), pathDist
+// 25 (already a known outlier — see haulersNeeded's doc comment on this same
+// source), had a fresh miner take 1000+ ticks crawling across a multi-tile
+// swamp band with a 1-MOVE body — the source sat idle the whole time despite
+// a miner being "assigned" to it. One extra MOVE part per this many tiles of
+// path distance, capped so a normal nearby source pays nothing extra.
+const MINER_MOVE_DISTANCE_STEP = 10;
+const MINER_MAX_EXTRA_MOVE = 4;
+
 /**
  * Build a miner body that maximises WORK parts.
- * Reserves 1 MOVE (50) and 1 CARRY (50) for link transfers, then fills
- * remaining budget with WORK. Caps at 50 total parts / 6 WORK (source saturation).
+ * Reserves 1+ MOVE (50 each, scaled by `pathDist` — see MINER_MOVE_DISTANCE_STEP)
+ * and 1 CARRY (50) for link transfers, then fills remaining budget with WORK.
+ * Caps at 50 total parts / 6 WORK (source saturation).
  */
-export function buildMinerBody(energyAvailable: number): BodyPartConstant[] {
-  const baseCost = 100; // 1 MOVE + 1 CARRY
+export function buildMinerBody(energyAvailable: number, pathDist = 0): BodyPartConstant[] {
+  const extraMove = Math.min(Math.floor(pathDist / MINER_MOVE_DISTANCE_STEP), MINER_MAX_EXTRA_MOVE);
+  const moveCount = 1 + extraMove;
+  const baseCost = moveCount * 50 + 50; // MOVE parts + 1 CARRY
   if (energyAvailable < baseCost + 100) return []; // need at least 1 WORK
   const workCount = Math.min(Math.floor((energyAvailable - baseCost) / 100), 6);
   const body: BodyPartConstant[] = [];
   for (let i = 0; i < workCount; i++) body.push(WORK);
-  body.push(CARRY, MOVE);
+  body.push(CARRY);
+  for (let i = 0; i < moveCount; i++) body.push(MOVE);
   return body;
 }
 

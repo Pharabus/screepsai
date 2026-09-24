@@ -102,6 +102,60 @@ describe('buildMinerBody', () => {
   it('caps at 6 WORK even with excess energy', () => {
     expect(buildMinerBody(1000)).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
   });
+
+  describe('pathDist-scaled MOVE (live W44N57 regression, 2026-09-24)', () => {
+    it('defaults to 1 MOVE when pathDist is omitted (unchanged behavior for nearby sources)', () => {
+      expect(buildMinerBody(1000)).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
+    });
+
+    it('adds no extra MOVE for a short path (below the 10-tile step)', () => {
+      expect(buildMinerBody(1000, 9)).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE]);
+    });
+
+    it('adds 1 extra MOVE per 10 tiles of path distance', () => {
+      // pathDist 25 (W44N57's actual far-source value) -> floor(25/10)=2 extra MOVE
+      expect(buildMinerBody(1000, 25)).toEqual([
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        CARRY,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    });
+
+    it('caps extra MOVE at 4 regardless of how far the source is', () => {
+      expect(buildMinerBody(1000, 1000)).toEqual([
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        WORK,
+        CARRY,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+        MOVE,
+      ]);
+    });
+
+    it('reserves the extra MOVE cost before allocating WORK, so a tight energy budget still yields a valid body', () => {
+      // 700 energy: with 1 extra MOVE (pathDist 10-19), base cost = 2*50+50=150,
+      // leaving 550 for WORK -> floor(550/100)=5 WORK.
+      expect(buildMinerBody(700, 15)).toEqual([WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE]);
+    });
+
+    it('still returns empty when energy is too low even for the scaled base cost', () => {
+      // 1 extra MOVE -> base cost 150; need at least 250 for 1 WORK too.
+      expect(buildMinerBody(240, 15)).toEqual([]);
+    });
+  });
 });
 
 describe('buildUpgraderBody', () => {

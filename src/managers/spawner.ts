@@ -1186,9 +1186,15 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     // this caused (W42N59/W43N58/W44N57, 2026-09-24).
     const minerSlots = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
     if (minerSlots > 0) {
+      // Sized to the room's farthest own source, not whichever slot this
+      // particular spawn ends up claiming (assignment happens later, in the
+      // creep's own POSITION state) — a newly-spawned local miner must be
+      // mobile enough for the worst case regardless of which gap it fills.
+      // See buildMinerBody's doc comment for the live regression this fixes.
+      const maxSourcePathDist = Math.max(0, ...(mem?.sources ?? []).map((s) => s.pathDist ?? 0));
       queue.push({
         role: 'miner',
-        body: buildMinerBody(room.energyCapacityAvailable),
+        body: buildMinerBody(room.energyCapacityAvailable, maxSourcePathDist),
         minCount: minerSlots,
         currentCountFn: () => countLocalMiners(room),
       });

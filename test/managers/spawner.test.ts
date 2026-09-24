@@ -457,6 +457,35 @@ describe('buildSpawnQueue', () => {
     expect(minerEntry?.currentCountFn?.()).toBe(2);
   });
 
+  // Regression (2026-09-24): a newly-spawned local miner is sized off
+  // buildMinerBody's default 1 MOVE part, fine for a nearby well-roaded
+  // source but disastrously slow for a genuine outlier — live-observed at
+  // W44N57's (39,20) source (pathDist 25), a fresh miner took 1000+ ticks
+  // just crossing a multi-tile swamp band, leaving the source's income idle
+  // the whole time. The queue push must size the body off the room's
+  // FARTHEST own source, not a flat default, since assignment to a specific
+  // source happens later (in the creep's own POSITION state).
+  it("sizes the miner body off the room's farthest own source pathDist", () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, pathDist: 5 },
+          { id: 'src2' as any, x: 39, y: 20, containerId: 'cnt2' as any, pathDist: 25 },
+        ],
+      },
+    };
+    (Game as any).creeps = {};
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1000 });
+
+    const queue = buildSpawnQueue(room);
+    const minerEntry = queue.find((r) => r.role === 'miner');
+
+    // pathDist 25 -> floor(25/10)=2 extra MOVE (3 total), same body
+    // buildMinerBody(1000, 25) produces directly.
+    expect(minerEntry?.body).toEqual([WORK, WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE]);
+  });
+
   it('bootstrap harvester minCount is 2', () => {
     (Memory as any).rooms = { W1N1: {} };
     const room = mockRoom({ name: 'W1N1' });
