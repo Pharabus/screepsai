@@ -147,7 +147,39 @@ type SpawnRequest = {
   // mean to — currently just the local miner request, whose minerSlots
   // target must not be satisfied by remote miners sharing the same
   // role+homeRoom (see countLocalMiners()).
+  //
+  // DANGER — this is a plain number, computed once when the request is
+  // built, and the whole `SpawnRequest[]` queue can be served from
+  // `_queueCache` verbatim for up to QUEUE_CACHE_TICKS without rebuilding.
+  // A role that changes multiple times within that window (any replaceable
+  // producer — a miner is the current example, but this generalizes to any
+  // future role with the same shape) must use `currentCountFn` instead, or
+  // every cache-served tick re-checks the exact same stale number against
+  // minCount and can re-queue a replacement that already spawned on an
+  // earlier tick within the same cache window. See currentCountFn's doc
+  // comment for the live regression this caused.
   currentCount?: number;
+  // Like currentCount, but re-invoked by the dispatch loop on every tick
+  // regardless of whether the queue itself came from cache — use this for
+  // any "how many do we already have" check that must never go stale within
+  // a cache window. Takes priority over currentCount when both are set.
+  //
+  // Live bug (W42N59/W43N58/W44N57, 2026-09-24): the local miner request
+  // used a plain `currentCount: countLocalMiners(room)` snapshot. When only
+  // one of a room's sources needed a replacement miner (the other source's
+  // miner still alive and in HARVEST, so the room never flagged `emergency`
+  // and the queue WAS cache-eligible), the cached queue's currentCount froze
+  // at whatever it was when the cache was last built — e.g. 1 (one real
+  // miner alive, replacement not yet spawned). The dispatch loop reused that
+  // frozen 1 on every tick the cache stayed valid, even after a replacement
+  // successfully spawned, so `1 < minCount(2)` kept re-triggering — spawning
+  // a fresh, genuinely superfluous miner on every remaining cache tick until
+  // the room ran out of free spawn structures (exactly 3 extra spawns
+  // observed at RCL8's 3-spawn cap — not a coincidence, that's the physical
+  // ceiling `!spawn` eventually hits). The orphans had no source left to
+  // claim (findUnminedSource came up empty) and, before the separate
+  // v1.0.366 markIdle() fix, froze forever wherever they happened to spawn.
+  currentCountFn?: () => number;
 } & (
   | { pattern: BodyPartConstant[]; body?: never; maxRepeats?: number }
   | { body: BodyPartConstant[]; pattern?: never; maxRepeats?: never }
@@ -1142,13 +1174,23 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
     // to - that bucket also includes this room's remote miners (their
     // memory.homeRoom is this room too), which would otherwise let a remote
     // miner silently satisfy a local source slot. See countLocalMiners().
+    //
+    // currentCountFn (not currentCount) — this request's queue entry can be
+    // served from _queueCache for up to QUEUE_CACHE_TICKS ticks whenever
+    // this room isn't flagged emergency (the common case: one source's miner
+    // died while the other's is still alive and masking it). A plain
+    // precomputed currentCount would freeze at whatever countLocalMiners(room)
+    // returned when the cache was built, so a replacement that spawns mid-
+    // window never "counts" against later reuses of the same cached queue —
+    // see currentCountFn's doc comment on SpawnRequest for the live overspawn
+    // this caused (W42N59/W43N58/W44N57, 2026-09-24).
     const minerSlots = mem?.sources?.filter((s) => !!s.containerId).length ?? 0;
     if (minerSlots > 0) {
       queue.push({
         role: 'miner',
         body: buildMinerBody(room.energyCapacityAvailable),
         minCount: minerSlots,
-        currentCount: countLocalMiners(room),
+        currentCountFn: () => countLocalMiners(room),
       });
     }
     // Mineral-priority outposts (e.g. W44N59) exist to mine their deposit, not
@@ -1721,7 +1763,12 @@ export function runSpawner(): void {
       // See countSpawningByRole's doc comment: a role's minCount check must
       // also count a same-role creep currently spawning at one of this room's
       // OTHER spawns, or a multi-spawn room can double-queue it mid-spawn.
+      // currentCountFn is called fresh here even when `queue` itself came
+      // from _queueCache — see its doc comment for why a plain cached
+      // currentCount number is unsafe for anything that can change within
+      // the cache window.
       const current =
+        request.currentCountFn?.() ??
         request.currentCount ??
         countCreepsByRole(request.role, room.name) + countSpawningByRole(room, request.role);
       if (current >= request.minCount) continue;

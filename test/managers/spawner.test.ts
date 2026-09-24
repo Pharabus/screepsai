@@ -363,7 +363,10 @@ describe('buildSpawnQueue', () => {
     // 2 local source slots, only 1 local miner alive -- the remote miner must
     // not count toward this room's own slots.
     expect(minerEntry?.minCount).toBe(2);
-    expect(minerEntry?.currentCount).toBe(1);
+    // currentCountFn (not a precomputed currentCount) — see its doc comment
+    // on SpawnRequest: a plain number here would go stale across a cached
+    // queue reuse window (live regression, 2026-09-24).
+    expect(minerEntry?.currentCountFn?.()).toBe(1);
   });
 
   // Regression (2026-09-09): a creep currently spawning isn't in Game.creeps
@@ -398,8 +401,60 @@ describe('buildSpawnQueue', () => {
 
     expect(minerEntry?.minCount).toBe(1);
     // Must already read 1 (not 0) so the room's second idle spawn doesn't
-    // queue a duplicate for the same single source slot.
-    expect(minerEntry?.currentCount).toBe(1);
+    // queue a duplicate for the same single source slot. Via currentCountFn,
+    // not a precomputed currentCount — see its doc comment on SpawnRequest.
+    expect(minerEntry?.currentCountFn?.()).toBe(1);
+  });
+
+  // Regression (2026-09-24): runSpawner's _queueCache can serve the exact
+  // same SpawnRequest[] array unchanged for up to QUEUE_CACHE_TICKS ticks
+  // whenever the room isn't flagged emergency — the common case for a local
+  // miner replacement, since the OTHER source's still-alive, still-harvesting
+  // miner keeps hasActiveLocalMiner (and therefore !emergency) true the whole
+  // time. A plain `currentCount: countLocalMiners(room)` number computed once
+  // at cache-build time stayed frozen at whatever it read then, so every
+  // later reuse of the SAME cached queue re-checked that stale number against
+  // minCount and could re-queue a replacement that had already spawned
+  // earlier in the same cache window. Live-observed: exactly 3 extra miners
+  // in a row at W42N59/W43N58/W44N57 (all RCL8, 3 spawns) — the runaway only
+  // stopped once every spawn structure was simultaneously busy.
+  //
+  // This test proves the fix's actual load-bearing property directly: calling
+  // the SAME currentCountFn closure again after Game.creeps changes — exactly
+  // what happens when _queueCache replays the same queue object on a later
+  // tick — returns the fresh count, not a value frozen at first call. A plain
+  // `currentCount` number could never do this regardless of when it's read.
+  it('miner currentCountFn re-reads live state on every call, so a cached queue object can never go stale (live overspawn regression)', () => {
+    (Memory as any).rooms = {
+      W1N1: {
+        minerEconomy: true,
+        sources: [
+          { id: 'src1' as any, x: 10, y: 10, containerId: 'cnt1' as any, minerName: 'miner_a' },
+          { id: 'src2' as any, x: 20, y: 20, containerId: 'cnt2' as any, minerName: undefined },
+        ],
+      },
+    };
+    // Simulate the moment the (would-be-cached) queue is first built: source
+    // 2's old miner just died, only source 1's miner is alive.
+    (Game as any).creeps = {
+      miner_a: { memory: { role: 'miner', homeRoom: 'W1N1' } },
+    };
+    const room = mockRoom({ name: 'W1N1' });
+
+    const queue = buildSpawnQueue(room);
+    const minerEntry = queue.find((r) => r.role === 'miner');
+    expect(minerEntry?.minCount).toBe(2);
+    expect(minerEntry?.currentCountFn?.()).toBe(1); // correct at build time — 1 needed
+
+    // Simulate a replacement successfully spawning (the dispatch loop's own
+    // spawnCreep() call) WITHOUT rebuilding the queue — exactly what
+    // _queueCache does for every remaining tick inside its validity window.
+    resetTickCache(); // countLocalMiners is tick-cached; a new tick must see the change
+    (Game as any).creeps.miner_b = { memory: { role: 'miner', homeRoom: 'W1N1' } };
+
+    // Re-invoking the SAME closure from the SAME (unrebuilt) queue object
+    // must now read 2, not the stale 1 from the first call.
+    expect(minerEntry?.currentCountFn?.()).toBe(2);
   });
 
   it('bootstrap harvester minCount is 2', () => {
