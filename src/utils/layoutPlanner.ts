@@ -310,6 +310,20 @@ function walkableNeighbourSeeds(
  * **Fail open:** if the spawn has no walkable seed neighbours (degenerate room), returns
  * `extensionPositions` unchanged rather than nuking everything.
  *
+ * **Widened from "built extensions" to "built obstacles" (2026-09-24):** the seal check
+ * below only ever compared against other *extensions* — a candidate that stranded a
+ * built tower, lab, spawn, or any other NON_WALKABLE_STRUCTURES type went completely
+ * unchecked. Live bug: W44N57's RCL8 extension stamp placed one extension at (28,3) that
+ * was the sole walkable approach from the spawn's core into the room's entire eastern
+ * half — sealing off a built tower at (33,12), ~15 other built extensions, and the whole
+ * pre-existing road network (including a tunnel road at (37,11) built straight through a
+ * wall tile) leading to a source. Nothing caught it: `isAccessible` only checks immediate
+ * cardinal neighbours (this candidate had one open), and this function's own seal check
+ * only ever looked at other extensions, never the tower it was actually sealing. The fix
+ * is purely about *what* gets passed in — every built obstacle now goes into the same
+ * built-pocket seal check that already existed for extensions, with no change to the
+ * check's own logic.
+ *
  * @param extensionPositions  candidate extension tiles (mutated copy is returned)
  * @param plannedObstacleKeys mutable set of all planned + built non-walkable tile keys
  *   (spawn, storage, terminal, factory, labs, towers, spawns, and every extension);
@@ -317,13 +331,15 @@ function walkableNeighbourSeeds(
  * @param terrain             room terrain for wall checks
  * @param spawnPos            primary spawn tile (it is itself an obstacle; flood seeds
  *   from its 8 walkable neighbours)
+ * @param builtObstacles      every already-built NON_WALKABLE_STRUCTURES tile (not just
+ *   extensions — see below for why this had to widen from "built extensions").
  */
 export function pruneUnreachableExtensions(
   extensionPositions: { x: number; y: number }[],
   plannedObstacleKeys: Set<string>,
   terrain: RoomTerrain,
   spawnPos: { x: number; y: number },
-  builtExtensions?: { x: number; y: number }[],
+  builtObstacles?: { x: number; y: number }[],
 ): { x: number; y: number }[] {
   // Seed from spawn's 8 walkable neighbours (spawn itself is an obstacle).
   const seeds = walkableNeighbourSeeds(spawnPos, plannedObstacleKeys, terrain);
@@ -342,15 +358,15 @@ export function pruneUnreachableExtensions(
       ({ x, y }) => !EIGHT_NEIGHBORS.some(([dx, dy]) => reachable.has(`${x + dx},${y + dy}`)),
     );
 
-    // Check built extensions: if planned extensions seal a built one, BFS
+    // Check built obstacles: if planned extensions seal a built one, BFS
     // through the unreachable pocket to find the sealing planned extensions
     // and drop them. The seal may be indirect — a planned extension 2+ tiles
-    // away can seal a built extension via an intermediate walkable pocket tile
+    // away can seal a built obstacle via an intermediate walkable pocket tile
     // (W42N59: planned at (21,19)/(21,20) sealed built (19,19) via pocket (20,19)).
     const sealingKeys = new Set<string>();
-    if (builtExtensions) {
+    if (builtObstacles) {
       const remainingKeys = new Set(remaining.map((p) => `${p.x},${p.y}`));
-      for (const bp of builtExtensions) {
+      for (const bp of builtObstacles) {
         const hasReachableNeighbour = EIGHT_NEIGHBORS.some(([dx, dy]) =>
           reachable.has(`${bp.x + dx},${bp.y + dy}`),
         );
@@ -959,11 +975,16 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   for (const p of towerPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
   for (const p of extensionPositions) plannedObstacleKeys.add(`${p.x},${p.y}`);
 
-  const builtExtensions: { x: number; y: number }[] = [];
+  // Every already-built obstacle, not just extensions — see pruneUnreachableExtensions'
+  // doc comment for the live W44N57 regression this widening fixes (a new extension
+  // stamp sealed off a built tower, ~15 other built extensions, and the room's entire
+  // eastern road network, because the old check only ever compared against other
+  // extensions).
+  const builtObstacles: { x: number; y: number }[] = [];
   for (const [key, type] of liveMap.entries()) {
-    if (type === STRUCTURE_EXTENSION) {
+    if (NON_WALKABLE_STRUCTURES.has(type)) {
       const [xStr, yStr] = key.split(',');
-      builtExtensions.push({ x: Number(xStr), y: Number(yStr) });
+      builtObstacles.push({ x: Number(xStr), y: Number(yStr) });
     }
   }
 
@@ -972,7 +993,7 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
     plannedObstacleKeys,
     terrain,
     spawn.pos,
-    builtExtensions,
+    builtObstacles,
   );
 
   return {

@@ -917,6 +917,59 @@ describe('pruneUnreachableExtensions', () => {
     // Both planned extensions should be dropped — they seal built extensions
     expect(result).toHaveLength(0);
   });
+
+  it('drops a planned extension that would seal a built TOWER, not just another extension (live W44N57 regression, 2026-09-24)', () => {
+    // Identical corridor-seal geometry to the W42N59 test above (the pocket
+    // shape depends on the full surrounding block, not just one tile) — the
+    // only change is that one of the built positions is a TOWER instead of an
+    // extension. The function itself never inspected structure type; before
+    // this fix the *caller* (computeLayout) only ever collected extensions
+    // into builtObstacles, so a candidate sealing any other structure type
+    // went completely unchecked. Live case: W44N57's RCL8 extension stamp
+    // placed an extension whose only open neighbour was the sole approach
+    // into the room's entire eastern half, sealing a built tower plus ~15
+    // other extensions and the whole pre-existing road network to a source.
+    const spawnPos = { x: 17, y: 23 };
+    const walls = new Set<string>(['18,18', '19,18', '20,18', '21,18']);
+    const terrain = makeTerrain(walls);
+
+    // Same block as the W42N59 scenario; (19,19) is conceptually a built
+    // tower here rather than an extension — builtObstacles doesn't carry a
+    // type, so this is exactly what computeLayout now passes in.
+    const builtObstacles = [
+      { x: 18, y: 19 },
+      { x: 19, y: 19 }, // the "tower"
+      { x: 18, y: 20 },
+      { x: 19, y: 20 },
+      { x: 20, y: 20 },
+      { x: 18, y: 21 },
+      { x: 19, y: 21 },
+      { x: 20, y: 21 },
+      { x: 21, y: 21 },
+    ];
+
+    // Planned extensions that seal the corridor
+    const planned = [
+      { x: 21, y: 19 },
+      { x: 21, y: 20 },
+    ];
+
+    const obstacles = new Set<string>();
+    obstacles.add(`${spawnPos.x},${spawnPos.y}`);
+    for (const p of builtObstacles) obstacles.add(`${p.x},${p.y}`);
+    for (const p of planned) obstacles.add(`${p.x},${p.y}`);
+
+    const result = pruneUnreachableExtensions(
+      planned,
+      obstacles,
+      terrain,
+      spawnPos,
+      builtObstacles,
+    );
+
+    // Both planned extensions should be dropped — they seal the built tower.
+    expect(result).toHaveLength(0);
+  });
 });
 
 describe('flood-fill prune integration (via computeLayout)', () => {
