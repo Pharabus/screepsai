@@ -182,6 +182,69 @@ describe('construction RCL gating', () => {
         STRUCTURE_TOWER,
       );
     });
+
+    it('overflow search refuses a candidate that would seal an already-built extension (live W44N57 regression)', () => {
+      // EXT's only open neighbour is the overflow candidate (28,25) — every
+      // other neighbour is walled off. findOpenPosition alone has no
+      // seal-awareness (only "is this tile physically empty"), so without
+      // wouldSealLiveStructure it would happily place a tower here and
+      // permanently seal EXT with zero reachable neighbours — exactly what
+      // happened live to W44N57's extension (24,11): the overflow search's
+      // first candidate (25,10) was that extension's sole connecting tile,
+      // and once a tower finished building there 2 haulers sat stuck
+      // delivering to the now-unreachable extension for 390+ ticks.
+      const towerStructures = [
+        { structureType: STRUCTURE_TOWER },
+        { structureType: STRUCTURE_TOWER },
+      ];
+      const ext = {
+        structureType: STRUCTURE_EXTENSION,
+        id: 'ext1',
+        pos: new RoomPosition(29, 25, 'W1N1'),
+      };
+      const wallSet = new Set(['28,24', '28,26', '29,24', '29,26', '30,24', '30,25', '30,26']);
+      const room = roomAt(7, {
+        find: vi.fn((type: number, opts?: any) => {
+          if (type === FIND_MY_SPAWNS) return [{ pos: new RoomPosition(25, 25, 'W1N1') }];
+          if (type === FIND_MY_STRUCTURES) {
+            return opts?.filter ? towerStructures.filter(opts.filter) : towerStructures;
+          }
+          if (type === FIND_STRUCTURES) return [ext];
+          if (type === FIND_MY_CONSTRUCTION_SITES) return [];
+          return [];
+        }),
+        getTerrain: vi.fn(() => ({
+          get: (x: number, y: number) => (wallSet.has(`${x},${y}`) ? TERRAIN_MASK_WALL : 0),
+        })),
+      });
+      // Restored at the end — a leaked override would break every later
+      // test in this file that relies on the default "nothing blocks"
+      // lookFor mock (RoomPosition.prototype is a shared global).
+      const originalLookFor = (globalThis as any).RoomPosition.prototype.lookFor;
+      (globalThis as any).RoomPosition.prototype.lookFor = function (): unknown[] {
+        const here = `${this.x},${this.y}`;
+        if (here === '28,25') return []; // the only genuinely open overflow candidate
+        return [{ structureType: STRUCTURE_WALL }]; // block every other tile from findOpenPosition
+      };
+      (Memory as any).rooms = {
+        W1N1: {
+          layoutPlan: {
+            towerPositions: [], // exhausted — triggers overflow
+          },
+        },
+      };
+
+      try {
+        placeTowers(room);
+
+        // The only candidate findOpenPosition would ever find is the sealing
+        // tile (28,25) — a correct implementation must refuse it rather than
+        // seal EXT, even though that means placing nothing this cycle.
+        expect(room.createConstructionSite).not.toHaveBeenCalled();
+      } finally {
+        (globalThis as any).RoomPosition.prototype.lookFor = originalLookFor;
+      }
+    });
   });
 
   describe('placeSourceContainers', () => {

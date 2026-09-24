@@ -41,6 +41,9 @@ const MAX_TOWERS: Record<number, number> = {
   8: 6,
 };
 
+/** Bound on how many candidates placeTowers' overflow search will reject for sealing a live structure before giving up for this cycle. */
+const MAX_OVERFLOW_TOWER_ATTEMPTS = 20;
+
 const MAX_LINKS: Record<number, number> = {
   5: 2,
   6: 3,
@@ -253,13 +256,33 @@ export function placeTowers(room: Room): void {
     // All planned positions are blocked — fall through to overflow search.
   }
 
-  // Overflow / fallback: first open position near spawn.
-  // Handles both pre-plan rooms and cases where a planned slot is occupied by
-  // a previously-built extension or other structure.
+  // Overflow / fallback: first open position near spawn that won't seal an
+  // existing structure. Handles both pre-plan rooms and cases where a
+  // planned slot is occupied by a previously-built extension or other
+  // structure.
+  //
+  // Iterates findOpenPosition with a growing exclusion set rather than
+  // taking its first result unconditionally — live bug (W44N57, RCL8,
+  // 2026-09-24): the very first open tile findOpenPosition found, (25,10),
+  // was the sole gap connecting extension (24,11)'s only walkable neighbour
+  // to the rest of the room. Placing a tower there (and, once the
+  // overflowedTowers fix let it survive clearStaleSites, finishing it)
+  // permanently sealed that extension with zero reachable neighbours —
+  // 2 haulers sat stuck delivering to it for 390+ ticks before this was
+  // caught. findOpenPosition only checks "is this tile physically empty",
+  // the exact gap wouldSealLiveStructure was built to close for the lab
+  // overflow search (see its doc comment for the earlier W42N59 case) —
+  // towers never got the equivalent check until now.
   const spawn = room.find(FIND_MY_SPAWNS)[0];
   if (!spawn) return;
-  const pos = findOpenPosition(room, spawn.pos, 3, 6);
-  if (pos) {
+  const excluded = new Set<string>();
+  for (let attempt = 0; attempt < MAX_OVERFLOW_TOWER_ATTEMPTS; attempt++) {
+    const pos = findOpenPosition(room, spawn.pos, 3, 6, excluded);
+    if (!pos) return; // no more candidates to try this cycle
+    if (wouldSealLiveStructure(room, pos.x, pos.y)) {
+      excluded.add(`${pos.x},${pos.y}`);
+      continue;
+    }
     const key = `${pos.x},${pos.y}`;
     const roomMem = (Memory.rooms[room.name] ??= {});
     if (!roomMem.overflowedTowers?.includes(key)) {
@@ -269,6 +292,7 @@ export function placeTowers(room: Room): void {
       (roomMem.overflowedTowers ??= []).push(key);
     }
     room.createConstructionSite(pos, STRUCTURE_TOWER);
+    return;
   }
 }
 
