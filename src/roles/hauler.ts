@@ -140,6 +140,30 @@ const states: StateMachineDefinition = {
     },
     run(creep) {
       if (creep.store.getUsedCapacity() === 0) return 'PICKUP';
+
+      // Boost-lab preempt, mirrored from PICKUP (see the preempt in pickup()
+      // below) — widened here because the PICKUP-only version is invisible to
+      // a hauler that's already mid-DELIVER. A hauler distributing a large load
+      // across several extensions one transfer at a time can take many ticks to
+      // reach zero cargo and transition back to PICKUP; on a thin hauler fleet
+      // (live: W42N59, RCL8 with only 3 haulers covering 2 far sources) that's
+      // routinely long enough to blow through the entire 60-tick
+      // BOOST_WAIT_TIMEOUT before any hauler ever re-checks boost demand
+      // (observed: 102 timeouts vs 7 successes, with the lab always resolvable
+      // and the compound always present somewhere — pure delivery-time
+      // starvation, not a missing lab or missing supply). Store capacity is
+      // shared across resource types, so grabbing the compound here doesn't
+      // require finishing or dropping the energy already being carried —
+      // deliver()'s top branch (non-energy cargo present) then routes the
+      // compound to the boost lab first on the very next call, before
+      // resuming energy delivery. Self-limiting: pickupBoostLab returns false
+      // once the lab is adequately stocked, same as the PICKUP-side preempt.
+      const mem = Memory.rooms[creep.room.name];
+      if (mem?.boostLabId && mem.boostCompound && creep.store.getFreeCapacity() > 0) {
+        const awaiting = anyCreepAwaitingBoost(creep.room, mem.boostCompound);
+        if (awaiting && pickupBoostLab(creep, mem)) return undefined;
+      }
+
       deliver(creep);
       return undefined;
     },

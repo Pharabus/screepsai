@@ -1538,6 +1538,93 @@ describe('hauler pickup priority', () => {
     expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'GH2O', expect.anything());
   });
 
+  it('preempts an in-progress DELIVER to service the boost lab when a creep awaits the compound (live W42N59 regression)', () => {
+    // A hauler mid-delivery (not yet empty, state=DELIVER) must not have to wait
+    // until it fully offloads before reacting to boost demand — on a thin
+    // hauler fleet that can take long enough to blow through BOOST_WAIT_TIMEOUT.
+    const boostLab = {
+      id: 'bLab' as Id<StructureLab>,
+      structureType: STRUCTURE_LAB,
+      mineralType: null,
+      store: mockStore({ energy: 1000 }, 3000),
+      pos: new RoomPosition(18, 31, 'W1N1'),
+    };
+    const storage = {
+      id: 'stor' as Id<StructureStorage>,
+      store: mockStore({ GH2O: 2000, energy: 50000 }, 60000),
+    };
+
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'bLab') return boostLab;
+      if (id === 'stor') return storage;
+      return null;
+    }) as any;
+    // An upgrader in the room is waiting for its GH2O boost.
+    Game.creeps = {
+      hauler_1: {},
+      up_1: {
+        room: { name: 'W1N1' },
+        memory: { role: 'upgrader', boosts: [{ part: WORK, compound: 'GH2O' }] },
+      },
+    } as any;
+    (Memory as any).rooms = { W1N1: { boostLabId: 'bLab', boostCompound: 'GH2O' } };
+
+    // Still carrying most of a load (not empty — would otherwise transition to
+    // PICKUP on its own) and has free capacity left to take on the compound.
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 400 }, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).toHaveBeenCalledWith(storage, 'GH2O', expect.anything());
+    // The normal energy-delivery path must not have also run this tick.
+    expect(creep.transfer).not.toHaveBeenCalled();
+  });
+
+  it('does NOT preempt DELIVER for the boost lab when no creep awaits the compound', () => {
+    const boostLab = {
+      id: 'bLab' as Id<StructureLab>,
+      structureType: STRUCTURE_LAB,
+      mineralType: null,
+      store: mockStore({ energy: 1000 }, 3000),
+      pos: new RoomPosition(18, 31, 'W1N1'),
+    };
+    const storage = {
+      id: 'stor' as Id<StructureStorage>,
+      store: mockStore({ GH2O: 2000, energy: 50000 }, 60000),
+    };
+
+    const room = mockRoom({ name: 'W1N1', storage, find: vi.fn(() => []) });
+
+    Game.getObjectById = vi.fn((id: string) => {
+      if (id === 'bLab') return boostLab;
+      if (id === 'stor') return storage;
+      return null;
+    }) as any;
+    // No creep awaiting a boost this time.
+    Game.creeps = { hauler_1: {} } as any;
+    (Memory as any).rooms = { W1N1: { boostLabId: 'bLab', boostCompound: 'GH2O' } };
+
+    const creep = mockCreep({
+      name: 'hauler_1',
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 400 }, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.withdraw).not.toHaveBeenCalledWith(storage, 'GH2O', expect.anything());
+  });
+
   it('falls back to full source container when storage link is empty', () => {
     const fullContainer = {
       id: 'cSrc' as Id<StructureContainer>,
