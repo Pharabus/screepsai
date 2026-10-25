@@ -109,12 +109,16 @@ export function recordRoomIntel(room: Room): void {
 }
 
 // Power Bank viability thresholds (todo.md "Scan highway rooms for Power
-// Banks"): a bank needs enough power to be worth the trip, enough remaining
-// life to actually organize a squad around, and room for multiple attackers
-// to stand adjacent (a single-attacker approach can't out-damage the bank's
-// regen before it decays).
+// Banks"): a bank needs enough power to be worth the trip and room for
+// multiple attackers to stand adjacent (a single-attacker approach can't
+// out-damage the bank's regen before it decays). The remaining-life floor
+// (POWER_BANK_MIN_DECAY) is NOT applied when recording: a sighting that
+// decays below it must stay in intel (scoutedPowerBanks() computes the live
+// remaining decay), otherwise a bank is recorded early then deleted mid-life
+// and looks like it was never seen. powerBankSquad() enforces it at
+// assignment time instead.
 const POWER_BANK_MIN_POWER = 2000;
-const POWER_BANK_MIN_DECAY = 3000;
+export const POWER_BANK_MIN_DECAY = 3000;
 const POWER_BANK_MIN_FREE_TILES = 2;
 
 const EIGHT_NEIGHBOR_OFFSETS: [number, number][] = [
@@ -157,7 +161,6 @@ export function recordHighwayIntel(room: Room): void {
   if (
     bank &&
     bank.power >= POWER_BANK_MIN_POWER &&
-    bank.ticksToDecay >= POWER_BANK_MIN_DECAY &&
     freeAdjacentTiles >= POWER_BANK_MIN_FREE_TILES
   ) {
     rmem.scoutedPowerBank = {

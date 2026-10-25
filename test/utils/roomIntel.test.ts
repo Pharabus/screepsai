@@ -79,7 +79,7 @@ describe('recordHighwayIntel', () => {
     expect(Memory.rooms['W40N57']?.scoutedPowerBank).toBeUndefined();
   });
 
-  it('does not record a power bank too close to decaying', () => {
+  it('still records a power bank that is close to decaying (squad command gates on decay)', () => {
     const bank = makePowerBank({ ticksToDecay: 500 });
     const room = mockRoom({ name: 'W40N57' });
     room.find = (type: number) => (type === FIND_STRUCTURES ? [bank] : []);
@@ -87,7 +87,7 @@ describe('recordHighwayIntel', () => {
 
     recordHighwayIntel(room);
 
-    expect(Memory.rooms['W40N57']?.scoutedPowerBank).toBeUndefined();
+    expect(Memory.rooms['W40N57']?.scoutedPowerBank).toMatchObject({ ticksToDecay: 500 });
   });
 
   it('does not record a power bank with fewer than 2 free adjacent tiles', () => {

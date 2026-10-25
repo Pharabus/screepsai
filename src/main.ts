@@ -1,4 +1,5 @@
 import { ErrorMapper } from './utils/ErrorMapper';
+import { POWER_BANK_MIN_DECAY } from './utils/roomIntel';
 import { runSpawner } from './managers/spawner';
 import { runRooms } from './managers/room';
 import { runTowers } from './managers/towers';
@@ -531,6 +532,13 @@ export const powerBankSquad = (
   if (!home?.controller?.my) return `powerBankSquad refused: ${homeRoom} is not an owned room`;
   const bank = Memory.rooms[bankRoom]?.scoutedPowerBank;
   if (!bank) return `powerBankSquad refused: no scouted power bank recorded for ${bankRoom}`;
+  const remainingDecay = bank.ticksToDecay - (Game.time - bank.recordedAtTick);
+  if (remainingDecay < POWER_BANK_MIN_DECAY) {
+    return (
+      `powerBankSquad refused: ${bankRoom} bank has ~${Math.max(0, remainingDecay)} ticks to decay ` +
+      `(min ${POWER_BANK_MIN_DECAY} to spawn a squad and reach it in time)`
+    );
+  }
   if (attackerCount < 1 || attackerCount > 4) {
     return 'powerBankSquad refused: attackerCount must be between 1 and 4';
   }
