@@ -96,6 +96,7 @@ export function recordBoostOutcome(
   });
   if (kind === 'success') {
     s.success++;
+    s.lastSuccessTick = Game.time;
     return;
   }
   if (kind === 'timeout') s.failTimeout++;
@@ -120,7 +121,9 @@ export function formatBoostStats(): string {
     if (!s) continue;
     const fails = s.failTimeout + s.failNoLab + s.failNoSupply;
     const flag = fails > s.success ? ' ⚠ FAILING' : '';
-    const last = s.lastFailTick !== undefined ? ` (lastFail @${s.lastFailTick})` : '';
+    const last =
+      (s.lastFailTick !== undefined ? ` (lastFail @${s.lastFailTick})` : '') +
+      (s.lastSuccessTick !== undefined ? ` (lastOk @${s.lastSuccessTick})` : '');
     lines.push(
       `${room}: ok=${s.success} timeout=${s.failTimeout} noLab=${s.failNoLab} ` +
         `noSupply=${s.failNoSupply}${last}${flag}`,

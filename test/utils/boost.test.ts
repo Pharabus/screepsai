@@ -611,6 +611,7 @@ describe('recordBoostOutcome', () => {
       failNoLab: 0,
       failNoSupply: 0,
       success: 1,
+      lastSuccessTick: Game.time,
     });
   });
 
@@ -627,6 +628,13 @@ describe('recordBoostOutcome', () => {
     expect(s.failNoSupply).toBe(1);
     expect(s.success).toBe(1);
     expect(s.lastFailTick).toBe(5000);
+    expect(s.lastSuccessTick).toBe(5000);
+  });
+
+  it('does not stamp lastSuccessTick on failures', () => {
+    Game.time = 6000;
+    recordBoostOutcome(mockCreep({ room: mockRoom({ name: 'W1N1' }) }), 'timeout');
+    expect(Memory.boostStats!['W1N1']!.lastSuccessTick).toBeUndefined();
   });
 
   it('keeps separate counters per room', () => {
@@ -742,12 +750,21 @@ describe('formatBoostStats', () => {
   it('renders a per-room line and flags rooms where failures dominate', () => {
     Memory.boostStats = {
       W1N1: { failTimeout: 0, failNoLab: 0, failNoSupply: 0, success: 12 },
-      W2N2: { failTimeout: 5, failNoLab: 0, failNoSupply: 1, success: 2, lastFailTick: 80844 },
+      W2N2: {
+        failTimeout: 5,
+        failNoLab: 0,
+        failNoSupply: 1,
+        success: 2,
+        lastFailTick: 80844,
+        lastSuccessTick: 80900,
+      },
     };
     const out = formatBoostStats();
     expect(out).toContain('W1N1: ok=12 timeout=0 noLab=0 noSupply=0');
     expect(out).not.toMatch(/W1N1.*FAILING/);
-    expect(out).toContain('W2N2: ok=2 timeout=5 noLab=0 noSupply=1 (lastFail @80844)');
+    expect(out).toContain(
+      'W2N2: ok=2 timeout=5 noLab=0 noSupply=1 (lastFail @80844) (lastOk @80900)',
+    );
     expect(out).toMatch(/W2N2.*FAILING/);
   });
 });

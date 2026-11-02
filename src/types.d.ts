@@ -455,6 +455,8 @@ interface BoostRoomStat {
   success: number;
   /** Game.time of the most recent failure of any kind. */
   lastFailTick?: number;
+  /** Game.time of the most recent successful boostCreep(); distinguishes stale cumulative failures from a live problem. */
+  lastSuccessTick?: number;
 }
 
 // ---------------------------------------------------------------------------
