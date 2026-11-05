@@ -64,6 +64,62 @@ CPU is the only thing stopping growth.
    - Record per-role creep count, per-role CPU per call, and non-creep intents per tick (labs, links, towers, factory, terminal, observer, power spawn).
    - Compute intents per tick as `main.loop avg / 0.2` and attribute it to roles and structures.
    - Output: a table in this file naming the top 5 cost centres.
+#### 1a results (profiled ticks 84,091,291 to about 84,092,100, 829 samples, 43 creeps)
+
+Method: `Memory.stats` holds per-call EMAs.
+Amortised CPU per tick is estimated as `avg per call x calls / 829 ticks`.
+Treat figures as roughly +/-10%, since EMAs weight recent samples and profiling adds a little CPU itself.
+`main.loop` averaged 18.69 (max 41.8), which is about 93 intent-equivalents at 0.2 each, though part of that is JS overhead and not intents.
+
+| Cost centre | Per call | Calls | About CPU per tick | Kind |
+|---|---|---|---|---|
+| `rooms` (all creep roles) | 12.66 | 829 | 12.7 | creep intents plus role logic |
+| `towers` | 2.41 | 829 | 2.4 | mostly intents (about 12 per tick) |
+| `construction` (whole manager) | 16.46 | 117 | 2.3 | pure overhead |
+| `spawner` | 1.85 | 829 | 1.9 | pure overhead |
+| `observer` | 1.04 | 410 | 0.5 | scans plus 1 intent |
+| `terminal`, `labs`, `links`, rest | under 0.5 each | | about 0.9 | mixed |
+
+Inside `rooms` (per-call average x creeps working per tick):
+
+| Role | Avg CPU per call | Creeps per tick | About CPU per tick |
+|---|---|---|---|
+| hauler | 0.43 | 11.3 | 4.8 |
+| miner | 0.37 | 9.9 | 3.7 |
+| remoteHauler | 0.30 | 7.4 | 2.2 |
+| repairer | 0.36 | 2.9 | 1.0 |
+| upgrader | 0.22 | 3.0 | 0.7 |
+| reserver | 0.22 | 2.8 | 0.6 |
+| hunter, mineralMiner, builder, keeperKiller, remoteBuilder | under 0.35 | under 1 | 0.2 |
+
+Inside `construction` (4 rooms, each sub-step runs once per room per sweep):
+
+| Sub-step | Per call | About CPU per tick |
+|---|---|---|
+| `clearBlockingExtensions` | 1.93 | 1.1 |
+| `placeLabs` | 0.94 (max 12.7) | 0.5 |
+| `placeRoads` | 0.40 | 0.2 |
+| `placeRamparts` | 0.27 | 0.15 |
+| everything else | under 0.1 each | about 0.4 |
+
+Findings:
+
+- About 4.5 to 5 CPU per tick is pure overhead with no creep intents: construction (2.3), spawner (1.9), observer scans (0.5).
+  Overhead like this sits above the intent floor and can be removed without losing any output.
+- `clearBlockingExtensions` and `placeLabs` run a full sweep every 5 ticks per room even though all four rooms are RCL 8 and fully built.
+  Together they cost about 1.6 CPU per tick.
+- The spawner rebuilds its queue every tick, and its max is 8.9.
+- Towers cost 2.4 CPU per tick, which is the largest single non-creep item.
+  Wall repair on every tick is the likely driver, to be confirmed.
+- Creep floor: haulers (4.8), miners (3.7) and remote haulers (2.2) are income-critical and make up 10.7 of the 12.7 in `rooms`.
+- Repairers cost 1.0 CPU per tick for 4 creeps on fully built RCL 8 rooms, which makes them the best creep-side trim candidate.
+- Spikes: `main.loop` max 41.8 is driven by `placeLabs` (12.7), `construction` (24.6 in one sweep), `placePerimeterWalls` (8.1), `factory` (8.4), `remoteHauler` (9.0) and `spawner` (8.9).
+  Single-tick spikes drain bucket even when the average is fine.
+
+Conclusion for 1b: the 5 CPU target looks reachable from overhead alone, without touching income-critical creeps.
+Because it needs no output loss, that overhead work applies on every shard and is not gated on `isCpuConstrained()`.
+Creep trims (repairers, hauler consolidation) stay gated and are only needed if the overhead work falls short.
+
 2. **1b - Rank trims by CPU saved per unit of lost output.**
    Candidates to evaluate, not commitments:
    - RCL 8 upgraders: the controller caps at 15 energy per tick per room, so check whether upgrader count or body exceeds what the cap can use.
