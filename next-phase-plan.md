@@ -120,6 +120,29 @@ Conclusion for 1b: the 5 CPU target looks reachable from overhead alone, without
 Because it needs no output loss, that overhead work applies on every shard and is not gated on `isCpuConstrained()`.
 Creep trims (repairers, hauler consolidation) stay gated and are only needed if the overhead work falls short.
 
+#### Trim 1 result: skip settled-room construction sweeps (v1.0.377, 822 ticks from tick 84,094,452)
+
+| Metric | Baseline (1a) | After | Note |
+|---|---|---|---|
+| `construction` CPU per tick (amortised) | 2.32 | 0.31 | saved about 2.0, the direct effect of the trim |
+| `clearBlockingExtensions` calls | 468 | 64 | about 7x fewer sweeps, as designed |
+| `placeLabs` calls | 468 | 64 | same |
+| `main.loop` average | 18.69 | 15.59 | partly confounded, see below |
+| `main.loop` max | 41.8 | 48.1 | not improved yet, see below |
+| bucket | about 5000 | 6203 | rising |
+| errors | none | none | `Memory._errors` empty |
+
+Confounders and open questions:
+
+- Only the 2.0 CPU construction drop is directly attributable to the trim.
+- `towers` fell from 2.41 to 0.69 and `rooms` from 12.66 to 10.81 between runs without any related change.
+  Tower and creep CPU swing with activity (repairs, creep counts), so treat the rest of the 3.1 CPU loop drop as unexplained until a longer window confirms it.
+- `observer` rose from 0.51 to 0.97 per tick because it runs on more ticks now.
+  Managers gated at `THROTTLE_NORMAL` (bucket 5000) were being skipped about half the time in the baseline run, and the bucket is now above that floor.
+  Any CPU saving that lifts the bucket also makes these managers run more, which will partly offset later trims.
+- The `main.loop` max of 48.1 and `construction` max of 28.8 may be a cold-start spike right after the deploy's global reset, since the max sticks.
+  This needs a spike check from a longer window, or a `resetStats()` once things are warm, before concluding the spikes persist.
+
 2. **1b - Rank trims by CPU saved per unit of lost output.**
    Candidates to evaluate, not commitments:
    - RCL 8 upgraders: the controller caps at 15 energy per tick per room, so check whether upgrader count or body exceeds what the cap can use.
