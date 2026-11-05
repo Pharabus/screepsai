@@ -23,6 +23,8 @@ import {
   getPlannedReserved,
   applyRoadSiteOverlay,
   countStructuresAndSites,
+  canSkipConstructionSweep,
+  SETTLED_SWEEP_INTERVAL,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -2509,5 +2511,33 @@ describe('clearBlockingExtensions', () => {
       expect(staleExt.remove).toHaveBeenCalledTimes(1);
       expect(staleLab.remove).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('canSkipConstructionSweep', () => {
+  it('never skips below RCL 8 or while sites are open', () => {
+    for (let t = 1000; t < 1100; t++) {
+      expect(canSkipConstructionSweep(7, 0, 'W1N1', t)).toBe(false);
+      expect(canSkipConstructionSweep(8, 3, 'W1N1', t)).toBe(false);
+    }
+  });
+
+  it('sweeps a settled room exactly once per interval on a tick the 5-tick gate fires', () => {
+    const sweeps: number[] = [];
+    for (let t = 1000; t < 1000 + SETTLED_SWEEP_INTERVAL * 4; t += 5) {
+      if (!canSkipConstructionSweep(8, 0, 'W44N57', t)) sweeps.push(t);
+    }
+    expect(sweeps.length).toBe(4);
+    expect(sweeps[1]! - sweeps[0]!).toBe(SETTLED_SWEEP_INTERVAL);
+  });
+
+  it('staggers different rooms onto different ticks', () => {
+    const phases = new Set<number>();
+    for (const name of ['W42N59', 'W43N58', 'W44N57', 'W44N59']) {
+      for (let t = 1000; t < 1000 + SETTLED_SWEEP_INTERVAL; t += 5) {
+        if (!canSkipConstructionSweep(8, 0, name, t)) phases.add(t);
+      }
+    }
+    expect(phases.size).toBeGreaterThan(1);
   });
 });

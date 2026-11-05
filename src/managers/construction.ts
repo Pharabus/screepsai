@@ -2071,11 +2071,61 @@ function profiledPerRoom(room: Room, label: string, fn: (room: Room) => void): v
   profile(`construction.${label}`, () => fn(room));
 }
 
+/** Ticks between full sweeps of a settled (RCL 8, no open sites) room. */
+export const SETTLED_SWEEP_INTERVAL = 50;
+
+/**
+ * Stable per-room phase in [0, SETTLED_SWEEP_INTERVAL) so settled rooms sweep on
+ * different ticks - one room per sweep window instead of all four on the same
+ * tick, which would recreate the single-tick CPU spike this gate removes.
+ */
+function roomSweepPhase(roomName: string): number {
+  let h = 0;
+  for (let i = 0; i < roomName.length; i++) h = (h * 31 + roomName.charCodeAt(i)) >>> 0;
+  return h % SETTLED_SWEEP_INTERVAL;
+}
+
+/**
+ * True when a room's construction sweep can be skipped this tick. An RCL 8 room
+ * with no open construction sites has nothing in flight; the full sweep
+ * (clearBlockingExtensions' per-extension lookups, placeLabs' plan walk, road and
+ * rampart re-checks) only re-verifies a settled layout. Profiled live at about
+ * 2.3 CPU/tick across four such rooms, with single-sweep spikes of 24 CPU.
+ * Anything that changes a settled room starts with a construction site (every
+ * placeX creates one), so sites existing re-enables the per-5-tick sweep, and a
+ * full sweep still runs every SETTLED_SWEEP_INTERVAL ticks to catch the rest.
+ */
+export function canSkipConstructionSweep(
+  rcl: number,
+  openSites: number,
+  roomName: string,
+  time: number,
+): boolean {
+  if (rcl < 8 || openSites > 0) return false;
+  return (time + roomSweepPhase(roomName)) % SETTLED_SWEEP_INTERVAL >= 5;
+}
+
 export function runConstruction(): void {
-  if (Object.keys(Game.constructionSites).length >= 90) return;
+  const allSites = Object.values(Game.constructionSites);
+  if (allSites.length >= 90) return;
+  const sitesByRoom = new Map<string, number>();
+  for (const site of allSites) {
+    const name = site.pos.roomName;
+    sitesByRoom.set(name, (sitesByRoom.get(name) ?? 0) + 1);
+  }
 
   for (const room of Object.values(Game.rooms)) {
     if (!room.controller?.my) continue;
+    if (
+      canSkipConstructionSweep(
+        room.controller.level,
+        sitesByRoom.get(room.name) ?? 0,
+        room.name,
+        Game.time,
+      )
+    ) {
+      continue;
+    }
 
     // Destroy empty foreign obstacle structures and record any loot target.
     // Runs every 5 ticks (same cadence as runConstruction) and is idempotent.
