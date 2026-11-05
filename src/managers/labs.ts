@@ -304,27 +304,22 @@ export function runLabs(): void {
       !!mem.activeReaction &&
       !isReactionViable(mem.activeReaction, buildAvailableMap(room), inputLab1, inputLab2);
     if (!mem.activeReaction || Game.time % REACTION_CHECK_INTERVAL === 0 || activeUnviable) {
-      const prev = mem.activeReaction;
-      const reaction = selectReaction(room);
-      mem.activeReaction = reaction;
-
-      if (
-        reaction &&
-        prev &&
-        (reaction.input1 !== prev.input1 || reaction.input2 !== prev.input2)
-      ) {
-        const lab1Mineral = inputLab1.mineralType;
-        const lab2Mineral = inputLab2.mineralType;
-        if (
-          (lab1Mineral && lab1Mineral !== reaction.input1) ||
-          (lab2Mineral && lab2Mineral !== reaction.input2)
-        ) {
-          mem.labFlushing = true;
-        }
-      }
+      mem.activeReaction = selectReaction(room);
     }
 
     if (!mem.activeReaction) continue;
+
+    // Flush whenever an input lab holds a mineral the active reaction doesn't
+    // want - not only when the pick just changed. A stale batch can be left
+    // behind without any change of pick (live W44N57: input lab 2 pinned with
+    // 290 KHO2 while the reaction was X+ZHO2, so ZHO2 could never be loaded and
+    // the hub sat frozen for 60k+ ticks).
+    if (!mem.labFlushing) {
+      const want = mem.activeReaction;
+      const stale1 = inputLab1.mineralType && inputLab1.mineralType !== want.input1;
+      const stale2 = inputLab2.mineralType && inputLab2.mineralType !== want.input2;
+      if (stale1 || stale2) mem.labFlushing = true;
+    }
 
     // While flushing, check if input labs are clear of stale minerals
     if (mem.labFlushing) {

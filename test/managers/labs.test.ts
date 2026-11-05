@@ -358,6 +358,43 @@ describe('runLabs', () => {
     expect(mem?.labFlushing).toBe(true);
   });
 
+  it('sets labFlushing when an input lab holds a stale mineral even though the pick is unchanged', () => {
+    // Live W44N57: input lab 2 pinned with KHO2 while the reaction stayed X+ZHO2.
+    const inputLab1 = mockLab({ id: 'lab1', mineralType: 'X', stored: { X: 3000 } });
+    const inputLab2 = mockLab({ id: 'lab2', mineralType: 'KHO2', stored: { KHO2: 290 } });
+    const outputLab = mockLab({ id: 'lab3' });
+    (Game as any).getObjectById = vi.fn((id: string) => {
+      if (id === 'lab1') return inputLab1;
+      if (id === 'lab2') return inputLab2;
+      if (id === 'lab3') return outputLab;
+      return null;
+    });
+    const storageResources: Record<string, number> = { X: 100, ZHO2: 535 };
+    const storageStore: Record<string, any> = { ...storageResources };
+    Object.defineProperty(storageStore, 'getUsedCapacity', {
+      enumerable: false,
+      value: vi.fn((r?: string) => (r ? (storageResources[r] ?? 0) : 0)),
+    });
+    const room = mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level: 6 },
+      storage: { store: storageStore },
+      terminal: null,
+    });
+    (Game as any).rooms = { W1N1: room };
+    (Game as any).time = 501;
+    (Memory as any).rooms = {
+      W1N1: {
+        labIds: ['lab1', 'lab2', 'lab3'],
+        inputLabIds: ['lab1', 'lab2'],
+        activeReaction: { input1: 'X', input2: 'ZHO2', output: 'XZHO2' },
+      },
+    };
+    runLabs();
+    expect(Memory.rooms['W1N1']?.labFlushing).toBe(true);
+    expect(outputLab.runReaction).not.toHaveBeenCalled();
+  });
+
   it('clears labFlushing when input labs are empty of stale minerals', () => {
     const inputLab1 = mockLab({ id: 'lab1', mineralType: null, stored: {} });
     const inputLab2 = mockLab({ id: 'lab2', mineralType: null, stored: {} });
