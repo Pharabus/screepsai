@@ -11,6 +11,7 @@ import {
   buildUpgraderBody,
 } from '../utils/body';
 import { cached, getStructuresByType } from '../utils/tickCache';
+import { profile } from '../utils/profiler';
 import { nameHash } from '../utils/idle';
 import { defendersNeeded } from './defense';
 import { threatScore } from '../utils/threat';
@@ -1696,7 +1697,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
 export function runSpawner(): void {
   // Advance colony lifecycle states before any queue decisions so a newly-claimed
   // room flips to 'bootstrapping' on the same tick the claim lands.
-  updateColonyStates();
+  profile('spawner.colonyStates', () => updateColonyStates());
 
   // Prune stale mission records once every 100 ticks (cheap — only touches retiring missions)
   if (Game.time % 100 === 0) garbageCollectMissions();
@@ -1704,7 +1705,7 @@ export function runSpawner(): void {
   // Ensure room plans are up to date before making spawn decisions
   for (const room of Object.values(Game.rooms)) {
     if (room.controller?.my) {
-      ensureRoomPlan(room);
+      profile('spawner.roomPlan', () => ensureRoomPlan(room));
       // Periodically re-evaluate remote room selection. Phased per-room (hash of
       // room name mod 100, not a flat `% 100 === 0`) so all owned rooms don't run
       // their PathFinder-heavy selectRemoteRooms/ensureRemotePathLength pass on the
@@ -1712,7 +1713,7 @@ export function runSpawner(): void {
       // past the 20 limit (spawner max ~12 CPU in one tick), draining the bucket
       // faster than its slow per-tick recovery could offset.
       if (Game.time % 100 === nameHash(room.name) % 100) {
-        selectRemoteRooms(room);
+        profile('spawner.selectRemote', () => selectRemoteRooms(room));
         selectKeeperBootstrapTarget(room);
         // Retire missions for any remotes that selectRemoteRooms just removed
         syncAllMissions(room.name, Memory.rooms[room.name]?.remoteRooms ?? []);
@@ -1720,7 +1721,7 @@ export function runSpawner(): void {
       // Scan remote rooms we have visibility into
       const remoteRooms = Memory.rooms[room.name]?.remoteRooms ?? [];
       for (const remoteName of remoteRooms) {
-        ensureRemoteRoomPlan(remoteName);
+        profile('spawner.remotePlan', () => ensureRemoteRoomPlan(remoteName));
       }
     }
   }
@@ -1729,7 +1730,7 @@ export function runSpawner(): void {
     if (!room.controller?.my) continue;
 
     // Reserve or release the boost lab every tick so the hauler keeps it topped.
-    reserveBoostLab(room);
+    profile('spawner.boostLab', () => reserveBoostLab(room));
 
     // Emergency recovery: build bodies from energyAvailable instead of capacity
     // when the spawn cannot accumulate to capacity on its own.
@@ -1761,7 +1762,7 @@ export function runSpawner(): void {
     ) {
       queue = cached_q.queue;
     } else {
-      queue = buildSpawnQueue(room);
+      queue = profile('spawner.buildQueue', () => buildSpawnQueue(room));
       _queueCache.set(room.name, { tick: Game.time, queue });
     }
 
