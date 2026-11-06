@@ -16,6 +16,8 @@ import {
   roomBoostCompound,
   reserveBoostLab,
   mineralMinersNeeded,
+  shouldRefreshRoomPlan,
+  ROOM_PLAN_REFRESH_INTERVAL,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -3977,5 +3979,33 @@ describe('mineralMinersNeeded — holisticEconomy ON', () => {
     const room = makeMineralRoomHolistic(6, 50_000);
     // At stored=50k, colonyEnergy=50k > gate=40k → allowed
     expect(mineralMinersNeeded(room)).toBe(1);
+  });
+});
+
+describe('shouldRefreshRoomPlan', () => {
+  it('always refreshes a room that has no plan yet', () => {
+    for (let t = 0; t < ROOM_PLAN_REFRESH_INTERVAL; t++) {
+      expect(shouldRefreshRoomPlan('W1N1', t, false)).toBe(true);
+    }
+  });
+
+  it('refreshes a planned room once per interval', () => {
+    let n = 0;
+    for (let t = 1000; t < 1000 + ROOM_PLAN_REFRESH_INTERVAL * 5; t++) {
+      if (shouldRefreshRoomPlan('W1N1', t, true)) n++;
+    }
+    expect(n).toBe(5);
+  });
+
+  it('staggers different rooms', () => {
+    const rooms = ['W42N59', 'W43N58', 'W44N57', 'W44N59'];
+    const phases = new Set(
+      rooms.map((r) => {
+        for (let t = 0; t < ROOM_PLAN_REFRESH_INTERVAL; t++)
+          if (shouldRefreshRoomPlan(r, t, true)) return t;
+        return -1;
+      }),
+    );
+    expect(phases.size).toBeGreaterThan(1);
   });
 });

@@ -1694,6 +1694,19 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
   return queue;
 }
 
+/**
+ * How often (ticks) each owned room re-validates its cached plan ids (source
+ * containers/links, storage/controller links). The ids only change when a
+ * structure is built or destroyed, so a 10-tick lag is harmless, and the
+ * per-room phase keeps rooms from all refreshing on the same tick.
+ */
+export const ROOM_PLAN_REFRESH_INTERVAL = 10;
+
+export function shouldRefreshRoomPlan(roomName: string, time: number, hasPlan: boolean): boolean {
+  if (!hasPlan) return true;
+  return time % ROOM_PLAN_REFRESH_INTERVAL === nameHash(roomName) % ROOM_PLAN_REFRESH_INTERVAL;
+}
+
 export function runSpawner(): void {
   // Advance colony lifecycle states before any queue decisions so a newly-claimed
   // room flips to 'bootstrapping' on the same tick the claim lands.
@@ -1705,7 +1718,11 @@ export function runSpawner(): void {
   // Ensure room plans are up to date before making spawn decisions
   for (const room of Object.values(Game.rooms)) {
     if (room.controller?.my) {
-      profile('spawner.roomPlan', () => ensureRoomPlan(room));
+      if (
+        shouldRefreshRoomPlan(room.name, Game.time, Memory.rooms[room.name]?.sources !== undefined)
+      ) {
+        profile('spawner.roomPlan', () => ensureRoomPlan(room));
+      }
       // Periodically re-evaluate remote room selection. Phased per-room (hash of
       // room name mod 100, not a flat `% 100 === 0`) so all owned rooms don't run
       // their PathFinder-heavy selectRemoteRooms/ensureRemotePathLength pass on the
