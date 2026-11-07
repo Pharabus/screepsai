@@ -593,10 +593,29 @@ export function buildersNeeded(room: Room): number {
  * Repairer count scales with damaged structures. At least 1 (falls back to
  * upgrading), up to 2 when there's significant damage.
  */
+/** Minimum tower energy fraction at which towers repair (mirrors towers.ts COMBAT_ENERGY_RESERVE). */
+const TOWER_REPAIR_ENERGY_FRACTION = 0.5;
+
+/** True when the room has an operational tower holding enough energy to repair. */
+export function hasWorkingTower(room: Room): boolean {
+  const towers = (getStructuresByType(room)[STRUCTURE_TOWER] ?? []) as StructureTower[];
+  return towers.some(
+    (t) =>
+      t.store.getUsedCapacity(RESOURCE_ENERGY) >=
+        t.store.getCapacity(RESOURCE_ENERGY) * TOWER_REPAIR_ENERGY_FRACTION && t.isActive(),
+  );
+}
+
 export function repairersNeeded(room: Room): number {
   // Lean profile: mirror buildersNeeded's affordability gate — a mineral-priority
   // outpost shouldn't spend its thin income on repairs before it can afford to.
   if (isMineralPriorityRoom(room.name) && colonyEnergy(room) < STORAGE_ENERGY_FLOOR) return 0;
+
+  // Towers already repair every non-wall structure below REPAIR_THRESHOLD (plus walls
+  // and ramparts), so a room with a working, energised tower needs no repairer. This
+  // drops ~1 creep per mature room (~0.33 CPU each on the 20-CPU cap). If the towers
+  // run low the repairer comes back via the normal path below.
+  if (hasWorkingTower(room)) return 0;
 
   const damaged = cached('spawner:damaged:' + room.name, () => {
     const structs = getStructuresByType(room);

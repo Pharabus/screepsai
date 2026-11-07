@@ -6,6 +6,7 @@ import {
   haulersNeeded,
   upgradersNeeded,
   repairersNeeded,
+  hasWorkingTower,
   buildersNeeded,
   remoteBuilderNeeded,
   defenderComposition,
@@ -4025,5 +4026,43 @@ describe('shouldRefreshBoostLab', () => {
     for (let t = 0; t < BOOST_LAB_REFRESH_INTERVAL * 2; t++) {
       expect(shouldRefreshBoostLab('W1N1', t, true)).toBe(true);
     }
+  });
+});
+
+describe('repairersNeeded - working towers cover repair', () => {
+  function makeTower(energy: number, active = true): any {
+    return {
+      structureType: STRUCTURE_TOWER,
+      hits: 3000,
+      hitsMax: 3000,
+      store: { getUsedCapacity: () => energy, getCapacity: () => 1000 },
+      isActive: () => active,
+    };
+  }
+  function roomWith(structs: any[]): any {
+    return mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number, opts?: any) => {
+        if (type === FIND_STRUCTURES) return opts?.filter ? structs.filter(opts.filter) : structs;
+        return [];
+      }),
+    });
+  }
+  const damaged = { structureType: STRUCTURE_ROAD, hits: 100, hitsMax: 1000 };
+
+  it('spawns no repairer when an energised operational tower exists', () => {
+    expect(repairersNeeded(roomWith([makeTower(900), damaged]))).toBe(0);
+  });
+
+  it('still spawns a repairer when towers are low on energy', () => {
+    expect(repairersNeeded(roomWith([makeTower(100), damaged]))).toBe(1);
+  });
+
+  it('still spawns a repairer when the tower is inactive', () => {
+    expect(repairersNeeded(roomWith([makeTower(900, false), damaged]))).toBe(1);
+  });
+
+  it('hasWorkingTower is false with no towers', () => {
+    expect(hasWorkingTower(roomWith([damaged]))).toBe(false);
   });
 });
