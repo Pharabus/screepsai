@@ -946,7 +946,7 @@ export function roomBoostCompound(room: Room): ResourceConstant | undefined {
  * When a compound is wanted: ensures boostLabId points to a valid output lab and
  * sets boostCompound to whichever compound was chosen.
  * When not wanted: clears both fields so the lab rejoins reactions.
- * Must be called every tick so the hauler keeps the lab topped.
+ * Called every BOOST_LAB_REFRESH_INTERVAL ticks (every tick under an active threat).
  */
 export function reserveBoostLab(room: Room): void {
   const mem = Memory.rooms[room.name];
@@ -1702,6 +1702,22 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
  */
 export const ROOM_PLAN_REFRESH_INTERVAL = 10;
 
+/**
+ * Boost-lab reservation cadence. The reserve/release decision depends only on stock
+ * levels and the stored `boostCompound` (hysteresis), not on how often it is called,
+ * and a creep awaiting a boost has a 60-tick fail-open budget, so a short lag is safe.
+ */
+export const BOOST_LAB_REFRESH_INTERVAL = 5;
+
+export function shouldRefreshBoostLab(
+  roomName: string,
+  time: number,
+  hasActiveThreat: boolean,
+): boolean {
+  if (hasActiveThreat) return true;
+  return time % BOOST_LAB_REFRESH_INTERVAL === nameHash(roomName) % BOOST_LAB_REFRESH_INTERVAL;
+}
+
 export function shouldRefreshRoomPlan(roomName: string, time: number, hasPlan: boolean): boolean {
   if (!hasPlan) return true;
   return time % ROOM_PLAN_REFRESH_INTERVAL === nameHash(roomName) % ROOM_PLAN_REFRESH_INTERVAL;
@@ -1747,7 +1763,17 @@ export function runSpawner(): void {
     if (!room.controller?.my) continue;
 
     // Reserve or release the boost lab every tick so the hauler keeps it topped.
-    profile('spawner.boostLab', () => reserveBoostLab(room));
+    // Throttled to every BOOST_LAB_REFRESH_INTERVAL ticks per room, except during an
+    // active defense mission when a defender's KHO2/LHO2 reservation must react at once.
+    if (
+      shouldRefreshBoostLab(
+        room.name,
+        Game.time,
+        Memory.missions?.defense?.[room.name]?.status === 'active',
+      )
+    ) {
+      profile('spawner.boostLab', () => reserveBoostLab(room));
+    }
 
     // Emergency recovery: build bodies from energyAvailable instead of capacity
     // when the spawn cannot accumulate to capacity on its own.

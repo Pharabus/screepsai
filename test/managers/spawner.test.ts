@@ -18,6 +18,8 @@ import {
   mineralMinersNeeded,
   shouldRefreshRoomPlan,
   ROOM_PLAN_REFRESH_INTERVAL,
+  shouldRefreshBoostLab,
+  BOOST_LAB_REFRESH_INTERVAL,
 } from '../../src/managers/spawner';
 import { mockRoom, resetGameGlobals, seedColony } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
@@ -4007,5 +4009,21 @@ describe('shouldRefreshRoomPlan', () => {
       }),
     );
     expect(phases.size).toBeGreaterThan(1);
+  });
+});
+
+describe('shouldRefreshBoostLab', () => {
+  it('refreshes once per interval when calm', () => {
+    let n = 0;
+    for (let t = 2000; t < 2000 + BOOST_LAB_REFRESH_INTERVAL * 6; t++) {
+      if (shouldRefreshBoostLab('W1N1', t, false)) n++;
+    }
+    expect(n).toBe(6);
+  });
+
+  it('refreshes every tick under an active threat', () => {
+    for (let t = 0; t < BOOST_LAB_REFRESH_INTERVAL * 2; t++) {
+      expect(shouldRefreshBoostLab('W1N1', t, true)).toBe(true);
+    }
   });
 });
