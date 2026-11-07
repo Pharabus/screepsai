@@ -1,3 +1,4 @@
+import { profile } from '../utils/profiler';
 import { pickPriorityTarget } from '../utils/threat';
 import { cached, getStructuresByType } from '../utils/tickCache';
 import { REPAIR_THRESHOLD } from '../utils/thresholds';
@@ -56,6 +57,9 @@ const TOWER_DRAIN_WARN_PCT = 25;
 
 export function runTowers(): void {
   for (const room of Object.values(Game.rooms)) {
+    // We only ever have towers in rooms we own. Visible remote/transit rooms would
+    // otherwise pay a full FIND_STRUCTURES scan every tick just to find none.
+    if (!room.controller?.my) continue;
     const towers = (
       (getStructuresByType(room)[STRUCTURE_TOWER] as StructureTower[] | undefined) ?? []
     ).filter(isOperational);
@@ -63,7 +67,7 @@ export function runTowers(): void {
 
     // Priority 1: focus-fire the highest-threat hostile. Having every tower
     // fire the same target means healers die before they can negate damage.
-    const target = pickPriorityTarget(room);
+    const target = profile('towers.target', () => pickPriorityTarget(room));
     if (target) {
       for (const tower of towers) tower.attack(target);
 
@@ -95,30 +99,32 @@ export function runTowers(): void {
 
     // Cache repair target per room (avoids per-tower find)
     const maxWallHits = wallRepairMax(room);
-    const repairTarget = cached('towers:repair:' + room.name, () => {
-      // Pre-compute the set of tiles that currently have a constructed wall.
-      // Ramparts sitting on wall tiles are transitional artefacts from the RCL-5
-      // build phase — the wall is the intended long-term barrier there, not the
-      // rampart. We let them decay naturally by simply not repairing them.
-      const wallTileKeys = new Set(
-        ((getStructuresByType(room)[STRUCTURE_WALL] as StructureWall[] | undefined) ?? []).map(
-          (w) => `${w.pos.x},${w.pos.y}`,
-        ),
-      );
+    const repairTarget = profile('towers.repairScan', () =>
+      cached('towers:repair:' + room.name, () => {
+        // Pre-compute the set of tiles that currently have a constructed wall.
+        // Ramparts sitting on wall tiles are transitional artefacts from the RCL-5
+        // build phase — the wall is the intended long-term barrier there, not the
+        // rampart. We let them decay naturally by simply not repairing them.
+        const wallTileKeys = new Set(
+          ((getStructuresByType(room)[STRUCTURE_WALL] as StructureWall[] | undefined) ?? []).map(
+            (w) => `${w.pos.x},${w.pos.y}`,
+          ),
+        );
 
-      const allStructs = Object.values(getStructuresByType(room)).flatMap((s) => s ?? []);
-      return allStructs.find((s) => {
-        if (s.structureType === STRUCTURE_RAMPART) {
-          // Don't repair ramparts co-located with a wall.
-          if (wallTileKeys.has(`${s.pos.x},${s.pos.y}`)) return false;
-          return s.hits < maxWallHits;
-        }
-        if (s.structureType === STRUCTURE_WALL) {
-          return s.hits < maxWallHits;
-        }
-        return s.hits < s.hitsMax * REPAIR_THRESHOLD;
-      });
-    });
+        const allStructs = Object.values(getStructuresByType(room)).flatMap((s) => s ?? []);
+        return allStructs.find((s) => {
+          if (s.structureType === STRUCTURE_RAMPART) {
+            // Don't repair ramparts co-located with a wall.
+            if (wallTileKeys.has(`${s.pos.x},${s.pos.y}`)) return false;
+            return s.hits < maxWallHits;
+          }
+          if (s.structureType === STRUCTURE_WALL) {
+            return s.hits < maxWallHits;
+          }
+          return s.hits < s.hitsMax * REPAIR_THRESHOLD;
+        });
+      }),
+    );
 
     const woundedCreeps = cached('towers:wounded:' + room.name, () =>
       room.find(FIND_MY_CREEPS, { filter: (c) => c.hits < c.hitsMax }),

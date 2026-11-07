@@ -446,3 +446,31 @@ describe('wallRepairMax (holisticEconomy ON) — new moderate-middle floors', ()
     expect(tower.repair).toHaveBeenCalledWith(wall);
   });
 });
+
+describe('runTowers - unowned rooms', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    mockPick.mockReset();
+    mockPick.mockReturnValue(undefined);
+  });
+
+  it('does not scan structures in a visible room we do not own', () => {
+    const find = vi.fn(() => []);
+    Game.rooms['W9N9'] = mockRoom({
+      name: 'W9N9',
+      controller: { my: false, level: 0 },
+      find,
+    }) as any;
+    runTowers();
+    expect(find).not.toHaveBeenCalled();
+    expect(mockPick).not.toHaveBeenCalled();
+  });
+
+  it('does not scan a visible room with no controller', () => {
+    const find = vi.fn(() => []);
+    Game.rooms['W9N8'] = mockRoom({ name: 'W9N8', controller: undefined, find }) as any;
+    runTowers();
+    expect(find).not.toHaveBeenCalled();
+  });
+});
