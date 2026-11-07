@@ -1,6 +1,6 @@
 import { mockCreep, mockRoom, resetGameGlobals } from '../mocks/screeps';
 import { resetTickCache } from '../../src/utils/tickCache';
-import { runTowers } from '../../src/managers/towers';
+import { runTowers, resetRepairCache, REPAIR_RESCAN_INTERVAL } from '../../src/managers/towers';
 import { pickPriorityTarget } from '../../src/utils/threat';
 import { logCombat } from '../../src/utils/combatLog';
 
@@ -101,6 +101,7 @@ describe('runTowers — focus fire', () => {
   beforeEach(() => {
     resetGameGlobals();
     resetTickCache();
+    resetRepairCache();
     mockPick.mockReset();
     mockPick.mockReturnValue(undefined);
     mockLog.mockReset();
@@ -151,6 +152,7 @@ describe('runTowers — focus fire', () => {
 
     // Second tick with the flag already set → no second log.
     resetTickCache();
+    resetRepairCache();
     runTowers();
     expect(mockLog).toHaveBeenCalledTimes(1);
   });
@@ -170,6 +172,7 @@ describe('runTowers — heal & repair (no combat target)', () => {
   beforeEach(() => {
     resetGameGlobals();
     resetTickCache();
+    resetRepairCache();
     mockPick.mockReset();
     mockPick.mockReturnValue(undefined);
     mockLog.mockReset();
@@ -228,6 +231,7 @@ describe('wallRepairMax (via repair-target selection)', () => {
   beforeEach(() => {
     resetGameGlobals();
     resetTickCache();
+    resetRepairCache();
     mockPick.mockReset();
     mockPick.mockReturnValue(undefined);
     mockLog.mockReset();
@@ -293,6 +297,7 @@ describe('wallRepairMax (holisticEconomy ON) — new moderate-middle floors', ()
   beforeEach(() => {
     resetGameGlobals();
     resetTickCache();
+    resetRepairCache();
     mockPick.mockReset();
     mockPick.mockReturnValue(undefined);
     mockLog.mockReset();
@@ -432,6 +437,7 @@ describe('wallRepairMax (holisticEconomy ON) — new moderate-middle floors', ()
   it('flag OFF still uses the old floors (RCL6 lean with flag off → old 300k floor)', () => {
     (Memory as any).holisticEconomy = false;
     resetTickCache();
+    resetRepairCache();
     const tower = makeTower({ energy: 900 });
     // hits=200k < old WALL_FLOOR[6]=300k → repaired under flag-off
     const wall = makeStruct(STRUCTURE_WALL, { hits: 200_000 });
@@ -451,6 +457,7 @@ describe('runTowers - unowned rooms', () => {
   beforeEach(() => {
     resetGameGlobals();
     resetTickCache();
+    resetRepairCache();
     mockPick.mockReset();
     mockPick.mockReturnValue(undefined);
   });
@@ -472,5 +479,81 @@ describe('runTowers - unowned rooms', () => {
     Game.rooms['W9N8'] = mockRoom({ name: 'W9N8', controller: undefined, find }) as any;
     runTowers();
     expect(find).not.toHaveBeenCalled();
+  });
+});
+
+describe('runTowers - repair target cache', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    resetRepairCache();
+    mockPick.mockReset();
+    mockPick.mockReturnValue(undefined);
+  });
+
+  function setup() {
+    const tower = makeTower({ energy: 900 });
+    const wall = makeStruct(STRUCTURE_WALL, { hits: 1000 });
+    const room = makeRoom({
+      level: 4,
+      storageEnergy: 0,
+      towers: [tower],
+      allStructures: [tower, wall],
+    });
+    (Game as any).getObjectById = (id: string) => (id === wall.id ? wall : undefined);
+    return { tower, wall, room };
+  }
+
+  it('keeps the cached target within the interval even if an earlier structure is now damaged', () => {
+    const tower = makeTower({ energy: 900 });
+    const first = makeStruct(STRUCTURE_WALL, { hits: 100_000_000 });
+    const second = makeStruct(STRUCTURE_WALL, { hits: 1000 });
+    makeRoom({
+      level: 4,
+      storageEnergy: 0,
+      towers: [tower],
+      allStructures: [tower, first, second],
+    });
+    (Game as any).getObjectById = (id: string) =>
+      id === first.id ? first : id === second.id ? second : undefined;
+    runTowers();
+    expect(tower.repair).toHaveBeenLastCalledWith(second);
+    first.hits = 500;
+    resetTickCache();
+    (Game as any).time += 1;
+    runTowers();
+    expect(tower.repair).toHaveBeenLastCalledWith(second);
+    resetTickCache();
+    (Game as any).time += REPAIR_RESCAN_INTERVAL;
+    runTowers();
+    expect(tower.repair).toHaveBeenLastCalledWith(first);
+  });
+
+  it('rescans once the cached target no longer needs repair', () => {
+    const { tower, wall } = setup();
+    runTowers();
+    wall.hits = 100_000_000;
+    resetTickCache();
+    (Game as any).time += 1;
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledTimes(1);
+  });
+
+  it('picks up newly damaged structures after the rescan interval', () => {
+    const tower = makeTower({ energy: 900 });
+    const wall = makeStruct(STRUCTURE_WALL, { hits: 100_000_000 });
+    makeRoom({ level: 4, storageEnergy: 0, towers: [tower], allStructures: [tower, wall] });
+    (Game as any).getObjectById = (id: string) => (id === wall.id ? wall : undefined);
+    runTowers();
+    expect(tower.repair).not.toHaveBeenCalled();
+    wall.hits = 1000;
+    resetTickCache();
+    (Game as any).time += 1;
+    runTowers();
+    expect(tower.repair).not.toHaveBeenCalled();
+    resetTickCache();
+    (Game as any).time += REPAIR_RESCAN_INTERVAL;
+    runTowers();
+    expect(tower.repair).toHaveBeenCalledWith(wall);
   });
 });

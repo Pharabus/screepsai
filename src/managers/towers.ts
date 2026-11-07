@@ -52,6 +52,60 @@ function wallRepairMax(room: Room): number {
   });
 }
 
+/**
+ * How long a repair-target decision (including "nothing needs repair") is reused
+ * before a full rescan. The scan flattens every structure in the room, which was
+ * ~0.5 CPU/tick across 4 rooms. A structure that keeps needing repair stays the
+ * first match until it is fixed, so reusing it changes nothing; the only effect is
+ * that a newly damaged structure waits up to this many ticks to be picked up.
+ */
+export const REPAIR_RESCAN_INTERVAL = 20;
+
+const _repairCache = new Map<string, { id: Id<Structure> | null; tick: number }>();
+
+export function resetRepairCache(): void {
+  _repairCache.clear();
+}
+
+function needsRepair(s: Structure, maxWallHits: number): boolean {
+  if (s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL) {
+    return s.hits < maxWallHits;
+  }
+  return s.hits < s.hitsMax * REPAIR_THRESHOLD;
+}
+
+function scanRepairTarget(room: Room, maxWallHits: number): Structure | undefined {
+  // Pre-compute the set of tiles that currently have a constructed wall.
+  // Ramparts sitting on wall tiles are transitional artefacts from the RCL-5
+  // build phase - the wall is the intended long-term barrier there, not the
+  // rampart. We let them decay naturally by simply not repairing them.
+  const wallTileKeys = new Set(
+    ((getStructuresByType(room)[STRUCTURE_WALL] as StructureWall[] | undefined) ?? []).map(
+      (w) => `${w.pos.x},${w.pos.y}`,
+    ),
+  );
+  const allStructs = Object.values(getStructuresByType(room)).flatMap((s) => s ?? []);
+  return allStructs.find((s) => {
+    // Don't repair ramparts co-located with a wall.
+    if (s.structureType === STRUCTURE_RAMPART && wallTileKeys.has(`${s.pos.x},${s.pos.y}`)) {
+      return false;
+    }
+    return needsRepair(s, maxWallHits);
+  });
+}
+
+function getRepairTarget(room: Room, maxWallHits: number): Structure | undefined {
+  const entry = _repairCache.get(room.name);
+  if (entry && Game.time - entry.tick < REPAIR_RESCAN_INTERVAL) {
+    if (entry.id === null) return undefined;
+    const obj = Game.getObjectById(entry.id);
+    if (obj && needsRepair(obj, maxWallHits)) return obj;
+  }
+  const found = scanRepairTarget(room, maxWallHits);
+  _repairCache.set(room.name, { id: found ? (found.id as Id<Structure>) : null, tick: Game.time });
+  return found;
+}
+
 // Tower energy % below which we log a tower_energy_low event during combat.
 const TOWER_DRAIN_WARN_PCT = 25;
 
@@ -97,34 +151,9 @@ export function runTowers(): void {
       continue;
     }
 
-    // Cache repair target per room (avoids per-tower find)
+    // Repair target is cached across ticks (see getRepairTarget).
     const maxWallHits = wallRepairMax(room);
-    const repairTarget = profile('towers.repairScan', () =>
-      cached('towers:repair:' + room.name, () => {
-        // Pre-compute the set of tiles that currently have a constructed wall.
-        // Ramparts sitting on wall tiles are transitional artefacts from the RCL-5
-        // build phase — the wall is the intended long-term barrier there, not the
-        // rampart. We let them decay naturally by simply not repairing them.
-        const wallTileKeys = new Set(
-          ((getStructuresByType(room)[STRUCTURE_WALL] as StructureWall[] | undefined) ?? []).map(
-            (w) => `${w.pos.x},${w.pos.y}`,
-          ),
-        );
-
-        const allStructs = Object.values(getStructuresByType(room)).flatMap((s) => s ?? []);
-        return allStructs.find((s) => {
-          if (s.structureType === STRUCTURE_RAMPART) {
-            // Don't repair ramparts co-located with a wall.
-            if (wallTileKeys.has(`${s.pos.x},${s.pos.y}`)) return false;
-            return s.hits < maxWallHits;
-          }
-          if (s.structureType === STRUCTURE_WALL) {
-            return s.hits < maxWallHits;
-          }
-          return s.hits < s.hitsMax * REPAIR_THRESHOLD;
-        });
-      }),
-    );
+    const repairTarget = profile('towers.repairScan', () => getRepairTarget(room, maxWallHits));
 
     const woundedCreeps = cached('towers:wounded:' + room.name, () =>
       room.find(FIND_MY_CREEPS, { filter: (c) => c.hits < c.hitsMax }),
