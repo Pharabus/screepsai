@@ -2,6 +2,7 @@ import { recordRoomIntel, recordHighwayIntel } from '../utils/roomIntel';
 import { isHighwayRoom, offsetRoomName } from '../utils/roomName';
 import { getMyStructuresByType } from '../utils/tickCache';
 import { profile } from '../utils/profiler';
+import { nameHash } from '../utils/idle';
 
 // How often the scan queue is rebuilt from RoomMemory.remoteRooms. Mirrors the
 // labs reaction-reselect cadence — cheap enough to not need per-tick rebuilds,
@@ -16,6 +17,20 @@ const QUEUE_REBUILD_INTERVAL = 500;
 // concern; the cost is a slightly longer scan-queue cycle (see below), not
 // CPU (still one room requested per tick regardless of queue length).
 const HIGHWAY_SCAN_RADIUS = 2;
+
+/**
+ * Ticks between observe requests per observer. Intel (remote hostiles, sources,
+ * power banks, deposits) changes over hundreds of ticks, so re-reading a room every
+ * few ticks was pure CPU waste (~1.0/tick across 4 observers with the bucket full,
+ * since this manager is bucket-gated). At 10 each queued room is refreshed every
+ * 10 x queueLength ticks. The per-room phase keeps observers from all firing on the
+ * same tick.
+ */
+export const OBSERVE_INTERVAL = 10;
+
+export function shouldObserveNow(roomName: string, time: number): boolean {
+  return time % OBSERVE_INTERVAL === nameHash(roomName) % OBSERVE_INTERVAL;
+}
 
 /**
  * Highway rooms within `HIGHWAY_SCAN_RADIUS` rooms of this room (Chebyshev
@@ -89,6 +104,8 @@ function runRoomObserver(room: Room): void {
   }
 
   // Request: pick the next target and observe it so it's visible next tick.
+  // Harvest above still runs every tick so a pending request is never stranded.
+  if (!shouldObserveNow(room.name, Game.time)) return;
   const queue = ensureQueue(room, mem);
   if (queue.length === 0) return;
 

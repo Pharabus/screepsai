@@ -1,4 +1,4 @@
-import { runObserver } from '../../src/managers/observer';
+import { runObserver, shouldObserveNow, OBSERVE_INTERVAL } from '../../src/managers/observer';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
 function mockObserverStub(overrides: Record<string, any> = {}): any {
@@ -24,6 +24,18 @@ function makeOwningRoom(name: string, observer?: any): any {
   });
 }
 
+/** Advance Game.time to the next tick on which every owned test room is due to observe. */
+function runAligned(): void {
+  const names = Object.values(Game.rooms)
+    .filter((r) => r.controller?.my)
+    .map((r) => r.name);
+  for (let i = 0; i < OBSERVE_INTERVAL * 20; i++) {
+    if (names.every((n) => shouldObserveNow(n, Game.time))) break;
+    Game.time++;
+  }
+  runObserver();
+}
+
 describe('runObserver', () => {
   beforeEach(() => {
     resetGameGlobals();
@@ -37,7 +49,7 @@ describe('runObserver', () => {
     Game.rooms['W15N15'] = room;
     Memory.rooms['W15N15'] = { remoteRooms: ['W17N15', 'W16N15', 'W16N15'] };
 
-    runObserver();
+    runAligned();
 
     expect(observer.observeRoom).toHaveBeenCalledWith('W16N15');
     const mem = Memory.rooms['W15N15']!;
@@ -66,7 +78,7 @@ describe('runObserver', () => {
     });
     Game.rooms['W2N1'] = observedRoom;
 
-    runObserver();
+    runAligned();
 
     const targetMem = Memory.rooms['W2N1']!;
     expect(targetMem.scoutedSources).toBe(1);
@@ -88,7 +100,7 @@ describe('runObserver', () => {
     };
     // Game.rooms['W2N1'] deliberately left undefined (no vision arrived).
 
-    expect(() => runObserver()).not.toThrow();
+    expect(() => runAligned()).not.toThrow();
     expect(Memory.rooms['W2N1']).toBeUndefined();
   });
 
@@ -103,7 +115,7 @@ describe('runObserver', () => {
       observerQueueBuiltAt: Game.time,
     };
 
-    runObserver();
+    runAligned();
 
     expect(observer.observeRoom).toHaveBeenCalledWith('W3N1');
     expect(Memory.rooms['W1N1']!.observerQueueIdx).toBe(0);
@@ -121,7 +133,7 @@ describe('runObserver', () => {
       observerQueueBuiltAt: 9000, // > 500 ticks ago
     };
 
-    runObserver();
+    runAligned();
 
     const mem = Memory.rooms['W15N15']!;
     expect(mem.observerQueue).toEqual(['W17N15']);
@@ -133,7 +145,7 @@ describe('runObserver', () => {
     Game.rooms['W1N1'] = room;
     Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] };
 
-    runObserver();
+    runAligned();
 
     expect(Memory.rooms['W1N1']!.observerQueue).toBeUndefined();
   });
@@ -147,7 +159,7 @@ describe('runObserver', () => {
     });
     Game.rooms['W9N9'] = room;
 
-    runObserver();
+    runAligned();
 
     expect(observer.observeRoom).not.toHaveBeenCalled();
   });
@@ -158,7 +170,7 @@ describe('runObserver', () => {
     Game.rooms['W15N15'] = room;
     Memory.rooms['W15N15'] = { remoteRooms: [] };
 
-    runObserver();
+    runAligned();
 
     expect(observer.observeRoom).not.toHaveBeenCalled();
   });
@@ -174,7 +186,7 @@ describe('runObserver', () => {
     Game.rooms['W8N5'] = room;
     Memory.rooms['W8N5'] = { remoteRooms: [] };
 
-    runObserver();
+    runAligned();
 
     expect(Memory.rooms['W8N5']!.observerQueue).toEqual([
       'W10N3',
@@ -191,7 +203,7 @@ describe('runObserver', () => {
     Game.rooms['W8N5'] = room;
     Memory.rooms['W8N5'] = { remoteRooms: ['W3N5', 'W10N5'] }; // W10N5 dups a highway hit
 
-    runObserver();
+    runAligned();
 
     expect(Memory.rooms['W8N5']!.observerQueue).toEqual([
       'W10N3',
@@ -230,11 +242,41 @@ describe('runObserver', () => {
     });
     Game.rooms['W10N1'] = observedRoom;
 
-    runObserver();
+    runAligned();
 
     const targetMem = Memory.rooms['W10N1']!;
     expect(targetMem.scoutedPowerBank).toMatchObject({ id: 'bank1', power: 4000 });
     // recordRoomIntel (the remote-room path) must NOT have run for this target.
     expect(targetMem.scoutedSources).toBeUndefined();
+  });
+});
+
+describe('observe interval', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+  });
+
+  it('requests at most once per OBSERVE_INTERVAL ticks, but harvests a pending request every tick', () => {
+    const observer = mockObserverStub();
+    Game.rooms['W15N15'] = makeOwningRoom('W15N15', observer);
+    Memory.rooms['W15N15'] = { remoteRooms: ['W16N15', 'W17N15'] };
+    let requests = 0;
+    for (let t = 5000; t < 5000 + OBSERVE_INTERVAL * 4; t++) {
+      Game.time = t;
+      observer.observeRoom.mockClear();
+      runObserver();
+      if (observer.observeRoom.mock.calls.length > 0) requests++;
+    }
+    expect(requests).toBe(4);
+  });
+
+  it('staggers rooms by name', () => {
+    const phases = new Set(
+      ['W42N59', 'W43N58', 'W44N57', 'W44N59'].map((r) => {
+        for (let t = 0; t < OBSERVE_INTERVAL; t++) if (shouldObserveNow(r, t)) return t;
+        return -1;
+      }),
+    );
+    expect(phases.size).toBeGreaterThan(1);
   });
 });
