@@ -12,6 +12,7 @@ import {
   defenderComposition,
   defenderBoostsWanted,
   remoteHaulersWanted,
+  REMOTE_HAULER_MAX_REPEATS,
   upgraderBoostWanted,
   upgraderBoostCompound,
   roomBoostCompound,
@@ -2401,14 +2402,14 @@ describe('remoteHaulersWanted', () => {
     // haulerBody at 2300e: 16 CARRY → 800 carry capacity
     // ceil(280 × 10 / 800) = ceil(3.5) = 4; Math.max(3, 4) = 4
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBeGreaterThanOrEqual(4);
   });
 
   it('scales with sourceCount (2 sources at long distance)', () => {
     // haulersPerSource = 4 (Math.max(3, ceil(3.5))), × 2 sources = 8
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'W2N1', 2, true)).toBe(8);
   });
 
@@ -2440,7 +2441,7 @@ describe('remoteHaulersWanted', () => {
     // roundTripTicks = 320, sourceRate = 10, carryCapacity = 800
     // ceil(320 × 10 / 800) = 4 per source; 4 × 3 = 12
     (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 320 } } };
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(12);
   });
 
@@ -2482,8 +2483,18 @@ describe('remoteHaulersWanted', () => {
     // that lands exactly on .5 to prove round-half-up, not round-down-always:
     // roundTripTicks = 260 → 260*10/800 = 3.25 rounds to 3; use 292 → 3.65 rounds to 4.
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 292 } } };
-    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(4);
+  });
+
+  it('a high-capacity room builds the REMOTE_HAULER_MAX_REPEATS body, so fewer haulers cover the same route', () => {
+    // 292-tick round trip: 8-repeat body (16 CARRY, 800) needs 4; 12-repeat (24 CARRY, 1200) rounds to 2, floored to 3.
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 292 } } };
+    const small = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
+    const big = mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 });
+    expect(remoteHaulersWanted(small, 'W2N1', 1, true)).toBe(4);
+    expect(remoteHaulersWanted(big, 'W2N1', 1, true)).toBe(3);
+    expect(REMOTE_HAULER_MAX_REPEATS).toBe(12);
   });
 });
 

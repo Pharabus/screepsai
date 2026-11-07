@@ -708,6 +708,14 @@ export function defenderComposition(room: Room): DefenderComposition {
 }
 
 /**
+ * Max [CARRY,CARRY,MOVE,MOVE] repeats for a remoteHauler body (12 = 24 CARRY, 48 parts).
+ * Bigger haulers mean fewer creeps for the same throughput, and each creep costs a
+ * flat 0.2 CPU/tick. Used by BOTH the spawn request and remoteHaulersWanted so the
+ * hauler count always matches the body actually built.
+ */
+export const REMOTE_HAULER_MAX_REPEATS = 12;
+
+/**
  * How many remoteHaulers are needed for a single remote room.
  * Uses cached round-trip distance (ticks) to scale beyond the flat baseline.
  * Falls back to the flat formula when distance has not been cached yet.
@@ -742,7 +750,11 @@ export function remoteHaulersWanted(
     return sourceCount * flatPerSource; // flat fallback — distance not cached yet
   }
   const sourceRate = isHighCapacity ? 10 : 5;
-  const haulerBody = buildBody([CARRY, CARRY, MOVE, MOVE], room.energyCapacityAvailable, 8);
+  const haulerBody = buildBody(
+    [CARRY, CARRY, MOVE, MOVE],
+    room.energyCapacityAvailable,
+    REMOTE_HAULER_MAX_REPEATS,
+  );
   const carryCapacity = haulerBody.filter((p) => p === CARRY).length * 50;
   if (carryCapacity === 0) return sourceCount * flatPerSource;
   // Once distance is cached, a close reserved (non-keeper) room's floor drops
@@ -1564,7 +1576,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         queue.push({
           role: 'remoteHauler',
           pattern: [CARRY, CARRY, MOVE, MOVE],
-          maxRepeats: 8,
+          maxRepeats: REMOTE_HAULER_MAX_REPEATS,
           minCount: totalHaulers + 1,
           memory: {
             role: 'remoteHauler' as CreepRoleName,
