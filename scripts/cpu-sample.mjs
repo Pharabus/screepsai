@@ -109,7 +109,9 @@ function stats(a) {
   return { mean, sd, min: Math.min(...a), max: Math.max(...a), se: sd / Math.sqrt(a.length) };
 }
 
-console.log(`cpu-sample${label ? ` [${label}]` : ''}: ${kept} distinct reads (${skipped} duplicate)`);
+console.log(
+  `cpu-sample${label ? ` [${label}]` : ''}: ${kept} distinct reads (${skipped} duplicate)`,
+);
 console.log('key'.padEnd(28) + 'mean    +-se    sd      min     max');
 for (const k of keys) {
   const r = stats(series[k]);
