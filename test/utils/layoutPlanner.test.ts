@@ -1193,3 +1193,98 @@ describe('EXTENSION_STAMP and LAB_STAMP exports', () => {
     }
   });
 });
+
+describe('computeLayout access lanes', () => {
+  function laneRoom(
+    walls: Set<string>,
+    source: { x: number; y: number },
+    spawnAt = { x: 10, y: 25 },
+  ) {
+    const spawn = { pos: new RoomPosition(spawnAt.x, spawnAt.y, 'W1N1'), id: 'spawn1' };
+    const terrain = makeTerrain(walls);
+    const room = mockRoom({ name: 'W1N1', controller: { my: true, level: 8 } });
+    room.find = (type: number) => {
+      if (type === FIND_MY_SPAWNS) return [spawn];
+      if (type === FIND_SOURCES) return [{ pos: source }];
+      return [];
+    };
+    room.getTerrain = () => terrain;
+    return { room, terrain };
+  }
+
+  function obstacleKeys(plan: ReturnType<typeof computeLayout>): Set<string> {
+    const p = plan!;
+    const all = [
+      ...p.extensionPositions,
+      ...p.labPositions,
+      ...p.towerPositions,
+      ...p.spawnPositions,
+      p.storagePos,
+      p.terminalPos,
+      ...(p.factoryPos ? [p.factoryPos] : []),
+    ];
+    return new Set(all.map((a) => `${a.x},${a.y}`));
+  }
+
+  function reaches(
+    from: { x: number; y: number },
+    target: { x: number; y: number },
+    terrain: any,
+    blocked: Set<string>,
+  ): boolean {
+    const seen = new Set<string>([`${from.x},${from.y}`]);
+    const queue = [from];
+    for (let h = 0; h < queue.length; h++) {
+      const c = queue[h]!;
+      if (Math.max(Math.abs(c.x - target.x), Math.abs(c.y - target.y)) <= 1) return true;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const nx = c.x + dx;
+          const ny = c.y + dy;
+          const k = `${nx},${ny}`;
+          if (nx < 1 || ny < 1 || nx > 48 || ny > 48 || seen.has(k)) continue;
+          if (terrain.get(nx, ny) === TERRAIN_MASK_WALL || blocked.has(k)) continue;
+          seen.add(k);
+          queue.push({ x: nx, y: ny });
+        }
+      }
+    }
+    return false;
+  }
+
+  it('keeps a walkable lane from the spawn to a distant source', () => {
+    const source = { x: 40, y: 25 };
+    const { room, terrain } = laneRoom(new Set(), source);
+    const plan = computeLayout(room);
+    expect(reaches({ x: 10, y: 25 }, source, terrain, obstacleKeys(plan))).toBe(true);
+  });
+
+  it('holds the full width of a 2-wide corridor leading to a source', () => {
+    // A small spawn pocket (x 2-10), a 2-wide corridor (y 24-25, x 11-22) and a source
+    // pocket at the far end. With the spawn at the corridor mouth the stamp reaches into
+    // the corridor; without lane reservation it leaves a single open tile there.
+    const walls = new Set<string>();
+    for (let x = 0; x < 50; x++) {
+      for (let y = 0; y < 50; y++) {
+        const pocket = x >= 2 && x <= 10 && y >= 20 && y <= 30;
+        const corridor = x >= 11 && x <= 22 && y >= 24 && y <= 25;
+        const farPocket = x >= 23 && x <= 30 && y >= 20 && y <= 30;
+        if (!pocket && !corridor && !farPocket) walls.add(`${x},${y}`);
+      }
+    }
+    const source = { x: 27, y: 25 };
+    const { room, terrain } = laneRoom(walls, source, { x: 10, y: 25 });
+    const plan = computeLayout(room);
+    const blocked = obstacleKeys(plan);
+    for (let x = 11; x <= 22; x++) {
+      expect(blocked.has(`${x},24`)).toBe(false);
+      expect(blocked.has(`${x},25`)).toBe(false);
+    }
+    expect(reaches({ x: 10, y: 25 }, source, terrain, blocked)).toBe(true);
+  });
+
+  it('adds no lanes (and does not throw) when the room has no sources, mineral or controller pos', () => {
+    const room = makeRoom();
+    expect(() => computeLayout(room)).not.toThrow();
+  });
+});

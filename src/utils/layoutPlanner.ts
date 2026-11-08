@@ -82,7 +82,7 @@ export const EXTENSION_STAMP: [number, number][] = [
 ];
 
 /** Bump when layout semantics change to auto-invalidate stale cached plans. */
-export const LAYOUT_PLAN_VERSION = 8;
+export const LAYOUT_PLAN_VERSION = 9;
 
 /**
  * Minimum walkable tiles to keep open around the storage. The storage is the
@@ -599,6 +599,135 @@ function pickStoragePosition(
 }
 
 /**
+ * Chebyshev distance from the spawn below which access lanes are NOT reserved.
+ * The core stamp lives here and the transitive flood-fill prune already guarantees
+ * it stays connected - reserving it would only shrink the extension budget.
+ */
+const LANE_MIN_RANGE = 2;
+
+/**
+ * A lane tile counts as narrow terrain when at most this many tiles in its 5x5 window are
+ * non-wall (a 3-wide corridor has 15, open ground 25; 16 leaves one tile of margin). A 5x5 window, not the 8 neighbours,
+ * because a 3-wide corridor's middle tile has all 8 neighbours open yet is still pinchable.
+ */
+const LANE_NARROW_OPEN_5X5 = 16;
+
+/**
+ * Tiles forming a shortest walkable lane from the spawn to within `range` of
+ * `target`, over terrain plus `obstacleKeys` (live non-walkable structures).
+ * 8-directional BFS (creeps move diagonally). Returns [] if unreachable.
+ */
+function findAccessLane(
+  spawn: { x: number; y: number },
+  target: { x: number; y: number },
+  range: number,
+  terrain: RoomTerrain,
+  obstacleKeys: Set<string>,
+): { x: number; y: number }[] {
+  const walkable = (x: number, y: number): boolean =>
+    x >= 1 &&
+    x <= 48 &&
+    y >= 1 &&
+    y <= 48 &&
+    terrain.get(x, y) !== TERRAIN_MASK_WALL &&
+    !obstacleKeys.has(`${x},${y}`);
+  const startKey = `${spawn.x},${spawn.y}`;
+  const prev = new Map<string, string>([[startKey, '']]);
+  const queue: { x: number; y: number }[] = [spawn];
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head]!;
+    if (Math.max(Math.abs(cur.x - target.x), Math.abs(cur.y - target.y)) <= range) {
+      const lane: { x: number; y: number }[] = [];
+      let k = `${cur.x},${cur.y}`;
+      while (k && k !== startKey) {
+        const [lx, ly] = k.split(',').map(Number) as [number, number];
+        lane.push({ x: lx, y: ly });
+        k = prev.get(k) ?? '';
+      }
+      return lane.reverse();
+    }
+    for (const [dx, dy] of EIGHT_NEIGHBORS) {
+      const nx = cur.x + dx;
+      const ny = cur.y + dy;
+      const nk = `${nx},${ny}`;
+      if (prev.has(nk) || !walkable(nx, ny)) continue;
+      prev.set(nk, `${cur.x},${cur.y}`);
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  return [];
+}
+
+/**
+ * Reserve a walkable access lane from the spawn to every source, the mineral and
+ * the controller, so planned extensions/towers/labs can never pinch the approach.
+ * Without this, a narrow corridor (W41N59: a 2-wide lane to its main source) gets
+ * stamped down to a single tile and miners/haulers deadlock - the same failure
+ * family as the storage-access and extension-seal fixes above, but for the
+ * energy nodes themselves.
+ */
+function reserveAccessLanes(
+  room: Room,
+  spawn: { x: number; y: number },
+  terrain: RoomTerrain,
+  liveMap: Map<string, string>,
+  reserved: Set<string>,
+): number {
+  const obstacleKeys = new Set<string>(reserved);
+  for (const [key, type] of liveMap) {
+    if (NON_WALKABLE_STRUCTURES.has(type)) obstacleKeys.add(key);
+  }
+  obstacleKeys.delete(`${spawn.x},${spawn.y}`);
+
+  const targets: { pos: { x: number; y: number }; range: number }[] = [];
+  for (const src of room.find(FIND_SOURCES)) targets.push({ pos: src.pos, range: 1 });
+  for (const min of room.find(FIND_MINERALS)) targets.push({ pos: min.pos, range: 1 });
+  if (room.controller?.pos) targets.push({ pos: room.controller.pos, range: 2 });
+
+  let count = 0;
+  for (const t of targets) {
+    for (const tile of findAccessLane(spawn, t.pos, t.range, terrain, obstacleKeys)) {
+      if (Math.max(Math.abs(tile.x - spawn.x), Math.abs(tile.y - spawn.y)) < LANE_MIN_RANGE) {
+        continue;
+      }
+      const key = `${tile.x},${tile.y}`;
+      if (!reserved.has(key)) {
+        reserved.add(key);
+        count++;
+      }
+      // In constrained terrain (a corridor, or hugging a wall) a single lane tile is a
+      // one-wide chokepoint for two-way hauler traffic, so hold the neighbouring walkable
+      // tiles too. Open ground (> LANE_NARROW_OPEN_5X5 open tiles in 5x5) keeps a
+      // one-tile lane so we don't burn extension budget where there is room to route.
+      let open5 = 0;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          if (
+            inBounds(tile.x + dx, tile.y + dy) &&
+            terrain.get(tile.x + dx, tile.y + dy) !== TERRAIN_MASK_WALL
+          ) {
+            open5++;
+          }
+        }
+      }
+      if (open5 <= LANE_NARROW_OPEN_5X5) {
+        for (const [dx, dy] of EIGHT_NEIGHBORS) {
+          const nx = tile.x + dx;
+          const ny = tile.y + dy;
+          if (!inBounds(nx, ny) || terrain.get(nx, ny) === TERRAIN_MASK_WALL) continue;
+          const nk = `${nx},${ny}`;
+          if (!reserved.has(nk) && !obstacleKeys.has(nk)) {
+            reserved.add(nk);
+            count++;
+          }
+        }
+      }
+    }
+  }
+  return count;
+}
+
+/**
  * Picks up to `cap` tower positions.
  * Live towers (structures + construction sites) are seeded first, sorted by id
  * for deterministic ordering across replans. Additional slots fill from the
@@ -715,6 +844,10 @@ export function computeLayout(room: Room): LayoutPlan | undefined {
   })) {
     reserved.add(`${cs.pos.x},${cs.pos.y}`);
   }
+
+  // Reserve walkable lanes from the spawn to each source/mineral/controller before any
+  // stamp runs, so nothing planned below can pinch an approach to an energy node.
+  reserveAccessLanes(room, spawn.pos, terrain, liveMap, reserved);
 
   // Step: Spawn positions — seed from live spawns (id-sorted), then pick additional
   // slots up to cap 3 so the construction manager can place 2nd/3rd spawns at RCL 7-8.
