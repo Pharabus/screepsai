@@ -143,6 +143,43 @@ Confounders and open questions:
 - The `main.loop` max of 48.1 and `construction` max of 28.8 may be a cold-start spike right after the deploy's global reset, since the max sticks.
   This needs a spike check from a longer window, or a `resetStats()` once things are warm, before concluding the spikes persist.
 
+#### Trims after trim 1 (v1.0.378 to v1.0.385)
+
+Each change shipped as its own deploy.
+Version numbers are the reference, since the trim numbering drifted while working.
+
+| Version | Change | Kind |
+|---|---|---|
+| v1.0.378 | Sub-profiles inside `runSpawner` | measurement only |
+| v1.0.379 | Refresh cached room plan ids every 10 ticks instead of every tick | pure overhead |
+| v1.0.380 | Throttle boost-lab reservation to every 5 ticks per room | pure overhead |
+| v1.0.381 | Skip the towers scan in unowned visible rooms, add tower sub-profiles | pure overhead |
+| v1.0.382 | Cache the tower repair target across ticks (rescan every 20) | pure overhead |
+| v1.0.383 | Observe at most once per 10 ticks per observer | pure overhead |
+| v1.0.384 | No repairers in rooms with an energised operational tower | creep trim, about 1.5 CPU |
+| v1.0.385 | Remote hauler body max repeats 8 to 12 | fewer, larger haulers, see below |
+
+Measured `main.loop` over 30 distinct reads per sample, using `scripts/cpu-sample.mjs`:
+
+| Point | `main.loop` |
+|---|---|
+| Baseline (1a) | 18.69 |
+| After v1.0.383 | 17.05 |
+| After v1.0.384 (repairers gone) | 15.57 |
+| After v1.0.385 | 14.61 on resample (the first sample, 16.85, was an outlier) |
+
+Lessons from the sampling:
+
+- `Memory.stats` values are EMAs with alpha 0.1, so one read is noisy by about 1 CPU.
+  Average many distinct reads before concluding anything.
+- A single 30-read sample can still be an outlier, so resample before attributing a change.
+- The profiler updates an average only when the function runs, so interval-gated managers report per-call cost.
+  Divide by the interval (construction 5, health snapshot 10) to get the per-tick cost.
+- The tower repair rotation (one tower repairing per tick) was written, measured as noise and discarded.
+- v1.0.385 did not reduce the remote hauler count, which stayed at 8.
+  The floor in `remoteHaulersWanted` (3 per source for reserved remotes) dominates.
+  A possible next lever is lowering that floor to 2, not done.
+
 2. **1b - Rank trims by CPU saved per unit of lost output.**
    Candidates to evaluate, not commitments:
    - RCL 8 upgraders: the controller caps at 15 energy per tick per room, so check whether upgrader count or body exceeds what the cap can use.
@@ -158,6 +195,24 @@ Confounders and open questions:
    - Gate: loop average at or below about 15 and bucket above 6000 for a sustained window.
    - Use the existing `claimCandidates()` and `claim()` pipeline, one room at a time.
    - Measure the real per-room cost and revise the room 6 to 8 targets from it.
+
+#### 1d result: W41N59 claimed (2026-11-09)
+
+- The gate was met: loop about 14.7 and bucket 10000 before the claim.
+- W41N59 was claimed at tick 84,152,482 and its spawn site was moved to (42,9), near source 1, the controller and the mineral.
+  The original suggested position (7,7) was far from everything, so the site there was removed.
+- Layout planner v9 (`LAYOUT_PLAN_VERSION` 9, v1.0.386) reserves walkable access lanes to sources, the mineral and the controller, so extensions cannot wall off a source.
+  It is deployed.
+  The recompute left the four mature rooms with no new sites and no stranded extensions.
+- Source 2 at (4,44) is 47 to 67 tiles from anywhere, so it is treated like a remote.
+- The spawn finished and the room reached RCL 2.
+  It runs 9 creeps (3 builders, 2 haulers, miner, harvester, upgrader, repairer).
+- **Measured cost of the fifth room:** `main.loop` rose from about 14.7 to about 17 to 17.6 (samples of 18.65 and 17.56, loop EMA 16.4 to 17.6), so roughly 3 CPU.
+  Bucket stayed at 10000.
+- The two remaining overhead candidates (`clearBlockingExtensions`, `healthSnapshot`) are worth only about 0.2 CPU per tick once amortised, so they are not being chased.
+- The extra cost is most likely the new room's creeps (the intent floor), not a manager.
+  Re-sample once W41N59 has storage and its builders have gone, and look at its creep counts if the loop is still above about 17.
+- Remaining headroom at 17 is about 3 CPU, so rooms 6 to 8 need more trims or a lower per-room creep count before they are claimed.
 
 ### Decision for Andrew (not recommended first)
 
