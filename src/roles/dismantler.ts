@@ -108,8 +108,73 @@ const states: StateMachineDefinition = {
   },
 };
 
+/**
+ * The constructed wall (if any) still standing on `tile` in `room`. Walls are
+ * neutral structures, so they are dismantlable in any room regardless of who
+ * owns its controller.
+ */
+function wallAt(room: Room, tile: { x: number; y: number }): StructureWall | undefined {
+  return room
+    .lookForAt(LOOK_STRUCTURES, tile.x, tile.y)
+    .find((s): s is StructureWall => s.structureType === STRUCTURE_WALL);
+}
+
+/**
+ * Wall-breaker mode (creep.memory.wallTiles set via Memory.dismantleWalls).
+ * Unlike the obstacle dismantler above it does not wait for the room to be
+ * unowned, and only ever touches the listed wall tiles, so it cannot damage
+ * anything else in the room. Tiles are worked in list order; several
+ * wall-breakers may share a wall, which just adds their dismantle power.
+ */
+const wallStates: StateMachineDefinition = {
+  TRAVEL: {
+    run(creep: Creep) {
+      const targetRoom = creep.memory.targetRoom;
+      if (!targetRoom) return 'RETREAT';
+      if (creep.room.name === targetRoom && isInRoomInterior(creep)) return 'DISMANTLE';
+      moveTo(creep, new RoomPosition(25, 25, targetRoom), {
+        range: 20,
+        priority: PRIORITY_WORKER,
+      });
+      return undefined;
+    },
+  },
+
+  DISMANTLE: {
+    run(creep: Creep) {
+      const targetRoom = creep.memory.targetRoom;
+      const tiles = creep.memory.wallTiles;
+      if (!targetRoom || !tiles) return 'RETREAT';
+      if (creep.room.name !== targetRoom) return 'TRAVEL';
+
+      let target: StructureWall | undefined;
+      for (const tile of tiles) {
+        target = wallAt(creep.room, tile);
+        if (target) break;
+      }
+
+      if (!target) {
+        // Every listed wall is gone: stop the order so none are respawned.
+        if (Memory.dismantleWalls?.room === targetRoom) delete Memory.dismantleWalls;
+        return 'RETREAT';
+      }
+
+      if (creep.dismantle(target) === ERR_NOT_IN_RANGE) {
+        moveTo(creep, target, { range: 1, priority: PRIORITY_WORKER });
+      }
+      return undefined;
+    },
+  },
+
+  RETREAT: states.RETREAT as StateMachineDefinition[string],
+};
+
 export const dismantler: Role = {
   run(creep: Creep): void {
+    if (creep.memory.wallTiles) {
+      runStateMachine(creep, wallStates, 'TRAVEL');
+      return;
+    }
     runStateMachine(creep, states, 'TRAVEL');
   },
 };

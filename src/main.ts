@@ -309,6 +309,63 @@ export const dismantleTarget = (room: string, homeRoom?: string): string => {
   return `Dismantler queued: ${home} → ${room}. Creep will pre-position and wait for RCL 0 before clearing towers.`;
 };
 
+/**
+ * Take down neutral constructed walls on specific tiles of a room, in any room we
+ * can reach (owned or not). Spawns `count` maxed WORK/MOVE dismantlers (25 WORK
+ * each, 50 hits/WORK/tick) from `homeRoom`, defaulting to the nearest owned room
+ * with spare capacity. Tiles are worked in list order and the order clears itself
+ * once none of them holds a wall.
+ *
+ *   dismantleWalls('W41N58', [[19, 2], [19, 3]], 'W42N59', 2)
+ *
+ * Cancel with stopDismantleWalls(). Natural terrain walls cannot be removed.
+ */
+export const dismantleWalls = (
+  room: string,
+  tiles: [number, number][],
+  homeRoom?: string,
+  count = 2,
+): string => {
+  if (!Array.isArray(tiles) || tiles.length === 0) return 'dismantleWalls refused: no tiles given';
+  if (
+    tiles.some(
+      (t) => !Array.isArray(t) || !t.every((n) => Number.isInteger(n) && n >= 0 && n <= 49),
+    )
+  )
+    return 'dismantleWalls refused: tiles must be [x, y] pairs with 0 <= x, y <= 49';
+  if (!Number.isInteger(count) || count < 1 || count > 4)
+    return 'dismantleWalls refused: count must be 1 to 4';
+  const home =
+    homeRoom ??
+    Object.values(Game.rooms)
+      .filter((r) => r.controller?.my && r.controller.level >= 8)
+      .sort(
+        (a, b) =>
+          Game.map.getRoomLinearDistance(a.name, room) -
+          Game.map.getRoomLinearDistance(b.name, room),
+      )[0]?.name;
+  if (!home || !Game.rooms[home]?.controller?.my)
+    return `dismantleWalls refused: ${homeRoom ?? 'no RCL 8 room'} is not an owned room`;
+  Memory.dismantleWalls = {
+    room,
+    homeRoom: home,
+    tiles: tiles.map(([x, y]) => ({ x, y })),
+    count,
+  };
+  return (
+    `dismantleWalls: ${home} will send ${count} wall breaker(s) to ${room} for ` +
+    `${tiles.map(([x, y]) => `(${x},${y})`).join(' ')}`
+  );
+};
+
+/** Cancel the wall-dismantling order; live wall breakers finish their trip and recycle. */
+export const stopDismantleWalls = (): string => {
+  const order = Memory.dismantleWalls;
+  if (!order) return 'No wall dismantling order is active';
+  delete Memory.dismantleWalls;
+  return `Cleared wall dismantling order for ${order.room} (from ${order.homeRoom})`;
+};
+
 /** List transport missions with delivered/target progress and live courier count. */
 export const transports = (): string => {
   const missions = getTransportMissions();
@@ -660,6 +717,8 @@ global.claimCandidates = claimCandidates;
 global.deliverEnergy = deliverEnergy;
 global.transports = transports;
 global.dismantleTarget = dismantleTarget;
+global.dismantleWalls = dismantleWalls;
+global.stopDismantleWalls = stopDismantleWalls;
 global.roles = roles;
 global.buyPower = buyPower;
 global.powerStatus = powerStatus;

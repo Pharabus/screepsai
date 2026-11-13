@@ -217,6 +217,23 @@ function countRemoteMiners(remoteRoom: string): number {
   });
 }
 
+/** WORK/MOVE repeats for one wall breaker: 25 WORK + 25 MOVE, the 50-part cap. */
+export const WALL_BREAKER_MAX_REPEATS = 25;
+
+/**
+ * Live wall-breaker dismantlers spawned from `homeRoom`. Counted from the creeps
+ * themselves (not a cached bucket) because it feeds currentCountFn, which the
+ * dispatch loop re-reads every tick. Includes ones still spawning.
+ */
+function countWallBreakers(homeRoom: string): number {
+  let count = 0;
+  for (const c of Object.values(Game.creeps)) {
+    if (c.memory.role === 'dismantler' && c.memory.wallTiles && c.memory.homeRoom === homeRoom)
+      count++;
+  }
+  return count;
+}
+
 function countReservers(remoteRoom: string): number {
   return cached('spawner:reservers:' + remoteRoom, () => {
     let count = 0;
@@ -1130,6 +1147,27 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         },
       });
     }
+  }
+
+  // Priority 0.5: Wall breakers — Memory.dismantleWalls names this room as the home.
+  // Up to `count` heavy dismantlers (WORK/MOVE, maxed) work the listed neutral wall
+  // tiles; the order clears itself when no listed wall remains (see dismantler.ts).
+  const wallOrder = Memory.dismantleWalls;
+  if (wallOrder && wallOrder.homeRoom === room.name) {
+    const wallBreakers = () => countWallBreakers(room.name);
+    queue.push({
+      role: 'dismantler',
+      pattern: [WORK, MOVE],
+      maxRepeats: WALL_BREAKER_MAX_REPEATS,
+      minCount: wallOrder.count,
+      currentCountFn: wallBreakers,
+      memory: {
+        role: 'dismantler' as CreepRoleName,
+        homeRoom: room.name,
+        targetRoom: wallOrder.room,
+        wallTiles: wallOrder.tiles,
+      },
+    });
   }
 
   // Priority 1: Hunters for NPC invaders in remote/transit rooms — queued before

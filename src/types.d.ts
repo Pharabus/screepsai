@@ -54,6 +54,8 @@ interface CreepMemory {
   homeRoom?: string;
   /** Target room for cross-room movement (scout, remote roles) */
   targetRoom?: string;
+  /** Wall tiles a wall-breaker dismantler works through, in priority order (see Memory.dismantleWalls). Its presence puts the dismantler in wall mode. */
+  wallTiles?: { x: number; y: number }[];
   /** Tick when scout started pathing to current target (stuck detection) */
   _scoutTick?: number;
   /** Name of a friendly combat creep this healer is paired with */
@@ -717,6 +719,20 @@ interface Memory {
   dismantleTarget?: {
     room: string;
     homeRoom: string;
+  };
+  /**
+   * When set, `count` wall-breaker dismantlers are spawned from homeRoom to take
+   * down the neutral constructed walls on the listed tiles of `room` (any room,
+   * owned or not: dismantle() needs no ownership for unowned structures, while
+   * destroy() would). Tiles are worked in list order and the target clears
+   * itself once none of them still holds a wall. Set via dismantleWalls(),
+   * cancel via stopDismantleWalls().
+   */
+  dismantleWalls?: {
+    room: string;
+    homeRoom: string;
+    tiles: { x: number; y: number }[];
+    count: number;
   };
   /**
    * Compact live-health snapshot refreshed every HEALTH_SNAPSHOT_INTERVAL ticks

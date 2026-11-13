@@ -2025,6 +2025,76 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     expect(entry).toBeUndefined();
   });
 
+  describe('wall breakers (Memory.dismantleWalls)', () => {
+    const order = {
+      room: 'W2N1',
+      homeRoom: 'W1N1',
+      tiles: [
+        { x: 19, y: 2 },
+        { x: 19, y: 3 },
+      ],
+      count: 2,
+    };
+    const breakerEntry = (room: any) =>
+      buildSpawnQueue(room).find(
+        (r) => r.role === 'dismantler' && (r.memory as any)?.wallTiles !== undefined,
+      );
+    const breakerCreep = (name: string) => ({
+      name,
+      memory: { role: 'dismantler', homeRoom: 'W1N1', targetRoom: 'W2N1', wallTiles: order.tiles },
+    });
+
+    beforeEach(() => {
+      (Memory as any).rooms = { W1N1: { minerEconomy: true, sources: [] } };
+      (Game as any).creeps = {};
+    });
+
+    it('queues a maxed 25 WORK / 25 MOVE breaker carrying the tile list', () => {
+      (Memory as any).dismantleWalls = order;
+      const entry = breakerEntry(mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 }));
+
+      expect(entry).toBeDefined();
+      const body = (entry as any).pattern;
+      expect(body).toEqual([WORK, MOVE]);
+      expect((entry as any).maxRepeats).toBe(25);
+      expect((entry!.memory as any).targetRoom).toBe('W2N1');
+      expect((entry!.memory as any).wallTiles).toEqual(order.tiles);
+      expect(entry!.minCount).toBe(2);
+    });
+
+    it('does not queue one for a different home room', () => {
+      (Memory as any).dismantleWalls = { ...order, homeRoom: 'W9N9' };
+      expect(
+        breakerEntry(mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 })),
+      ).toBeUndefined();
+    });
+
+    it('does not queue when no order is set', () => {
+      expect(
+        breakerEntry(mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 })),
+      ).toBeUndefined();
+    });
+
+    it('counts live breakers against the order, via currentCountFn', () => {
+      (Memory as any).dismantleWalls = order;
+      (Game as any).creeps = { b1: breakerCreep('b1') };
+      const entry = breakerEntry(mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 }));
+      expect(entry!.currentCountFn!()).toBe(1);
+
+      (Game as any).creeps = { b1: breakerCreep('b1'), b2: breakerCreep('b2') };
+      expect(entry!.currentCountFn!()).toBe(2);
+    });
+
+    it('does not count an obstacle dismantler (no wallTiles) as a breaker', () => {
+      (Memory as any).dismantleWalls = order;
+      (Game as any).creeps = {
+        d1: { name: 'd1', memory: { role: 'dismantler', homeRoom: 'W1N1', targetRoom: 'W2N1' } },
+      };
+      const entry = breakerEntry(mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 }));
+      expect(entry!.currentCountFn!()).toBe(0);
+    });
+  });
+
   describe('second source of a two-source remote', () => {
     const miner = (name: string, extra: object = {}) => ({
       name,
