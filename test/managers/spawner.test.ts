@@ -1894,6 +1894,10 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     };
     // 2 existing haulers for this room — still below quota of 3
     (Game as any).creeps = {
+      miner1: {
+        name: 'miner1',
+        memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      },
       rh1: {
         name: 'rh1',
         memory: {
@@ -1986,12 +1990,39 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     );
     expect(noContainer).toBeUndefined();
 
-    // Once the container exists, the hauler is queued.
+    // Once the container exists AND a miner is working the room, the hauler is queued.
     (Memory as any).rooms.W2N1.sources[0].containerId = 'cnt1';
+    (Game as any).creeps = {
+      miner1: {
+        name: 'miner1',
+        memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      },
+    };
+    resetTickCache();
     const withContainer = buildSpawnQueue(room).find(
       (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
     );
     expect(withContainer).toBeDefined();
+  });
+
+  it('does not queue remoteHauler when the container exists but no miner is working the room', () => {
+    // Live W41N58 jam: a pre-existing container satisfied the old gate, so a full
+    // hauler crew spawned against a source nobody was mining and parked in the
+    // 1-tile lane that the miner needed to get through.
+    (Memory as any).rooms = {
+      W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+      W2N1: {
+        remoteType: 'reserved',
+        sources: [{ id: 'src1' as any, x: 20, y: 20, containerId: 'cnt1' as any }],
+      },
+    };
+    (Game as any).creeps = {};
+
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    const entry = buildSpawnQueue(room).find(
+      (r) => r.role === 'remoteHauler' && (r.memory as any)?.targetRoom === 'W2N1',
+    );
+    expect(entry).toBeUndefined();
   });
 
   it('stops queuing remoteHauler at 2 per source for non-reserved room', () => {
