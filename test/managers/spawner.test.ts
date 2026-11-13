@@ -2025,6 +2025,52 @@ describe('buildSpawnQueue — remote mining (reserved rooms)', () => {
     expect(entry).toBeUndefined();
   });
 
+  describe('second source of a two-source remote', () => {
+    const miner = (name: string, extra: object = {}) => ({
+      name,
+      ticksToLive: 1000,
+      memory: { role: 'miner', homeRoom: 'W1N1', targetRoom: 'W2N1' },
+      ...extra,
+    });
+    const twoSources = (minerNameOnSrc2?: string) => {
+      (Memory as any).rooms = {
+        W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },
+        W2N1: {
+          remoteType: 'reserved',
+          sources: [
+            { id: 'src1' as any, x: 19, y: 6, containerId: 'cnt1' as any },
+            {
+              id: 'src2' as any,
+              x: 6,
+              y: 15,
+              ...(minerNameOnSrc2 && { minerName: minerNameOnSrc2 }),
+            },
+          ],
+        },
+      };
+    };
+    const remoteMinerEntry = (room: any) =>
+      buildSpawnQueue(room).find(
+        (r) => r.role === 'miner' && (r.memory as any)?.targetRoom === 'W2N1',
+      );
+
+    it('queues a miner for the unmined source when a sibling source is already being mined', () => {
+      // Live W41N58: one miner assigned to src2, src1 had none. The old check counted
+      // that miner as src1's "replacement" and never queued one.
+      twoSources('minerA');
+      (Game as any).creeps = { minerA: miner('minerA') };
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      expect(remoteMinerEntry(room)).toBeDefined();
+    });
+
+    it('does not queue another miner while an unassigned miner is still en route', () => {
+      twoSources('minerA');
+      (Game as any).creeps = { minerA: miner('minerA'), minerB: miner('minerB') };
+      const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+      expect(remoteMinerEntry(room)).toBeUndefined();
+    });
+  });
+
   it('stops queuing remoteHauler at 2 per source for non-reserved room', () => {
     (Memory as any).rooms = {
       W1N1: { minerEconomy: true, sources: [], remoteRooms: ['W2N1'] },

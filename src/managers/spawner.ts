@@ -1527,16 +1527,24 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
             (existingMiner.ticksToLive ?? Infinity) >= REMOTE_MINER_PRESPAWN_TICKS
           )
             continue;
-          // If dying or dead, skip if a replacement is already en route to this room
+          // If dying or dead, skip if a replacement is already en route to this room.
+          // A replacement is a miner that no source entry has claimed yet: one already
+          // assigned to a sibling source is working that source, not on its way here.
+          // Counting it blocked the second source's miner for good (live W41N58: source 2
+          // mined, source 1 full at 1500 with no miner ever queued, and its haulers idled).
           const hasReplacement = cached(
             'spawner:hasReplacement:' + remoteRoom + ':' + entry.id,
-            () =>
-              Object.values(Game.creeps).some(
+            () => {
+              const assigned = new Set(
+                (remoteMem.sources ?? []).flatMap((s) => (s.minerName ? [s.minerName] : [])),
+              );
+              return Object.values(Game.creeps).some(
                 (c) =>
                   c.memory.role === 'miner' &&
                   c.memory.targetRoom === remoteRoom &&
-                  c.name !== (entry.minerName ?? ''),
-              ),
+                  !assigned.has(c.name),
+              );
+            },
           );
           if (hasReplacement) continue;
           queue.push({
