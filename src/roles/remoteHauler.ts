@@ -5,6 +5,7 @@ import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { deliverToSpawnOrExtension, deliverToControllerContainer } from '../utils/delivery';
 import { handleRemoteThreat } from '../utils/remoteThreat';
 import { cached, getStructuresByType } from '../utils/tickCache';
+import { pickRemoteParkingTile } from '../utils/remoteParking';
 
 function pickLootResource(target: Ruin | Tombstone): ResourceConstant | undefined {
   // Only pick up energy — the DELIVER state only transfers energy, so picking up
@@ -212,9 +213,25 @@ const states: StateMachineDefinition = {
       // Nothing to pick up — deliver what we have, or wait near the source
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) > 0) return 'DELIVER';
 
-      // Idle near the source so we're ready when energy drops
+      // Idle near the source so we're ready when energy drops, but on an open
+      // off-road tile: parking anywhere within range 3 stacked idle haulers in
+      // the single-tile lane into W41N58 and jammed the whole remote.
       const sourcePos = getRemoteSourcePos(creep);
-      if (sourcePos && !creep.pos.inRangeTo(sourcePos, 3)) {
+      if (!sourcePos) return undefined;
+      const mem = creep.memory;
+      if (!mem.parkTile && creep.room.name === targetRoom) {
+        mem.parkTile = pickRemoteParkingTile(creep.room, sourcePos, creep.name);
+      }
+      const park = mem.parkTile;
+      if (park) {
+        if (creep.pos.x !== park.x || creep.pos.y !== park.y) {
+          moveTo(creep, new RoomPosition(park.x, park.y, targetRoom), {
+            range: 0,
+            priority: PRIORITY_HAULER,
+            visualizePathStyle: { stroke: '#ffaa00' },
+          });
+        }
+      } else if (!creep.pos.inRangeTo(sourcePos, 3)) {
         moveTo(creep, sourcePos, {
           priority: PRIORITY_HAULER,
           visualizePathStyle: { stroke: '#ffaa00' },

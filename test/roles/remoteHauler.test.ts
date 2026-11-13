@@ -250,4 +250,46 @@ describe('remoteHauler', () => {
       expect(creep.memory.targetId).toBeUndefined();
     });
   });
+
+  describe('idle parking', () => {
+    const idleCreep = (extra: object = {}) => {
+      const remoteRoom = makeRemoteRoom({});
+      Memory.rooms['W2N1'] = { sources: [{ id: 's1' as Id<Source>, x: 20, y: 20 }] } as any;
+      return mockCreep({
+        name: 'hauler_idle',
+        memory: { role: 'remoteHauler', state: 'PICKUP', targetRoom: 'W2N1', homeRoom: 'W1N1' },
+        room: remoteRoom,
+        pos: new RoomPosition(20, 21, 'W2N1'),
+        store: { getFreeCapacity: () => 800, getUsedCapacity: () => 0 },
+        ...extra,
+      });
+    };
+
+    it('walks to an open parking tile and remembers it', () => {
+      const creep = idleCreep();
+
+      remoteHauler.run(creep);
+
+      const park = creep.memory.parkTile!;
+      expect(park).toBeDefined();
+      expect(Math.max(Math.abs(park.x - 20), Math.abs(park.y - 20))).toBeGreaterThanOrEqual(2);
+      expect(moveTo).toHaveBeenCalledWith(
+        creep,
+        expect.objectContaining({ x: park.x, y: park.y }),
+        expect.objectContaining({ range: 0 }),
+      );
+    });
+
+    it('stays put once on its parking tile', () => {
+      const creep = idleCreep();
+      remoteHauler.run(creep);
+      const park = creep.memory.parkTile!;
+      vi.clearAllMocks();
+      creep.pos = new RoomPosition(park.x, park.y, 'W2N1');
+
+      remoteHauler.run(creep);
+
+      expect(moveTo).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -56,6 +56,8 @@ interface CreepMemory {
   targetRoom?: string;
   /** Wall tiles a wall-breaker dismantler works through, in priority order (see Memory.dismantleWalls). Its presence puts the dismantler in wall mode. */
   wallTiles?: { x: number; y: number }[];
+  /** Remote hauler's chosen idle waiting tile (see utils/remoteParking.ts). */
+  parkTile?: { x: number; y: number };
   /** Tick when scout started pathing to current target (stuck detection) */
   _scoutTick?: number;
   /** Name of a friendly combat creep this healer is paired with */

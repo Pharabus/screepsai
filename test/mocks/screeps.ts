@@ -340,6 +340,7 @@ export function mockRoom(overrides: Record<string, any> = {}): any {
     storage: overrides.storage ?? undefined,
     find: overrides.find ?? vi.fn(() => []),
     lookForAt: overrides.lookForAt ?? vi.fn(() => []),
+    getTerrain: overrides.getTerrain ?? (() => ({ get: () => 0 })),
     ...overrides,
   };
 }
