@@ -214,6 +214,59 @@ Lessons from the sampling:
   Re-sample once W41N59 has storage and its builders have gone, and look at its creep counts if the loop is still above about 17.
 - Remaining headroom at 17 is about 3 CPU, so rooms 6 to 8 need more trims or a lower per-room creep count before they are claimed.
 
+#### 1e result: W41N58 jam, bucket regression and follow-up fixes (2026-11-09 to 2026-11-15)
+
+**What happened**
+
+- W41N59's remote W41N58 is entered through a single lane (road tiles at x20, y2-3) flanked by constructed walls and natural rock.
+- Up to 8 idle remote haulers parked within range 3 of source 1, which put them on the lane, and the jam blocked everything else.
+- The bucket fell from 10000 to 4192 (tick 84,245,680, loop 19.99) and to 2651 (tick 84,247,620, loop EMA 23.9), and `creepThrottle` began skipping heavy roles.
+- It recovered to about 4000 by tick 84,284,640 and has sat between about 3300 and 4100 since.
+- The likely contributors are repathing by the stuck creeps (unproven), the fifth room's fleet (W41N59 owns 18 of 60 creeps) and the SK remote at W44N57.
+  None of these is confirmed.
+
+**Fixes shipped (all pushed to `origin/main`)**
+
+| Version | Change |
+|---|---|
+| v1.0.387 | Remote haulers spawn only when a miner is working the remote (`remoteMinerPresent`). Before, they spawned against unmined sources. |
+| v1.0.388 | `hasReplacement` counts only miners not already assigned to a source, so source 1 of a two-source remote gets a miner even when source 2 has one. |
+| v1.0.389 | Wall-breaker dismantler mode. `dismantleWalls(room, [[x,y],...], homeRoom?, count=2)` and `stopDismantleWalls()` console commands. Dismantle works on neutral constructed walls in unowned rooms, which was confirmed live. |
+| v1.0.390 | Idle remote haulers wait on an open, off-road tile 2 to 5 from the source with at least 6 open neighbours (`src/utils/remoteParking.ts`, stored in `memory.parkTile`). |
+| v1.0.391 | At RCL8, `upgradersNeeded` is capped at `ceil(15 / WORK parts)`, because the controller accepts at most 15 energy per tick. W42N59 and W43N58 went from 2 upgraders to 1. |
+| v1.0.392 | Remote hauler sizing uses path x 3 instead of the cached path x 4, and `CLOSE_REMOTE_ROUND_TRIP_TICKS` moved from 150 to 110 so it keeps its old meaning. W41N59's remote target goes from 8 to 6. |
+
+**Walls**
+
+- Walls (19,2) and (19,3) were dismantled by two 25 WORK breakers and the order cleared itself.
+- Walls (18,2), (18,3) and (17,2) are still standing and are not needed now that the lane works.
+
+**Measurements**
+
+- The cached `remoteDistance` is path x 4, which is double the real round trip (path x 2).
+  Its readers (`remotePlanner.ts`, `keeperKiller`) depend on that, so the scaling is applied in `remoteHaulersWanted` and the cache is untouched.
+- W41N58 utilisation sample (8 samples over about 77 ticks): both containers stayed at 0 energy, no dropped energy, and 6 to 8 of the 8 haulers sat empty at the pickup.
+  This showed the remote was oversupplied.
+- W43N59 and W42N58 sample (8 samples over about 115 ticks): containers filled to 630 and 490 while haulers were away.
+  Their 3 haulers each are about right, so they were left alone.
+- The profiler EMA only updates when a function runs, so interval-gated managers report per-call cost.
+  Divide by the interval for the per-tick cost.
+
+**Decision recorded**
+
+- Terminal, labs, factory and observer need bucket at or above 5000 (`THROTTLE_NORMAL`), so they have been off while the bucket sits below it.
+- Credits are about 582M, so Andrew decided selling is not needed.
+  He also decided to leave labs gated, since running them would add load and slow the bucket's recovery.
+- A frozen credit balance, stale market and transfer lists and a stuck UL reaction in health checks are therefore expected at this bucket level.
+
+**Open**
+
+- Re-run the W41N58 utilisation probe once the two extra W41N59 haulers have expired, to confirm 6 is enough (containers filling would mean it is short).
+- Watch W44N57 storage (fell from 54k to about 36k while the other rooms rose).
+- Consider a remote cap or a smaller remote for young rooms, since an RCL4 room carrying a 55-tile remote costs 6 haulers plus miners and a reserver.
+- The W42N59 boost counter (102 timeouts) is stale, with its last failure about 1M ticks ago.
+- The 1d gate for further rooms (loop at or below about 15 and bucket above 6000, sustained) is not met, so rooms 6 to 8 stay blocked.
+
 ### Decision for Andrew (not recommended first)
 
 - **Multi-shard expansion** would need a paid CPU unlock to get 20 + GCL x 10 on other shards.
