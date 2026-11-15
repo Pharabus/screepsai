@@ -118,7 +118,19 @@ const MAX_HAULERS_PER_SOURCE = 5;
 // drops to CLOSE_REMOTE_HAULER_FLOOR instead. Keeper rooms are excluded —
 // SK guard risk/reaction time justifies keeping their higher floor regardless
 // of distance, and that's a separate concern from plain over-provisioning.
-const CLOSE_REMOTE_ROUND_TRIP_TICKS = 150;
+//
+// Compared against the SCALED trip (path x HAULER_TRIP_PER_PATH_TILE, below), so
+// 110 is the same ~37-tile path boundary the old 150 meant against path x 4.
+const CLOSE_REMOTE_ROUND_TRIP_TICKS = 110;
+
+// remoteDistance is cached as path x 4 (see remotePlanner ensureRemotePathLength;
+// its readers and keeperKiller depend on that). That is double the real round
+// trip (path x 2), which sized W41N59's two-source remote at 8 haulers when 6
+// kept both containers drained (live utilisation sample: 6 of 8 sat empty at
+// the pickup). Hauler sizing uses path x 3 instead: the real 2x plus ~50% for
+// swamp, loading and queueing. Applied here, not in the cache, so no migration.
+const HAULER_TRIP_PER_PATH_TILE = 3;
+const REMOTE_DISTANCE_STORED_PER_PATH_TILE = 4;
 const CLOSE_REMOTE_HAULER_FLOOR = 2;
 
 // Extra haulers for storage->spawn/extension DISTRIBUTION in linked-source rooms. Linked sources
@@ -770,10 +782,12 @@ export function remoteHaulersWanted(
   isKeeperRoom = false,
 ): number {
   const flatPerSource = isHighCapacity ? 3 : 2;
-  const roundTripTicks = Memory.rooms[room.name]?.remoteDistance?.[remoteRoom];
-  if (roundTripTicks === undefined) {
+  const storedDistance = Memory.rooms[room.name]?.remoteDistance?.[remoteRoom];
+  if (storedDistance === undefined) {
     return sourceCount * flatPerSource; // flat fallback — distance not cached yet
   }
+  const roundTripTicks =
+    (storedDistance / REMOTE_DISTANCE_STORED_PER_PATH_TILE) * HAULER_TRIP_PER_PATH_TILE;
   const sourceRate = isHighCapacity ? 10 : 5;
   const haulerBody = buildBody(
     [CARRY, CARRY, MOVE, MOVE],

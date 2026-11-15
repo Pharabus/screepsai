@@ -2554,9 +2554,9 @@ describe('remoteHaulersWanted', () => {
   });
 
   it('uses the close-remote floor (2), not the flat fallback (3), for short distance (~30 tiles) reserved room', () => {
-    // roundTripTicks = 30 tiles × 4 = 120, below CLOSE_REMOTE_ROUND_TRIP_TICKS (150)
+    // cached 30 tiles × 4 = 120 → hauler trip 120 × 3/4 = 90, below CLOSE_REMOTE_ROUND_TRIP_TICKS (110)
     // haulerBody at 2300e: [CARRY×2, MOVE×2] × 8 = 16 CARRY → 800 carry capacity
-    // ceil(120 × 10 / 800) = ceil(1.5) = 2; close-remote floor = 2; Math.max(2, 2) = 2
+    // round(90 × 10 / 800) = round(1.1) = 1; close-remote floor = 2; Math.max(2, 1) = 2
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 120 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(2);
@@ -2570,26 +2570,35 @@ describe('remoteHaulersWanted', () => {
     expect(remoteHaulersWanted(room, 'SK1', 1, true, true)).toBe(3);
   });
 
-  it('reserved room at or above CLOSE_REMOTE_ROUND_TRIP_TICKS (150) keeps the flat floor (3)', () => {
-    // roundTripTicks = 150 (boundary, not < 150) → flat floor (3), not the close floor
-    // ceil(150 × 10 / 800) = ceil(1.875) = 2; Math.max(3, 2) = 3
-    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 150 } } };
+  it('reserved room at or above CLOSE_REMOTE_ROUND_TRIP_TICKS (110, scaled) keeps the flat floor (3)', () => {
+    // The threshold applies to the scaled trip (cached × 3/4), so it still means
+    // a ~37-tile path: cached 148 → 111 (above) keeps 3, cached 144 → 108 (below) drops to 2.
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 2300 });
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 148 } } };
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 144 } } };
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(2);
+  });
+
+  it('sizes haulers on path x 3, not the cached path x 4 (W41N59 live case: 8 down to 6)', () => {
+    // cached 220 (55-tile path) → trip 165; 600 carry (1300e) → round(165 × 10 / 600) = round(2.75) = 3
+    // per source; 2 sources → 6. The old unscaled 220 gave round(3.67) = 4 per source = 8.
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 220 } } };
+    const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1300 });
+    expect(remoteHaulersWanted(room, 'W2N1', 2, true)).toBe(6);
   });
 
   it('scales above lower bound for long distance (~70 tiles) reserved room', () => {
-    // roundTripTicks = 70 tiles × 4 = 280
-    // haulerBody at 2300e: 16 CARRY → 800 carry capacity
-    // ceil(280 × 10 / 800) = ceil(3.5) = 4; Math.max(3, 4) = 4
-    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
+    // cached 110 tiles × 4 = 440 → trip 330; 1600e: 16 CARRY → 800 carry capacity
+    // round(330 × 10 / 800) = round(4.1) = 4; Math.max(3, 4) = 4
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 440 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
-    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBeGreaterThanOrEqual(4);
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(4);
   });
 
   it('scales with sourceCount (2 sources at long distance)', () => {
-    // haulersPerSource = 4 (Math.max(3, ceil(3.5))), × 2 sources = 8
-    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 280 } } };
+    // haulersPerSource = 4 (Math.max(3, round(4.1))), × 2 sources = 8
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 440 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'W2N1', 2, true)).toBe(8);
   });
@@ -2618,10 +2627,10 @@ describe('remoteHaulersWanted', () => {
     expect(remoteHaulersWanted(room, 'SK1', 3, true, true)).toBe(9);
   });
 
-  it('SK room scales above floor for long distance (remoteDistance=320)', () => {
-    // roundTripTicks = 320, sourceRate = 10, carryCapacity = 800
-    // ceil(320 × 10 / 800) = 4 per source; 4 × 3 = 12
-    (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 320 } } };
+  it('SK room scales above floor for long distance (remoteDistance=440)', () => {
+    // cached 440 → trip 330, sourceRate = 10, carryCapacity = 800
+    // round(330 × 10 / 800) = 4 per source; 4 × 3 = 12
+    (Memory as any).rooms = { W1N1: { remoteDistance: { SK1: 440 } } };
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     expect(remoteHaulersWanted(room, 'SK1', 3, true)).toBe(12);
   });
@@ -2650,8 +2659,8 @@ describe('remoteHaulersWanted', () => {
   });
 
   it('rounds down a <0.5 fractional shortfall instead of rounding up (live case: 248-tick round trip)', () => {
-    // roundTripTicks = 248, sourceRate = 10, carryCapacity = 800 → 3.1
-    // round(3.1) = 3; flat floor = 3 (reserved, >= CLOSE_REMOTE_ROUND_TRIP_TICKS); Math.max(3,3) = 3
+    // cached 248 (trip 186), sourceRate = 10, carryCapacity = 800 → 2.3
+    // round(2.3) = 2; flat floor = 3 (reserved, >= CLOSE_REMOTE_ROUND_TRIP_TICKS); Math.max(3,2) = 3
     // Previously ceil(3.1) = 4 — the source container's own buffer absorbs the
     // small shortfall, so the 4th hauler was pure over-provisioning (W42N58 live).
     (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 248 } } };
@@ -2660,17 +2669,18 @@ describe('remoteHaulersWanted', () => {
   });
 
   it('still rounds up a >=0.5 fractional remainder (does not under-provision a tight room)', () => {
-    // roundTripTicks = 264, sourceRate = 10, carryCapacity = 800 → 3.3... use a value
-    // that lands exactly on .5 to prove round-half-up, not round-down-always:
-    // roundTripTicks = 260 → 260*10/800 = 3.25 rounds to 3; use 292 → 3.65 rounds to 4.
-    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 292 } } };
+    // carryCapacity = 800, sourceRate = 10. Cached 392 → trip 294 → 3.675 rounds up to 4;
+    // cached 368 → trip 276 → 3.45 rounds down to 3.
     const room = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 392 } } };
     expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(4);
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 368 } } };
+    expect(remoteHaulersWanted(room, 'W2N1', 1, true)).toBe(3);
   });
 
   it('a high-capacity room builds the REMOTE_HAULER_MAX_REPEATS body, so fewer haulers cover the same route', () => {
-    // 292-tick round trip: 8-repeat body (16 CARRY, 800) needs 4; 12-repeat (24 CARRY, 1200) rounds to 2, floored to 3.
-    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 292 } } };
+    // cached 392 (trip 294): 8-repeat body (16 CARRY, 800) needs 4; 12-repeat (24 CARRY, 1200) rounds to 2, floored to 3.
+    (Memory as any).rooms = { W1N1: { remoteDistance: { W2N1: 392 } } };
     const small = mockRoom({ name: 'W1N1', energyCapacityAvailable: 1600 });
     const big = mockRoom({ name: 'W1N1', energyCapacityAvailable: 12900 });
     expect(remoteHaulersWanted(small, 'W2N1', 1, true)).toBe(4);
