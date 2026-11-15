@@ -533,22 +533,30 @@ export function upgradersNeeded(room: Room): number {
   }
 
   // MATURE COLONY (RCL 6+):
+  const n = matureUpgraderCount(room, stored);
+  if (rcl < 8) return n;
+  // RCL8: the engine caps controller upgrading at CONTROLLER_MAX_UPGRADE_PER_TICK
+  // (15 energy/tick) per room, so WORK beyond that is wasted. One full-size
+  // upgrader already saturates it; extra ones only cost spawn energy and CPU
+  // (live: W42N59 and W43N58 ran 2 x 15 WORK for a 15/tick cap).
+  const wParts = Math.max(1, upgraderWorkParts(room));
+  return Math.min(n, Math.max(1, Math.ceil(RCL8_UPGRADE_CAP / wParts)));
+}
+
+/** Controller energy-per-tick cap at RCL8 (game constant, not in the typings). */
+const RCL8_UPGRADE_CAP = 15;
+
+function matureUpgraderCount(room: Room, stored: number): number {
   if (Memory.holisticEconomy) {
     // Continuous formula: ceil(upgradePower / upgraderWorkParts), clamped [1, 4].
     // upgradePower scales monotonically with colonyEnergy (storage + terminal)
     // above the RCL buffer, so there are no step-function cliffs and the count
-    // never drops as energy increases. The hard floor min of 1 is preserved for
-    // all non-RCL8 rooms (RCL8 is handled by the hard-floor block above when
-    // stored < 5k; above that, min=1 is benign — controller can still accept input).
-    // See src/utils/economy.ts for formula, constants, and calibration examples.
+    // never drops as energy increases. See src/utils/economy.ts for the formula.
     const wParts = Math.max(1, upgraderWorkParts(room));
     const power = upgradePower(room);
-    const n = Math.ceil(power / wParts);
-    return Math.min(Math.max(1, n), 4);
+    return Math.min(Math.max(1, Math.ceil(power / wParts)), 4);
   }
   // Flag-off: existing literal step ramp (unchanged).
-  // ramp starts at 50k; factory floor (120k) sits above this band so batteries
-  // only form from genuine surplus.
   if (stored < 50_000) return 1;
   if (stored < 150_000) return 2;
   if (stored < 400_000) return 3;

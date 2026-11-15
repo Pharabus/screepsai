@@ -1250,6 +1250,40 @@ describe('upgradersNeeded', () => {
   });
 });
 
+describe('upgradersNeeded - RCL8 controller cap', () => {
+  const rcl8 = (stored: number, capacity: number) => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    return mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: capacity,
+      controller: { level: 8, ticksToDowngrade: 100_000 },
+      storage: { my: true, store: { getUsedCapacity: () => stored } },
+    });
+  };
+
+  it('needs only 1 full-size (15 WORK) upgrader however rich the storage', () => {
+    expect(upgradersNeeded(rcl8(165_000, 12_900))).toBe(1);
+    expect(upgradersNeeded(rcl8(600_000, 12_900))).toBe(1);
+  });
+
+  it('allows more small upgraders when the body is under the 15/tick cap', () => {
+    // 1,500 energy cap -> 14 WORK -> ceil(15/14) = 2; 800 cap -> 7 WORK -> ceil(15/7) = 3
+    expect(upgradersNeeded(rcl8(165_000, 1_500))).toBe(2);
+    expect(upgradersNeeded(rcl8(165_000, 800))).toBe(3);
+  });
+
+  it('does not affect RCL7 rooms, which have no per-tick cap', () => {
+    (Memory as any).rooms = { W1N1: { minerEconomy: true } };
+    const room = mockRoom({
+      name: 'W1N1',
+      energyCapacityAvailable: 12_900,
+      controller: { level: 7 },
+      storage: { my: true, store: { getUsedCapacity: () => 165_000 } },
+    });
+    expect(upgradersNeeded(room)).toBe(3);
+  });
+});
+
 describe('upgradersNeeded — mineral-priority lean profile', () => {
   it('stays at exactly 1 regardless of storage level, unlike a normal mature room', () => {
     (Memory as any).rooms = {
