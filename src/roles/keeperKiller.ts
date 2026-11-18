@@ -3,6 +3,7 @@ import { moveTo, isInRoomInterior } from '../utils/movement';
 import { PRIORITY_WORKER } from '../utils/trafficManager';
 import { runStateMachine, StateMachineDefinition } from '../utils/stateMachine';
 import { getStructuresByType } from '../utils/tickCache';
+import { recordKillerPatrolTick } from '../utils/keeperStats';
 
 /**
  * keeperKiller — clears Source Keeper NPCs from SK rooms.
@@ -61,6 +62,8 @@ const states: StateMachineDefinition = {
       const travelTime =
         (homeRoom ? Memory.rooms[homeRoom]?.remoteDistance?.[targetRoom] : undefined) ?? 100;
       if ((creep.ticksToLive ?? 1500) < travelTime) return 'RETREAT';
+
+      recordKillerPatrolTick(targetRoom);
 
       // Self-heal every tick — heal fires alongside attack in the same tick.
       creep.heal(creep);

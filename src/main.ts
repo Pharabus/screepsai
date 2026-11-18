@@ -34,6 +34,7 @@ import { replanPerimeterForRoom } from './utils/perimeterPlanner';
 import { summarizeNeighbors } from './utils/neighbors';
 import { formatCombatLog } from './utils/combatLog';
 import { formatBoostStats } from './utils/boost';
+import { formatKeeperStats, observeKeeperLairs } from './utils/keeperStats';
 import {
   startClaim,
   canClaimAnotherRoom,
@@ -129,6 +130,7 @@ export const neighbors = () => summarizeNeighbors();
 
 export const combatLog = () => formatCombatLog();
 export const boostStatus = () => formatBoostStats();
+export const keeperStatus = () => formatKeeperStats();
 export const marketStatus = () => formatMarketStatus();
 
 export const suggestSpawn = (roomName: string): string => {
@@ -708,6 +710,7 @@ global.strandedExtensions = strandedExtensions;
 global.neighbors = neighbors;
 global.combatLog = combatLog;
 global.boostStatus = boostStatus;
+global.keeperStatus = keeperStatus;
 global.marketStatus = marketStatus;
 global.suggestSpawn = suggestSpawn;
 global.claim = claim;
@@ -746,6 +749,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     if (shouldRun({ priority: THROTTLE_HIGH })) profile('links', runLinks);
     profile('rooms', runRooms);
     profile('traffic', resolveTraffic);
+    profile('keepers', observeKeeperLairs);
     if (shouldRun({ priority: THROTTLE_HIGH })) profile('towers', runTowers);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('labs', runLabs);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);

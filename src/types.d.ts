@@ -412,7 +412,8 @@ type CombatEventType =
   | 'threat_ended' // all hostiles gone / cleared from an owned room
   | 'safe_mode_activated' // controller.activateSafeMode() succeeded
   | 'safe_mode_unavailable' // would activate but no charges or cooldown blocking
-  | 'tower_energy_low'; // a tower dropped below 25 % capacity during active combat
+  | 'tower_energy_low' // a tower dropped below 25 % capacity during active combat
+  | 'keeper_killer_lost'; // a keeperKiller died in a Source Keeper room before its natural end
 
 interface CombatEvent {
   tick: number;
@@ -448,6 +449,24 @@ interface ProfilerSample {
  * `Memory.boostDebug` log-tail. A room where failures dominate `success` means
  * boosting is silently failing — the recurrence the timeout otherwise hides.
  */
+/** Per Source Keeper room counters (src/utils/keeperStats.ts), read via `keeperStatus()`. */
+interface KeeperRoomStat {
+  /** Keeper lair respawn timers observed starting (a keeper died while we had vision). */
+  kills: number;
+  /** keeperKillers that died before their natural end without retreating. */
+  lost: number;
+  /** keeperKillers recycled after entering RETREAT. */
+  retired: number;
+  /** keeperKillers that lived their full lifetime. */
+  expired: number;
+  /** Total ticks keeperKillers spent in PATROL in this room. */
+  patrolTicks: number;
+  /** Sum of the ages of lost killers, for the average age at death. */
+  lostAgeSum: number;
+  lastKillTick?: number;
+  lastLostTick?: number;
+}
+
 interface BoostRoomStat {
   /** ensureBoosted() spent its full travel+wait budget unfilled (BOOST_WAIT_TIMEOUT). */
   failTimeout: number;
@@ -682,6 +701,11 @@ interface Memory {
    * failures are visible via `boostStatus()`. See BoostRoomStat.
    */
   boostStats?: Record<string, BoostRoomStat>;
+  /**
+   * Per Source Keeper room kill/loss counters. Always-on, tiny. Read via
+   * `keeperStatus()`; see src/utils/keeperStats.ts.
+   */
+  keeperStats?: Record<string, KeeperRoomStat>;
   /**
    * When true, the per-room hauler pool dispatcher (`src/managers/haulerPool.ts`)
    * governs the source-container pickup leg: haulers are pre-assigned to

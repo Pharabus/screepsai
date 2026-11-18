@@ -49,6 +49,7 @@ import { resetTickCache } from '../../src/utils/tickCache';
 (globalThis as any).STRUCTURE_TERMINAL = 'terminal';
 (globalThis as any).STRUCTURE_LAB = 'lab';
 (globalThis as any).STRUCTURE_KEEPER_LAIR = 'keeperLair';
+(globalThis as any).CREEP_LIFE_TIME = 1500;
 (globalThis as any).STRUCTURE_FACTORY = 'factory';
 (globalThis as any).STRUCTURE_NUKER = 'nuker';
 (globalThis as any).STRUCTURE_POWER_SPAWN = 'powerSpawn';

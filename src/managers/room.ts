@@ -2,10 +2,13 @@ import { roles } from '../roles';
 import { profile } from '../utils/profiler';
 import { shouldThrottleCreep } from '../utils/creepThrottle';
 import { markDispatched } from '../utils/trafficManager';
+import { recordKeeperKillerEnd } from '../utils/keeperStats';
 
 function cleanDeadCreepMemory(): void {
   for (const name in Memory.creeps) {
     if (!(name in Game.creeps)) {
+      const mem = Memory.creeps[name];
+      if (mem) recordKeeperKillerEnd(name, mem);
       delete Memory.creeps[name];
     }
   }
