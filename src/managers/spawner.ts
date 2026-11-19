@@ -33,6 +33,7 @@ import {
   BOOTSTRAP_STRANDED_ENERGY_FLOOR,
 } from '../utils/thresholds';
 import { myStorage, myTerminal } from '../utils/ownership';
+import { keeperBreakerOpen } from '../utils/keeperStats';
 import { compoundInTransit } from '../utils/boost';
 import { coloniesForHome, updateColonyStates, getColonyScore } from '../utils/colonyPlanner';
 import {
@@ -873,6 +874,7 @@ export function keeperKillersNeeded(home: Room): number {
   if (!keeperEngagementReady(home)) return 0;
   return getKeeperTargetRooms(home).filter(
     (targetRoom) =>
+      !keeperBreakerOpen(targetRoom) &&
       !Object.values(Game.creeps).some(
         (c) =>
           c.memory.role === 'keeperKiller' &&
@@ -1225,7 +1227,7 @@ export function buildSpawnQueue(room: Room): SpawnRequest[] {
         c.memory.targetRoom === targetRoom &&
         c.memory.homeRoom === room.name,
     );
-    if (hasKiller) continue;
+    if (hasKiller || keeperBreakerOpen(targetRoom)) continue;
     const keeperBody = buildKeeperKillerBody(room.energyCapacityAvailable);
     if (!keeperBody) continue;
     queue.push({

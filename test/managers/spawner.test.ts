@@ -2755,6 +2755,16 @@ describe('keeperKillersNeeded', () => {
     expect(keeperKillersNeeded(room)).toBe(1);
   });
 
+  it('returns 0 while the keeper circuit breaker is open for the target', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'] },
+      W0N0: { scoutedHasKeepers: true },
+    };
+    (Memory as any).keeperStats = { W0N0: { breakerUntil: (Game as any).time + 100 } };
+    (Game as any).creeps = {};
+    expect(keeperKillersNeeded(readyRoom())).toBe(0);
+  });
+
   it('returns 0 when a killer is already assigned to the SK remote', () => {
     (Memory as any).rooms = {
       W1N1: { remoteRooms: ['W0N0'] },

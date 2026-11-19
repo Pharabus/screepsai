@@ -2,6 +2,7 @@ import {
   classifyKeeperKillerEnd,
   formatKeeperStats,
   observeKeeperLairs,
+  keeperBreakerOpen,
   recordKeeperKillerEnd,
   recordKillerPatrolTick,
   spawnTickFromName,
@@ -88,6 +89,51 @@ describe('keeperStats', () => {
       recordKeeperKillerEnd('hauler_W2N2_10', { role: 'hauler', targetRoom: 'W1N1' } as any);
       recordKeeperKillerEnd('keeperKiller_W2N2_10', { role: 'keeperKiller' } as any);
       expect((globalThis as any).Memory.keeperStats).toBeUndefined();
+    });
+  });
+
+  describe('circuit breaker', () => {
+    const lose = (i: number) => {
+      (globalThis as any).Game.time = 1000 + i;
+      recordKeeperKillerEnd(`keeperKiller_W2N2_${900 + i}`, {
+        role: 'keeperKiller',
+        targetRoom: 'W1N1',
+        state: 'TRAVEL',
+      } as any);
+    };
+
+    it('stays closed below the streak and trips on the third loss', () => {
+      lose(0);
+      lose(1);
+      expect(keeperBreakerOpen('W1N1')).toBe(false);
+      lose(2);
+      expect(keeperBreakerOpen('W1N1')).toBe(true);
+    });
+
+    it('reopens after the pause and doubles the next pause', () => {
+      lose(0);
+      lose(1);
+      lose(2);
+      const first = (globalThis as any).Memory.keeperStats.W1N1.breakerUntil - 1002;
+      (globalThis as any).Game.time = 1002 + first;
+      expect(keeperBreakerOpen('W1N1')).toBe(false);
+      lose(first + 3);
+      const s = (globalThis as any).Memory.keeperStats.W1N1;
+      expect(s.breakerUntil - (1000 + first + 3)).toBe(first * 2);
+    });
+
+    it('clears when a killer reaches PATROL', () => {
+      lose(0);
+      lose(1);
+      lose(2);
+      recordKillerPatrolTick('W1N1');
+      const s = (globalThis as any).Memory.keeperStats.W1N1;
+      expect(s.streakLost).toBe(0);
+      expect(s.breakerTrips).toBe(0);
+    });
+
+    it('is closed for unknown rooms', () => {
+      expect(keeperBreakerOpen('W9N9')).toBe(false);
     });
   });
 

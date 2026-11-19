@@ -463,6 +463,12 @@ interface KeeperRoomStat {
   patrolTicks: number;
   /** Sum of the ages of lost killers, for the average age at death. */
   lostAgeSum: number;
+  /** Losses in a row without any killer reaching PATROL (circuit breaker input). */
+  streakLost?: number;
+  /** Times the breaker has tripped without a killer reaching PATROL (backoff exponent). */
+  breakerTrips?: number;
+  /** Killer spawning for this room is paused until this tick. */
+  breakerUntil?: number;
   lastKillTick?: number;
   lastLostTick?: number;
 }

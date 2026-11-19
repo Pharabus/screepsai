@@ -52,6 +52,22 @@ export function classifyKeeperKillerEnd(
   return 'lost';
 }
 
+/** Consecutive killer losses (none reaching PATROL) before spawning pauses. */
+export const KEEPER_BREAKER_STREAK = 3;
+/** First pause length; doubles on each further trip, capped at KEEPER_BREAKER_MAX_PAUSE. */
+export const KEEPER_BREAKER_BASE_PAUSE = 3000;
+export const KEEPER_BREAKER_MAX_PAUSE = 24000;
+
+/**
+ * Circuit breaker: true while killer spawning for `room` is paused because
+ * several killers in a row died without ever reaching PATROL (live: 26 x 50-part
+ * killers lost in TRAVEL, each respawned as soon as the storage gate flapped open).
+ */
+export function keeperBreakerOpen(room: string): boolean {
+  const until = Memory.keeperStats?.[room]?.breakerUntil;
+  return until !== undefined && Game.time < until;
+}
+
 function statFor(room: string): KeeperRoomStat {
   const all = (Memory.keeperStats ??= {});
   return (all[room] ??= {
@@ -74,6 +90,13 @@ export function recordKeeperKillerEnd(name: string, mem: CreepMemory): void {
   stat[end]++;
   if (end !== 'lost') return;
   stat.lastLostTick = Game.time;
+  stat.streakLost = (stat.streakLost ?? 0) + 1;
+  if (stat.streakLost >= KEEPER_BREAKER_STREAK) {
+    const trips = stat.breakerTrips ?? 0;
+    const pause = Math.min(KEEPER_BREAKER_BASE_PAUSE * 2 ** trips, KEEPER_BREAKER_MAX_PAUSE);
+    stat.breakerTrips = trips + 1;
+    stat.breakerUntil = Game.time + pause;
+  }
   if (age !== undefined) stat.lostAgeSum += age;
   logCombat({
     tick: Game.time,
@@ -85,7 +108,13 @@ export function recordKeeperKillerEnd(name: string, mem: CreepMemory): void {
 
 /** Called from keeperKiller PATROL each tick. */
 export function recordKillerPatrolTick(room: string): void {
-  statFor(room).patrolTicks++;
+  const stat = statFor(room);
+  stat.patrolTicks++;
+  // A killer that reached PATROL proves the approach works - clear the breaker state.
+  if (stat.streakLost || stat.breakerTrips) {
+    stat.streakLost = 0;
+    stat.breakerTrips = 0;
+  }
 }
 
 /**
@@ -122,7 +151,11 @@ export function formatKeeperStats(): string {
     if (!s) continue;
     const per1k = s.patrolTicks > 0 ? ((s.kills * 1000) / s.patrolTicks).toFixed(1) : '-';
     const avgLost = s.lost > 0 ? Math.round(s.lostAgeSum / s.lost) : '-';
-    const flag = s.lost > s.retired + s.expired ? ' ⚠ LOSING KILLERS' : '';
+    const paused =
+      s.breakerUntil !== undefined && Game.time < s.breakerUntil
+        ? ` ⏸ SPAWN PAUSED until ${s.breakerUntil}`
+        : '';
+    const flag = paused + (s.lost > s.retired + s.expired ? ' ⚠ LOSING KILLERS' : '');
     const last =
       (s.lastKillTick !== undefined ? ` (lastKill @${s.lastKillTick})` : '') +
       (s.lastLostTick !== undefined ? ` (lastLost @${s.lastLostTick})` : '');
