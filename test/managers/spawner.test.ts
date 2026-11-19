@@ -2765,6 +2765,15 @@ describe('keeperKillersNeeded', () => {
     expect(keeperKillersNeeded(readyRoom())).toBe(0);
   });
 
+  it('returns 0 while an invader core blocks the target room', () => {
+    (Memory as any).rooms = {
+      W1N1: { remoteRooms: ['W0N0'] },
+      W0N0: { scoutedHasKeepers: true, invaderCoreSeenAt: (Game as any).time },
+    };
+    (Game as any).creeps = {};
+    expect(keeperKillersNeeded(readyRoom())).toBe(0);
+  });
+
   it('returns 0 when a killer is already assigned to the SK remote', () => {
     (Memory as any).rooms = {
       W1N1: { remoteRooms: ['W0N0'] },

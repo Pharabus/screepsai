@@ -2,7 +2,9 @@ import {
   classifyKeeperKillerEnd,
   formatKeeperStats,
   observeKeeperLairs,
+  invaderCoreBlocks,
   keeperBreakerOpen,
+  keeperEngagementBlocked,
   recordKeeperKillerEnd,
   recordKillerPatrolTick,
   spawnTickFromName,
@@ -162,6 +164,12 @@ describe('keeperStats', () => {
       expect((globalThis as any).Memory.keeperStats.W1N1.kills).toBe(2);
     });
 
+    it('does not count a timer seen after a vision gap that was last seen alive', () => {
+      tick([undefined, undefined], 500);
+      tick([120, undefined], 640);
+      expect((globalThis as any).Memory.keeperStats).toBeUndefined();
+    });
+
     it('does not count a stale timer first seen mid-countdown', () => {
       tick([120, undefined], 300);
       expect((globalThis as any).Memory.keeperStats).toBeUndefined();
@@ -172,6 +180,38 @@ describe('keeperStats', () => {
       tick([undefined], 400);
       tick([300], 401);
       expect((globalThis as any).Memory.keeperStats).toBeUndefined();
+    });
+  });
+
+  describe('invader core gate', () => {
+    const coreRoom = (withCore: boolean) =>
+      mockRoom({
+        name: 'W1N1',
+        find: vi.fn(() => [
+          { id: 'lair0', structureType: 'keeperLair', ticksToSpawn: undefined },
+          ...(withCore ? [{ id: 'core0', structureType: 'invaderCore' }] : []),
+        ]),
+      });
+    const see = (withCore: boolean, time: number) => {
+      (globalThis as any).Game.time = time;
+      (globalThis as any).Game.rooms = { W1N1: coreRoom(withCore) };
+      resetTickCache();
+      observeKeeperLairs();
+    };
+
+    it('blocks engagement once a core is sighted and clears when the room is seen empty', () => {
+      see(true, 1000);
+      expect(invaderCoreBlocks('W1N1')).toBe(true);
+      expect(keeperEngagementBlocked('W1N1')).toBe(true);
+      see(false, 1010);
+      expect(invaderCoreBlocks('W1N1')).toBe(false);
+      expect(keeperEngagementBlocked('W1N1')).toBe(false);
+    });
+
+    it('lets a stale sighting expire without a fresh look', () => {
+      see(true, 1000);
+      (globalThis as any).Game.time = 1000 + 50_000;
+      expect(invaderCoreBlocks('W1N1')).toBe(false);
     });
   });
 

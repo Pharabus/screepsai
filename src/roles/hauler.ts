@@ -61,6 +61,16 @@ const LARGE_DROP_THRESHOLD = 1000;
 // a round trip chasing the tail sliver.
 const HAULER_EFFECTIVELY_FULL_FREE = 50;
 
+/**
+ * Tower energy below which delivery serves the tower BEFORE the spawn and
+ * extensions. Towers are normally topped up only after the spawn network is
+ * full, but a small room with a spawn that is always busy (live W41N59, RCL4:
+ * 1300 capacity, constant defender/remote spawning) never reaches that point,
+ * so its single tower sat at 9/1000 for thousands of ticks and every Invader
+ * raid ran 100-340 ticks instead of ending in ~10.
+ */
+const TOWER_RESERVE_FLOOR = 500;
+
 interface HaulerRoomScan {
   droppedEnergy: Resource[];
   droppedMineral: Resource[];
@@ -1301,6 +1311,22 @@ function deliver(creep: Creep): void {
       creep.drop(mineralType);
       return;
     }
+  }
+
+  const starvedTower = closestByRange(
+    creep.pos,
+    getRoomScan(creep.room).towersNeedingEnergy.filter(
+      (t) => t.store.getUsedCapacity(RESOURCE_ENERGY) < TOWER_RESERVE_FLOOR,
+    ),
+  );
+  if (starvedTower) {
+    if (creep.transfer(starvedTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      moveTo(creep, starvedTower, {
+        priority: PRIORITY_HAULER,
+        visualizePathStyle: { stroke: '#ffffff' },
+      });
+    }
+    return;
   }
 
   if (deliverToSpawnOrExtension(creep)) return;

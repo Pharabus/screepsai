@@ -5,6 +5,7 @@ import {
   scoreSpawnCandidate,
   pruneUnreachableExtensions,
   findStrandedExtensions,
+  findStrandedTowers,
 } from '../../src/utils/layoutPlanner';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
 
@@ -1072,6 +1073,49 @@ describe('isAccessible filter protects built structures from tower/spawn/extensi
       ...plan.spawnPositions.map((p) => `${p.x},${p.y}`),
     ]);
     expect(allPlanned.has('22,22')).toBe(false);
+  });
+});
+
+describe('findStrandedTowers', () => {
+  const spawnPos = new RoomPosition(25, 25, 'W1N1');
+  const build = (towerPos: RoomPosition, ringExtensions: [number, number][]) => {
+    const tower = { structureType: STRUCTURE_TOWER, pos: towerPos };
+    const ring = ringExtensions.map(([dx, dy]) => ({
+      structureType: STRUCTURE_EXTENSION,
+      pos: new RoomPosition(towerPos.x + dx, towerPos.y + dy, 'W1N1'),
+    }));
+    const all = [tower, ...ring];
+    const room = makeRoom();
+    room.find = (type: number, opts?: any) => {
+      if (type === FIND_MY_SPAWNS) return [{ pos: spawnPos }];
+      if (type === FIND_STRUCTURES || type === FIND_MY_STRUCTURES)
+        return opts?.filter ? all.filter(opts.filter) : all;
+      return [];
+    };
+    return room;
+  };
+  const ringAll: [number, number][] = [
+    [-1, -1],
+    [0, -1],
+    [1, -1],
+    [-1, 0],
+    [1, 0],
+    [-1, 1],
+    [0, 1],
+    [1, 1],
+  ];
+
+  it('reports a tower whose 8 neighbours are all obstacles', () => {
+    const room = build(new RoomPosition(30, 9, 'W1N1'), ringAll);
+    expect(findStrandedTowers(room)).toEqual([{ x: 30, y: 9 }]);
+  });
+
+  it('does not report a tower with a reachable neighbour', () => {
+    const room = build(
+      new RoomPosition(30, 9, 'W1N1'),
+      ringAll.filter(([dx, dy]) => !(dx === 0 && dy === 1)),
+    );
+    expect(findStrandedTowers(room)).toEqual([]);
   });
 });
 

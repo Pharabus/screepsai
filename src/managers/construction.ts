@@ -3,6 +3,8 @@ import {
   LAB_STAMP,
   findBestSpawnPosition,
   findStrandedExtensions,
+  findStrandedTowers,
+  reachableFromSpawn,
   wouldSealLiveStructure,
 } from '../utils/layoutPlanner';
 import {
@@ -1156,6 +1158,51 @@ export function clearLabBlockers(room: Room): void {
   }
 }
 
+/**
+ * Frees a tower that no creep can reach. Haulers must stand within range 1 to
+ * refill a tower, so a tower whose 8 neighbours are all walls, structures or
+ * sealed pockets stays empty forever (live W41N59, RCL4: tower at 9/1000 and
+ * raids lasting 100-340 ticks). Destroys one adjacent extension that itself
+ * touches reachable ground - its tile then becomes the tower's access tile -
+ * and splices it from the plan so placeExtensions does not re-seal the tower.
+ * One destroy per call; the freed RCL slot is rebuilt at a reachable position.
+ */
+export function clearTowerBlockers(room: Room): void {
+  const stranded = cached(`strandedTowers:${room.name}`, () => findStrandedTowers(room));
+  if (stranded.length === 0) return;
+  const reachable = reachableFromSpawn(room);
+  if (!reachable) return;
+  for (const tower of stranded) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const x = tower.x + dx;
+        const y = tower.y + dy;
+        const ext = room
+          .lookForAt(LOOK_STRUCTURES, x, y)
+          .find((s) => s.structureType === STRUCTURE_EXTENSION) as StructureExtension | undefined;
+        if (!ext) continue;
+        let touchesReachable = false;
+        for (let ex = -1; ex <= 1 && !touchesReachable; ex++) {
+          for (let ey = -1; ey <= 1; ey++) {
+            if (reachable.has(`${x + ex},${y + ey}`)) {
+              touchesReachable = true;
+              break;
+            }
+          }
+        }
+        if (!touchesReachable) continue;
+        console.log(
+          `[construction] ${room.name}: destroying extension at (${x},${y}) - tower (${tower.x},${tower.y}) has no reachable neighbour`,
+        );
+        ext.destroy();
+        spliceExtensionFromPlan(room.name, x, y);
+        return;
+      }
+    }
+  }
+}
+
 function spliceExtensionFromPlan(roomName: string, x: number, y: number): void {
   const plan = Memory.rooms[roomName]?.layoutPlan;
   if (!plan) return;
@@ -2155,6 +2202,7 @@ export function runConstruction(): void {
     profiledPerRoom(room, 'placeExtractor', placeExtractor);
     profiledPerRoom(room, 'placeMineralContainer', placeMineralContainer);
     profiledPerRoom(room, 'clearBlockingExtensions', clearBlockingExtensions);
+    profiledPerRoom(room, 'clearTowerBlockers', clearTowerBlockers);
     profiledPerRoom(room, 'clearLabBlockers', clearLabBlockers);
     profiledPerRoom(room, 'placeLabs', placeLabs);
     profiledPerRoom(room, 'placeRamparts', placeRamparts);

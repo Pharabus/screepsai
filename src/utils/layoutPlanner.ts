@@ -415,25 +415,10 @@ export function pruneUnreachableExtensions(
   return remaining;
 }
 
-/**
- * Finds already-BUILT extensions and extension construction sites whose 8 neighbours
- * contain no tile reachable from the room's spawn via walkable (non-wall,
- * non-NON_WALKABLE_STRUCTURES) tiles.
- *
- * Used by the `strandedExtensions(roomName)` console command to diagnose live rooms
- * after a plan has already been built — the planner's prune only prevents NEW stranded
- * extensions; this surfaces ones that slipped through before v6 was deployed.
- *
- * Obstacle set = every built NON_WALKABLE_STRUCTURES tile + every extension construction
- * site (sites are passable for pathing but act as obstacles for approach purposes since
- * a creep can't stand on them to interact). Extension structures themselves are also
- * obstacles (creeps must approach from a neighbour, not stand on the extension).
- *
- * Fail open: returns [] if the room has no spawn or all spawn neighbours are blocked.
- */
-export function findStrandedExtensions(room: Room): { x: number; y: number; built: boolean }[] {
+/** Tiles reachable from the spawn over walkable tiles (see findStrandedExtensions). Undefined = fail open. */
+export function reachableFromSpawn(room: Room): Set<string> | undefined {
   const spawn = room.find(FIND_MY_SPAWNS)[0];
-  if (!spawn) return [];
+  if (!spawn) return undefined;
 
   const terrain = room.getTerrain();
 
@@ -452,9 +437,50 @@ export function findStrandedExtensions(room: Room): { x: number; y: number; buil
 
   // Seed flood from spawn's 8 walkable neighbours.
   const seeds = walkableNeighbourSeeds(spawn.pos, obstacleKeys, terrain);
-  if (seeds.length === 0) return []; // fail open
+  if (seeds.length === 0) return undefined; // fail open
 
-  const reachable = floodReachable(seeds, obstacleKeys, terrain);
+  return floodReachable(seeds, obstacleKeys, terrain);
+}
+
+/**
+ * Built towers with no reachable tile in their 8 neighbours. A creep must stand
+ * within range 1 to transfer energy, so a stranded tower can never be refilled
+ * and sits empty through every raid (live W41N59: tower at 9/1000 for thousands
+ * of ticks, sealed in by rock plus extensions around a 2-tile pocket).
+ * Fail open: returns [] if the room has no spawn or the flood cannot start.
+ */
+export function findStrandedTowers(room: Room): { x: number; y: number }[] {
+  const reachable = reachableFromSpawn(room);
+  if (!reachable) return [];
+  const results: { x: number; y: number }[] = [];
+  for (const t of room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_TOWER,
+  })) {
+    const ok = EIGHT_NEIGHBORS.some(([dx, dy]) => reachable.has(`${t.pos.x + dx},${t.pos.y + dy}`));
+    if (!ok) results.push({ x: t.pos.x, y: t.pos.y });
+  }
+  return results;
+}
+
+/**
+ * Finds already-BUILT extensions and extension construction sites whose 8 neighbours
+ * contain no tile reachable from the room's spawn via walkable (non-wall,
+ * non-NON_WALKABLE_STRUCTURES) tiles.
+ *
+ * Used by the `strandedExtensions(roomName)` console command to diagnose live rooms
+ * after a plan has already been built — the planner's prune only prevents NEW stranded
+ * extensions; this surfaces ones that slipped through before v6 was deployed.
+ *
+ * Obstacle set = every built NON_WALKABLE_STRUCTURES tile + every extension construction
+ * site (sites are passable for pathing but act as obstacles for approach purposes since
+ * a creep can't stand on them to interact). Extension structures themselves are also
+ * obstacles (creeps must approach from a neighbour, not stand on the extension).
+ *
+ * Fail open: returns [] if the room has no spawn or all spawn neighbours are blocked.
+ */
+export function findStrandedExtensions(room: Room): { x: number; y: number; built: boolean }[] {
+  const reachable = reachableFromSpawn(room);
+  if (!reachable) return [];
 
   const results: { x: number; y: number; built: boolean }[] = [];
 

@@ -105,6 +105,39 @@ describe('hauler terminal logistics', () => {
     expect(creep.transfer).toHaveBeenCalledWith(terminal, 'H');
   });
 
+  it('serves a starved tower before a spawn that still has room (live W41N59 regression)', () => {
+    const tower = {
+      structureType: STRUCTURE_TOWER,
+      pos: new RoomPosition(30, 25, 'W1N1'),
+      store: mockStore({ energy: 9 }, 1000),
+    };
+    const spawn = {
+      id: 'spawn1',
+      structureType: STRUCTURE_SPAWN,
+      pos: new RoomPosition(20, 25, 'W1N1'),
+      store: mockStore({ energy: 200 }, 300),
+    };
+    const room = mockRoom({
+      name: 'W1N1',
+      find: vi.fn((type: number) =>
+        type === FIND_STRUCTURES || type === FIND_MY_STRUCTURES ? [tower, spawn] : [],
+      ),
+    });
+    (Memory as any).rooms = { W1N1: {} };
+
+    const creep = mockCreep({
+      room,
+      memory: { role: 'hauler', state: 'DELIVER' },
+      store: mockStore({ energy: 300 }, 800),
+      pos: new RoomPosition(25, 25, 'W1N1'),
+    });
+
+    hauler.run(creep);
+
+    expect(creep.transfer).toHaveBeenCalledWith(tower, RESOURCE_ENERGY);
+    expect(creep.memory.targetId).toBeUndefined();
+  });
+
   it('delivers minerals to storage when no terminal exists', () => {
     const storage = {
       my: true,

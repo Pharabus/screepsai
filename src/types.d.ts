@@ -129,6 +129,8 @@ interface RoomMemory {
   // NPC Invader presence — set/cleared by defense manager and hunter role.
   // Used by spawner to queue hunters for remote/transit rooms.
   invaderSeenAt?: number;
+  /** Last tick an Invader Core (stronghold) was seen in this room. Cleared when the room is visible with none. */
+  invaderCoreSeenAt?: number;
   // Room planning (src/managers/spawner.ts, construction.ts)
   sources?: {
     id: Id<Source>;

@@ -27,8 +27,8 @@ import { logCombat } from './combatLog';
 /** A lair respawn timer this high means the keeper died within the last few ticks. */
 const FRESH_KILL_TICKS = 290;
 
-/** Heap-only: last seen `ticksToSpawn` per lair id (undefined = keeper alive). */
-const lastLairTimer = new Map<string, number | undefined>();
+/** Heap-only: last seen `ticksToSpawn` per lair id (undefined = keeper alive) and the tick it was seen. */
+const lastLairTimer = new Map<string, { timer: number | undefined; tick: number }>();
 
 export type KeeperKillerEnd = 'lost' | 'retired' | 'expired';
 
@@ -66,6 +66,25 @@ export const KEEPER_BREAKER_MAX_PAUSE = 24000;
 export function keeperBreakerOpen(room: string): boolean {
   const until = Memory.keeperStats?.[room]?.breakerUntil;
   return until !== undefined && Game.time < until;
+}
+
+/**
+ * How long a sighted Invader Core keeps a keeper room blocked without a fresh
+ * look. A stronghold brings towers and defenders that kill a lone keeper killer
+ * in ~20 ticks (live W44N56: 34 killers lost in TRAVEL, none reached PATROL), and
+ * cores live tens of thousands of ticks. Re-sighting an empty room clears it early.
+ */
+export const INVADER_CORE_BLOCK_TICKS = 50_000;
+
+/** True when a recently sighted Invader Core makes this keeper room unwinnable. */
+export function invaderCoreBlocks(room: string): boolean {
+  const seen = Memory.rooms?.[room]?.invaderCoreSeenAt;
+  return seen !== undefined && Game.time - seen < INVADER_CORE_BLOCK_TICKS;
+}
+
+/** No keeper killer should be spawned for this room right now. */
+export function keeperEngagementBlocked(room: string): boolean {
+  return keeperBreakerOpen(room) || invaderCoreBlocks(room);
 }
 
 function statFor(room: string): KeeperRoomStat {
@@ -125,15 +144,23 @@ export function observeKeeperLairs(): void {
   for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
     if (!room || !Memory.rooms[roomName]?.scoutedHasKeepers) continue;
+    const rmem = Memory.rooms[roomName];
+    if (rmem) {
+      const cores = getStructuresByType(room)[STRUCTURE_INVADER_CORE] ?? [];
+      if (cores.length > 0) rmem.invaderCoreSeenAt = Game.time;
+      else delete rmem.invaderCoreSeenAt;
+    }
     const lairs = (getStructuresByType(room)[STRUCTURE_KEEPER_LAIR] ?? []) as StructureKeeperLair[];
     for (const lair of lairs) {
       const now = lair.ticksToSpawn;
-      const had = lastLairTimer.has(lair.id) ? lastLairTimer.get(lair.id) : undefined;
-      const seen = lastLairTimer.has(lair.id);
-      lastLairTimer.set(lair.id, now);
+      const prev = lastLairTimer.get(lair.id);
+      lastLairTimer.set(lair.id, { timer: now, tick: Game.time });
       if (now === undefined) continue;
-      // Keeper alive last tick, dead now - or first sight of a very fresh timer.
-      const fresh = seen ? had === undefined : now >= FRESH_KILL_TICKS;
+      // Only a continuous observation can prove a kill: a gap in vision (a killer
+      // briefly entering and leaving the room) would otherwise read the stale
+      // "keeper alive" entry as a death. After a gap, only a very fresh timer counts.
+      const continuous = prev !== undefined && prev.tick === Game.time - 1;
+      const fresh = continuous ? prev.timer === undefined : now >= FRESH_KILL_TICKS;
       if (!fresh) continue;
       const stat = statFor(roomName);
       stat.kills++;
@@ -151,11 +178,14 @@ export function formatKeeperStats(): string {
     if (!s) continue;
     const per1k = s.patrolTicks > 0 ? ((s.kills * 1000) / s.patrolTicks).toFixed(1) : '-';
     const avgLost = s.lost > 0 ? Math.round(s.lostAgeSum / s.lost) : '-';
+    const core = invaderCoreBlocks(room)
+      ? ` ☠ INVADER CORE (seen @${Memory.rooms[room]?.invaderCoreSeenAt})`
+      : '';
     const paused =
       s.breakerUntil !== undefined && Game.time < s.breakerUntil
         ? ` ⏸ SPAWN PAUSED until ${s.breakerUntil}`
         : '';
-    const flag = paused + (s.lost > s.retired + s.expired ? ' ⚠ LOSING KILLERS' : '');
+    const flag = core + paused + (s.lost > s.retired + s.expired ? ' ⚠ LOSING KILLERS' : '');
     const last =
       (s.lastKillTick !== undefined ? ` (lastKill @${s.lastKillTick})` : '') +
       (s.lastLostTick !== undefined ? ` (lastLost @${s.lastLostTick})` : '');
