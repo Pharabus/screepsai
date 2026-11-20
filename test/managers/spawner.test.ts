@@ -1347,8 +1347,22 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
 
   it('young colony with healthy income → more upgraders than 1 at moderate storage', () => {
     const room = youngRoomWithIncome(20_000);
-    // stored=20k ≥ 15k threshold → should return 3
-    expect(upgradersNeeded(room)).toBe(3);
+    // Healthy income and no sites → the young-colony cap of 2
+    expect(upgradersNeeded(room)).toBe(2);
+  });
+
+  it('young colony never exceeds 2 upgraders however rich the storage (live W41N59 had 4)', () => {
+    expect(upgradersNeeded(youngRoomWithIncome(88_000, 5))).toBe(2);
+    expect(upgradersNeeded(youngRoomWithIncome(400_000, 5))).toBe(2);
+  });
+
+  it('young colony drops to 1 upgrader while the CPU bucket is below 5000', () => {
+    const room = youngRoomWithIncome(88_000, 5);
+    (Game as any).cpu = { ...((Game as any).cpu ?? {}), bucket: 4300 };
+    expect(upgradersNeeded(room)).toBe(1);
+    (Game as any).cpu = { ...((Game as any).cpu ?? {}), bucket: 5200 };
+    resetColonyScoreCache();
+    expect(upgradersNeeded(room)).toBe(2);
   });
 
   it('young colony at hard floor (stored < 5k) → backs off to 1', () => {
@@ -1387,7 +1401,7 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
     expect(upgradersNeeded(room)).toBe(1);
   });
 
-  it('young colony with income, construction sites, but high storage → pushes harder (3)', () => {
+  it('young colony with income, construction sites, but high storage → pushes harder (2)', () => {
     (Memory as any).rooms = {
       W1N1: {
         minerEconomy: true,
@@ -1411,7 +1425,7 @@ describe('upgradersNeeded — young colony (RCL < 6)', () => {
       },
       find: vi.fn((type: number) => (type === FIND_MY_CONSTRUCTION_SITES ? [{}] : [])),
     });
-    expect(upgradersNeeded(room)).toBe(3);
+    expect(upgradersNeeded(room)).toBe(2);
   });
 
   it('young income-starved colony (no miners) → conservative 1', () => {

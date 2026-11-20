@@ -100,6 +100,15 @@ export function resetSpawnQueueCache(): void {
  * = 20 (at threshold → young path unlocked).
  */
 const YOUNG_COLONY_MIN_SCORE = 20;
+/**
+ * Upper bound on upgraders for a young colony (RCL < 6). The storage ramp used to
+ * reach 4 (live W41N59, RCL5: 4 x 12 WORK = 48 energy/tick against ~40/tick of
+ * income, storage falling ~20k over 15k ticks, ~0.7 CPU/tick under a loop already
+ * over the 20 CPU limit). RCL5 to 6 needs ~1.2M energy, so racing it buys little.
+ */
+const YOUNG_COLONY_MAX_UPGRADERS = 2;
+/** Below this bucket a young colony drops to one upgrader (CPU is the scarce resource). */
+const YOUNG_COLONY_LOW_BUCKET = 5000;
 
 // Upper bound on haulers assigned to a single source. A very distant source
 // (e.g. pathDist 100 across swamp) would otherwise demand 8+ haulers to move
@@ -499,6 +508,8 @@ export function haulersNeeded(room: Room): number {
  *   (c) Don't starve builders: when construction sites exist AND storage is
  *       below 20k, cap at 1 so builders also get spawn time. Upgrading alone
  *       won't level the room if the RCL-5 links / RCL-6 structures aren't built.
+ *   (d) Capped at YOUNG_COLONY_MAX_UPGRADERS (2), and 1 while the CPU bucket is
+ *       under YOUNG_COLONY_LOW_BUCKET (5000) - the old storage ramp reached 4.
  *
  * MATURE COLONY (RCL 6+): ramp starts at 50k now that FACTORY_ENERGY_FLOOR
  *   has been raised to 120k. Previously the factory consumed everything above
@@ -540,9 +551,9 @@ export function upgradersNeeded(room: Room): number {
     if (sites > 0 && stored < 20_000) return 1;
 
     // Healthy income, no construction bottleneck: push harder toward next RCL
-    if (stored < 15_000) return 2;
-    if (stored < 40_000) return 3;
-    return 4;
+    // Capped at YOUNG_COLONY_MAX_UPGRADERS; one while the CPU bucket is under pressure.
+    if ((Game.cpu?.bucket ?? 10_000) < YOUNG_COLONY_LOW_BUCKET) return 1;
+    return YOUNG_COLONY_MAX_UPGRADERS;
   }
 
   // MATURE COLONY (RCL 6+):
