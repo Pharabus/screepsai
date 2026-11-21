@@ -36,7 +36,7 @@ describe('scout', () => {
     });
 
     it('returns stale room for re-scout', () => {
-      Game.time = 10000;
+      Game.time = 30000;
       Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
       Memory.rooms['W2N1'] = { scoutedAt: 4000 } as any;
@@ -108,11 +108,11 @@ describe('scout', () => {
       expect(creep.memory.targetRoom).toBe('W1N2');
     });
 
-    it('re-scouts rooms with stale data (>5000 ticks)', () => {
-      Game.time = 10000;
+    it('re-scouts rooms with stale data (>20000 ticks)', () => {
+      Game.time = 30000;
       Game.map.describeExits = () => ({ '1': 'W2N1', '3': 'W1N2' }) as any;
       Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
-      Memory.rooms['W2N1'] = { scoutedAt: 9000, scoutedSources: 1 } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 29000, scoutedSources: 1 } as any;
       Memory.rooms['W1N2'] = { scoutedAt: 4000, scoutedSources: 2 } as any;
 
       const creep = mockCreep({
@@ -123,6 +123,14 @@ describe('scout', () => {
       scout.run(creep);
 
       expect(creep.memory.targetRoom).toBe('W1N2');
+    });
+
+    it('does not re-scout a room scouted 10000 ticks ago', () => {
+      Game.time = 30000;
+      Game.map.describeExits = () => ({ '1': 'W2N1' }) as any;
+      Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+      Memory.rooms['W2N1'] = { scoutedAt: 20000, scoutedSources: 1 } as any;
+      expect(findScoutTarget('W1N1')).toBeUndefined();
     });
 
     it('skips unreachable rooms within 50000-tick blocked window', () => {

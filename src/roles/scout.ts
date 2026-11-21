@@ -10,7 +10,10 @@ function pickScoutTarget(creep: Creep): string | undefined {
 }
 
 const SCOUT_MAX_DEPTH = 3;
-const SCOUT_STALE_TICKS = 5000;
+// Refresh interval for already-scouted rooms. Remote selection decays NPC
+// sightings and reservations on its own, so staler intel is safe; 5000 meant
+// ~35 rooms in range produced a scout every ~150 ticks forever.
+const SCOUT_STALE_TICKS = 20_000;
 // Rooms flagged scoutUnreachable use this longer cooldown (~4.6 h at 3 t/s)
 // so the spawner doesn't waste scouts on routes blocked by enemy rooms.
 const SCOUT_BLOCKED_TICKS = 50_000;
