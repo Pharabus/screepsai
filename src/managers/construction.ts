@@ -2152,6 +2152,40 @@ export function canSkipConstructionSweep(
   return (time + roomSweepPhase(roomName)) % SETTLED_SWEEP_INTERVAL >= 5;
 }
 
+/** Bucket floor for the growing-colony construction exception (normal gate is 5000). */
+export const GROWTH_CONSTRUCTION_BUCKET_FLOOR = 3000;
+
+const GROWTH_SLOT_TYPES = [
+  STRUCTURE_EXTENSION,
+  STRUCTURE_TOWER,
+  STRUCTURE_SPAWN,
+  STRUCTURE_LINK,
+  STRUCTURE_LAB,
+] as const;
+
+/**
+ * True when an owned room below RCL8 has unspent RCL structure slots (built plus
+ * sites under the controller's allowance). Lets construction run below the normal
+ * 5000 bucket floor for growing colonies: live W41N59 reached RCL5 and sat with
+ * no new building for thousands of ticks because the bucket idled at 3700-4400,
+ * while holding 563k idle energy. RCL8 rooms are excluded, they are mostly done.
+ */
+export function growingRoomNeedsConstruction(): boolean {
+  if (typeof CONTROLLER_STRUCTURES === 'undefined') return false;
+  for (const room of Object.values(Game.rooms)) {
+    const level = room.controller?.my ? room.controller.level : 0;
+    if (level === 0 || level >= 8) continue;
+    const built = getMyStructuresByType(room);
+    const sites = getMySitesByType(room);
+    for (const type of GROWTH_SLOT_TYPES) {
+      const allowed = CONTROLLER_STRUCTURES[type]?.[level] ?? 0;
+      const have = (built[type]?.length ?? 0) + (sites[type]?.length ?? 0);
+      if (have < allowed) return true;
+    }
+  }
+  return false;
+}
+
 export function runConstruction(): void {
   const allSites = Object.values(Game.constructionSites);
   if (allSites.length >= 90) return;

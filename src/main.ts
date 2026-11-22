@@ -3,7 +3,11 @@ import { POWER_BANK_MIN_DECAY } from './utils/roomIntel';
 import { runSpawner } from './managers/spawner';
 import { runRooms } from './managers/room';
 import { runTowers } from './managers/towers';
-import { runConstruction } from './managers/construction';
+import {
+  runConstruction,
+  growingRoomNeedsConstruction,
+  GROWTH_CONSTRUCTION_BUCKET_FLOOR,
+} from './managers/construction';
 import { runDefense } from './managers/defense';
 import { runVisuals } from './managers/visuals';
 import { runLinks } from './managers/links';
@@ -765,7 +769,14 @@ export const loop = ErrorMapper.wrapLoop(() => {
     // (findStrandedExtensions result now cached per room per tick — see
     // construction.ts) rather than permanently hiding the manager behind a
     // higher bucket floor, so THROTTLE_NORMAL is back.
-    if (shouldRun({ interval: 5, priority: THROTTLE_NORMAL }))
+    // Growing colonies (RCL < 8 with unspent structure slots) may build from a
+    // bucket of 3000 up instead of 5000, so a new room is not frozen at its RCL.
+    if (
+      shouldRun({ interval: 5, priority: THROTTLE_NORMAL }) ||
+      (Game.cpu.bucket >= GROWTH_CONSTRUCTION_BUCKET_FLOOR &&
+        shouldRun({ interval: 5, priority: THROTTLE_HIGH }) &&
+        growingRoomNeedsConstruction())
+    )
       profile('construction', runConstruction);
     if (shouldRun({ priority: THROTTLE_LOW })) profile('visuals', runVisuals);
 

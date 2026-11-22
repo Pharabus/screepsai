@@ -24,9 +24,11 @@ import {
   applyRoadSiteOverlay,
   countStructuresAndSites,
   canSkipConstructionSweep,
+  growingRoomNeedsConstruction,
   SETTLED_SWEEP_INTERVAL,
 } from '../../src/managers/construction';
 import { mockRoom, resetGameGlobals } from '../mocks/screeps';
+import { resetTickCache } from '../../src/utils/tickCache';
 
 function roomAt(rcl: number, overrides: Record<string, any> = {}): any {
   const spawn = { pos: new RoomPosition(25, 25, 'W1N1') };
@@ -2539,5 +2541,60 @@ describe('canSkipConstructionSweep', () => {
       }
     }
     expect(phases.size).toBeGreaterThan(1);
+  });
+});
+
+describe('growingRoomNeedsConstruction', () => {
+  beforeEach(() => {
+    resetGameGlobals();
+    resetTickCache();
+    (globalThis as any).CONTROLLER_STRUCTURES = {
+      extension: { 5: 30, 8: 60 },
+      tower: { 5: 2, 8: 6 },
+      spawn: { 5: 1, 8: 3 },
+      link: { 5: 2, 8: 6 },
+      lab: { 5: 0, 8: 10 },
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as any).CONTROLLER_STRUCTURES;
+  });
+
+  const roomWith = (
+    level: number,
+    built: Record<string, number>,
+    sites: Record<string, number>,
+  ) => {
+    const mk = (counts: Record<string, number>) =>
+      Object.entries(counts).flatMap(([t, n]) =>
+        Array.from({ length: n }, () => ({ structureType: t, my: true })),
+      );
+    return mockRoom({
+      name: 'W1N1',
+      controller: { my: true, level },
+      find: vi.fn((type: number) => {
+        if (type === FIND_MY_CONSTRUCTION_SITES) return mk(sites);
+        return mk(built);
+      }),
+    } as any);
+  };
+
+  it('is true for an RCL5 room with unspent extension slots', () => {
+    Game.rooms['W1N1'] = roomWith(5, { extension: 20, tower: 2, spawn: 1, link: 2 }, {});
+    expect(growingRoomNeedsConstruction()).toBe(true);
+  });
+
+  it('counts open sites against the allowance', () => {
+    Game.rooms['W1N1'] = roomWith(
+      5,
+      { extension: 20, tower: 2, spawn: 1, link: 2 },
+      { extension: 10 },
+    );
+    expect(growingRoomNeedsConstruction()).toBe(false);
+  });
+
+  it('ignores RCL8 rooms', () => {
+    Game.rooms['W1N1'] = roomWith(8, {}, {});
+    expect(growingRoomNeedsConstruction()).toBe(false);
   });
 });
