@@ -122,11 +122,32 @@ function hostileNearCriticalStructure(room: Room): boolean {
   return false;
 }
 
+const NPC_RAIDERS = new Set(['Invader', 'Source Keeper']);
+
+// Combined tower energy that lets towers be trusted to beat an NPC raid alone.
+const NPC_RAID_TOWER_ENERGY = 500;
+
+/**
+ * True when every threatening hostile is an NPC and the room's towers hold
+ * enough energy to handle it. Safe mode charges are scarce (live W41N59 spent
+ * its last one on a lone Invader that the tower killed in ~14 ticks), so they
+ * are kept for player attackers or for towers that cannot cope.
+ */
+function towersCoverNpcRaid(room: Room): boolean {
+  const threats = cachedHostiles(room).filter((c) => threatScore(c) > 0);
+  if (threats.length === 0) return false;
+  if (!threats.every((h) => NPC_RAIDERS.has(h.owner?.username ?? ''))) return false;
+  const towers = (getStructuresByType(room)[STRUCTURE_TOWER] as StructureTower[] | undefined) ?? [];
+  const energy = towers.reduce((sum, t) => sum + (t.store?.[RESOURCE_ENERGY] ?? 0), 0);
+  return energy >= NPC_RAID_TOWER_ENERGY;
+}
+
 function tryActivateSafeMode(room: Room, mem: RoomMemory): void {
   const c = room.controller;
   if (!c?.my) return;
   if (c.safeMode) return; // already active
   if (!hostileNearCriticalStructure(room)) return;
+  if (towersCoverNpcRaid(room)) return;
 
   // Can't activate — log once per combat so we know we were overrun without a fallback.
   if (

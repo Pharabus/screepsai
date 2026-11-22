@@ -214,6 +214,53 @@ describe('runDefense — safe mode guard', () => {
     expect(controller.activateSafeMode).toHaveBeenCalled();
   });
 
+  describe('NPC raids with energised towers', () => {
+    const setup = (owner: string, towerEnergy: number) => {
+      const room = mockRoom({ name: 'W1N1' });
+      const hostile = makeHostile({ threatScore: 730, owner });
+      hostile.pos = new RoomPosition(25, 25, 'W1N1');
+      const spawn = { pos: new RoomPosition(27, 25, 'W1N1') };
+      const controller = {
+        my: true,
+        safeMode: undefined,
+        safeModeAvailable: 1,
+        safeModeCooldown: 0,
+        pos: new RoomPosition(30, 30, 'W1N1'),
+        activateSafeMode: vi.fn(() => 0),
+      };
+      room.controller = controller;
+      room.storage = undefined;
+      room.find = vi.fn((type: number) => {
+        if (type === FIND_HOSTILE_CREEPS) return [hostile];
+        if (type === FIND_MY_SPAWNS) return [spawn];
+        if (type === FIND_STRUCTURES || type === FIND_MY_STRUCTURES)
+          return [{ structureType: 'tower', store: { energy: towerEnergy }, pos: spawn.pos }];
+        return [];
+      }) as any;
+      Game.rooms['W1N1'] = room;
+      Memory.rooms['W1N1'] = {};
+      return controller;
+    };
+
+    it('keeps safe mode for an Invader raid when towers are well stocked', () => {
+      const controller = setup('Invader', 1000);
+      runDefense();
+      expect(controller.activateSafeMode).not.toHaveBeenCalled();
+    });
+
+    it('still activates for an Invader raid when towers are nearly empty', () => {
+      const controller = setup('Invader', 50);
+      runDefense();
+      expect(controller.activateSafeMode).toHaveBeenCalled();
+    });
+
+    it('still activates for a player attacker even with full towers', () => {
+      const controller = setup('Enemy', 1000);
+      runDefense();
+      expect(controller.activateSafeMode).toHaveBeenCalled();
+    });
+  });
+
   it('does not activate safe mode when hostile is far from all critical structures', () => {
     const room = mockRoom({ name: 'W1N1' });
     // hostile at (5,5), spawn at (40,40) — far apart
