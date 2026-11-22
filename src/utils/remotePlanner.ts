@@ -181,6 +181,27 @@ function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'ke
   return 'remote';
 }
 
+/** A pre-RCL8 colony this rich has no use for more remote income. */
+export const REMOTE_PAUSE_STORAGE = 300_000;
+/** Remotes resume once a paused colony's storage falls back below this. */
+export const REMOTE_RESUME_STORAGE = 200_000;
+
+/**
+ * True when a still-growing colony (RCL < 8) holds so much energy that remote
+ * mining only costs CPU and spawn time. Live W41N59: 563k in storage at RCL5,
+ * unspendable under the CPU-limited upgrader cap, while its remote kept nine
+ * creeps running. Hysteresis: pause at 300k, resume below 200k (a colony that
+ * currently has no remotes stays paused until then).
+ */
+export function remotesPaused(homeRoom: Room): boolean {
+  const level = homeRoom.controller?.level;
+  if (level === undefined || level >= 8) return false;
+  const stored = myStorage(homeRoom)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0;
+  if (stored >= REMOTE_PAUSE_STORAGE) return true;
+  const hasRemotes = (Memory.rooms[homeRoom.name]?.remoteRooms?.length ?? 0) > 0;
+  return !hasRemotes && stored >= REMOTE_RESUME_STORAGE;
+}
+
 /**
  * Storage-gated cap on how many remote rooms this colony should run.
  * Hysteresis: scale up to 2 at REMOTE_ROOM_SCALE_THRESHOLD (100k), but a colony
@@ -192,6 +213,7 @@ function classifyRemoteType(targetRoomName: string): 'remote' | 'reserved' | 'ke
  * re-scouting territory it cannot exploit.
  */
 export function remoteRoomCap(homeRoom: Room): number {
+  if (remotesPaused(homeRoom)) return 0;
   // myStorage (not room.storage): a reclaimed room's foreign storage is
   // owner-agnostic and would otherwise inflate the cap on a colony that can't
   // yet exploit a second remote.

@@ -1220,5 +1220,35 @@ describe('remotePlanner', () => {
       const room = mockRoom({ name: 'W1N1' });
       expect(remoteRoomCap(room)).toBe(1);
     });
+
+    describe('rich pre-RCL8 colony pause', () => {
+      const rich = (rcl: number, energy: number) =>
+        mockRoom({
+          name: 'W1N1',
+          storage: mockStorage(energy),
+          controller: { my: true, level: rcl },
+        } as any);
+
+      it('pauses remotes at 300k below RCL8', () => {
+        Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;
+        expect(remoteRoomCap(rich(5, 300_000))).toBe(0);
+        expect(remoteRoomCap(rich(5, 299_000))).toBe(2);
+      });
+
+      it('never pauses an RCL8 room', () => {
+        expect(remoteRoomCap(rich(8, 500_000))).toBe(2);
+      });
+
+      it('stays paused with no remotes until storage drops below 200k', () => {
+        Memory.rooms['W1N1'] = { remoteRooms: [] } as any;
+        expect(remoteRoomCap(rich(5, 250_000))).toBe(0);
+        expect(remoteRoomCap(rich(5, 199_000))).toBe(2);
+      });
+
+      it('keeps running remotes between 200k and 300k', () => {
+        Memory.rooms['W1N1'] = { remoteRooms: ['W2N1'] } as any;
+        expect(remoteRoomCap(rich(5, 250_000))).toBe(2);
+      });
+    });
   });
 });
