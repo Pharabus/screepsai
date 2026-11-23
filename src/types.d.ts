@@ -808,6 +808,16 @@ interface Memory {
    * re-scan storm is a real recurring cost rather than a rare one-off.
    */
   _resets?: number[];
+  /** Rolling spawn spend per room and role; see src/utils/spawnSpend.ts. */
+  spawnSpend?: SpawnSpendStore;
+}
+
+/** Spawn spend by room then `role[>targetRoom]`. */
+type SpawnSpendRooms = Record<string, Record<string, { n: number; cost: number }>>;
+interface SpawnSpendStore {
+  since: number;
+  rooms: SpawnSpendRooms;
+  prev?: { since: number; rooms: SpawnSpendRooms };
 }
 
 /** One sample in {@link Memory.creditHistory}. */

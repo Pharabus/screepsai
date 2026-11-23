@@ -1,3 +1,4 @@
+import { recordSpawnSpend } from '../utils/spawnSpend';
 import {
   buildBody,
   buildDepositMinerBody,
@@ -1963,6 +1964,7 @@ export function runSpawner(): void {
 
       if (result === OK) {
         console.log(`Spawning ${request.role} (${body.length} parts): ${name}`);
+        recordSpawnSpend(room.name, request.role, body, request.memory?.targetRoom);
         break; // one spawn per room per tick
       } else if (result === ERR_NOT_ENOUGH_ENERGY) {
         // In emergency mode extensions can't be filled (no distributors), so
