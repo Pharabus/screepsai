@@ -1646,6 +1646,7 @@ describe('runTerminal - critical top-up of a mineral-priority outpost', () => {
   }
 
   const setup = (senderEnergy: number, outpostEnergy: number) => {
+    resetColonySendCache();
     (Game as any).time = 10_000;
     const terminal: any = {
       store: makeTerminalStore({ energy: senderEnergy }),
@@ -1662,6 +1663,7 @@ describe('runTerminal - critical top-up of a mineral-priority outpost', () => {
       name: 'W2N1',
       controller: { my: true, level: 6 },
       storage: {
+        my: true,
         store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? outpostEnergy : 0) },
       },
       terminal: { store: makeTerminalStore({ energy: 0 }), cooldown: 0 },
@@ -1679,6 +1681,13 @@ describe('runTerminal - critical top-up of a mineral-priority outpost', () => {
 
   it('sends from a 12k sender terminal when the outpost is nearly empty', () => {
     const terminal = setup(12_000, 1_000);
+    runTerminal();
+    expect(terminal.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats an empty storage as critical even when its terminal holds energy', () => {
+    const terminal = setup(12_000, 0);
+    (Game as any).rooms.W2N1.terminal.store = makeTerminalStore({ energy: 6_000 });
     runTerminal();
     expect(terminal.send).toHaveBeenCalledTimes(1);
   });

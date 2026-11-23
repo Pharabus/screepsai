@@ -278,7 +278,7 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 
 /** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
 const COLONY_SEND_AMOUNT = 10_000;
-/** A mineral-priority receiver under this much combined energy may be topped up with a thin sender buffer. */
+/** A mineral-priority receiver with under this much storage energy may be topped up with a thin sender buffer. */
 const CRITICAL_RECEIVER_ENERGY = 5_000;
 /** Terminal energy kept above the payload for the transaction fee on a critical send. */
 const CRITICAL_SEND_FEE_MARGIN = 1_500;
@@ -405,8 +405,14 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   // when its storage hits 0, and the rich senders' terminals sit under the full
   // 15k most of the time (battery and mineral shipping keep draining them), so
   // the normal gate left it unfed for ~12k ticks.
+  // Judged on the receiver's own storage, not storage+terminal: spawning and
+  // upgrading draw on storage, so a 6k terminal beside an empty storage is
+  // still a starving room (live W44N59: storage 0, spawn 126/12900).
+  const bestRoom = Game.rooms[best.colonyRoom];
   const critical =
-    isMineralPriorityRoom(best.colonyRoom) && best.colonyEnergyTotal < CRITICAL_RECEIVER_ENERGY;
+    isMineralPriorityRoom(best.colonyRoom) &&
+    (bestRoom ? (myStorage(bestRoom)?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0) : Infinity) <
+      CRITICAL_RECEIVER_ENERGY;
   if (!critical && terminalEnergy < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER) return;
 
   // Per-tick dedupe: skip if another home room already sent to this receiver
