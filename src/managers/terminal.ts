@@ -278,6 +278,10 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 
 /** Per-shipment payload. Big enough to dwarf the transaction fee on adjacent rooms. */
 const COLONY_SEND_AMOUNT = 10_000;
+/** A mineral-priority receiver under this much combined energy may be topped up with a thin sender buffer. */
+const CRITICAL_RECEIVER_ENERGY = 5_000;
+/** Terminal energy kept above the payload for the transaction fee on a critical send. */
+const CRITICAL_SEND_FEE_MARGIN = 1_500;
 /** Home storage must hold at least this much before we'll donate energy. */
 export const HOME_SURPLUS_FLOOR = 80_000;
 /**
@@ -324,8 +328,9 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
     ? colonyEnergy(home)
     : (home.storage?.store.getUsedCapacity(RESOURCE_ENERGY) ?? 0);
   if (homeEnergy < HOME_SURPLUS_FLOOR) return;
-  if (terminal.store.getUsedCapacity(RESOURCE_ENERGY) < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER)
-    return;
+  const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+  // Even a critical send needs the payload plus its fee.
+  if (terminalEnergy < COLONY_SEND_AMOUNT + CRITICAL_SEND_FEE_MARGIN) return;
 
   // Collect all eligible receivers and rank by investment priority.
   // Eligible = colony room with terminal, combined storage+terminal energy
@@ -394,6 +399,15 @@ function sendEnergyToColonies(home: Room, terminal: StructureTerminal): void {
   );
 
   const best = candidates[0]!;
+
+  // The full buffer exists so a send never drains the sender's own terminal. A
+  // nearly-empty mineral-priority outpost is the exception: its X supply stops
+  // when its storage hits 0, and the rich senders' terminals sit under the full
+  // 15k most of the time (battery and mineral shipping keep draining them), so
+  // the normal gate left it unfed for ~12k ticks.
+  const critical =
+    isMineralPriorityRoom(best.colonyRoom) && best.colonyEnergyTotal < CRITICAL_RECEIVER_ENERGY;
+  if (!critical && terminalEnergy < COLONY_SEND_AMOUNT + ENERGY_TERMINAL_BUFFER) return;
 
   // Per-tick dedupe: skip if another home room already sent to this receiver
   // this tick. Inert today (one homeRoom per colony) — forward-looking guard for
@@ -742,6 +756,13 @@ export function runTerminal(): void {
       buyForLabs(room, terminal);
     }
 
+    // Energy first: only one deal fires per cooldown, and a starving outpost
+    // must not lose the slot to boost or mineral shipping. Hysteresis and the
+    // receiver gates keep these sends rare.
+    if (terminal.cooldown === 0) {
+      sendEnergyToColonies(room, terminal);
+    }
+
     // Boost distribution: push surplus boost compound out to whichever active
     // colony needs it, from whichever owned room actually holds the surplus.
     // NOT hub-gated (see sendBoostsToColonies's doc comment) — a room that
@@ -756,10 +777,6 @@ export function runTerminal(): void {
     // exists — the hub ships nothing to itself.
     if (!amHub && hub !== undefined && terminal.cooldown === 0) {
       sendMineralsToHub(room, terminal);
-    }
-
-    if (terminal.cooldown === 0) {
-      sendEnergyToColonies(room, terminal);
     }
 
     // Only sell when this room IS the hub, or when no hub exists yet (fallback

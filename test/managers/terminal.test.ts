@@ -1633,6 +1633,69 @@ describe('runTerminal — per-tick receiver dedupe', () => {
   });
 });
 
+describe('runTerminal - critical top-up of a mineral-priority outpost', () => {
+  function makeTerminalStore(resources: Record<string, number>): any {
+    const store: Record<string, any> = { ...resources };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: (r?: string) =>
+        r ? (resources[r] ?? 0) : Object.values(resources).reduce((x, y) => x + y, 0),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', { enumerable: false, value: () => 300_000 });
+    return store;
+  }
+
+  const setup = (senderEnergy: number, outpostEnergy: number) => {
+    (Game as any).time = 10_000;
+    const terminal: any = {
+      store: makeTerminalStore({ energy: senderEnergy }),
+      cooldown: 0,
+      send: vi.fn(() => OK),
+    };
+    const home: any = {
+      name: 'W1N1',
+      controller: { my: true, level: 8 },
+      storage: { store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? 200_000 : 0) } },
+      terminal,
+    };
+    const outpost: any = {
+      name: 'W2N1',
+      controller: { my: true, level: 6 },
+      storage: {
+        store: { getUsedCapacity: (r: string) => (r === RESOURCE_ENERGY ? outpostEnergy : 0) },
+      },
+      terminal: { store: makeTerminalStore({ energy: 0 }), cooldown: 0 },
+    };
+    (Game as any).rooms = { W1N1: home, W2N1: outpost };
+    seedColony('W2N1', { homeRoom: 'W9N9', status: 'active' });
+    (Memory as any).rooms = {
+      W1N1: {},
+      W2N1: { mineralPriority: true, sources: [{ id: 's1', x: 1, y: 1, minerName: 'm1' }] },
+    };
+    (Game as any).creeps = { m1: { name: 'm1', memory: { role: 'miner' } } };
+    (Game as any).map = { ...Game.map, getRoomLinearDistance: () => 1 };
+    return terminal;
+  };
+
+  it('sends from a 12k sender terminal when the outpost is nearly empty', () => {
+    const terminal = setup(12_000, 1_000);
+    runTerminal();
+    expect(terminal.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('still requires the full buffer once the outpost holds 5k or more', () => {
+    const terminal = setup(12_000, 8_000);
+    runTerminal();
+    expect(terminal.send).not.toHaveBeenCalled();
+  });
+
+  it('does not send when the terminal cannot cover payload plus fee', () => {
+    const terminal = setup(10_500, 0);
+    runTerminal();
+    expect(terminal.send).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Feeder-to-hub mineral consolidation
 // ---------------------------------------------------------------------------
