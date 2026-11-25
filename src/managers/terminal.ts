@@ -264,6 +264,87 @@ function buyForLabs(room: Room, terminal: StructureTerminal): void {
 }
 
 // ---------------------------------------------------------------------------
+// Market energy top-up (dark-deployed behind Memory.marketEnergy)
+// ---------------------------------------------------------------------------
+// Energy sells for ~30 credits on shard3 and credits are effectively unlimited
+// (hundreds of millions from battery and mineral sales), so a room whose
+// storage is starved can simply buy energy. The buyer pays the delivery fee in
+// energy from its own terminal, so the purchase is sized to what the terminal
+// can cover.
+
+/** Buy only while the room's own storage holds less than this. */
+export const MARKET_ENERGY_STORAGE_LOW = 15_000;
+/** Do not pile more into a terminal already holding this much (haulers restock it slowly). */
+const MARKET_ENERGY_TERMINAL_CAP = 40_000;
+/** Ignore sell orders priced above this many credits per energy. */
+export const MARKET_ENERGY_MAX_PRICE = 60;
+/** Largest single purchase. */
+const MARKET_ENERGY_MAX_BUY = 10_000;
+/** Smallest purchase worth a terminal cooldown. */
+const MARKET_ENERGY_MIN_BUY = 2_000;
+/** Terminal energy kept back after the fee. */
+const MARKET_ENERGY_FEE_BUFFER = 500;
+
+export function buyEnergyOnMarket(room: Room, terminal: StructureTerminal): void {
+  if (!Memory.marketEnergy) return;
+  const storage = myStorage(room);
+  if (!storage) return;
+  if (storage.store.getUsedCapacity(RESOURCE_ENERGY) >= MARKET_ENERGY_STORAGE_LOW) return;
+  const terminalEnergy = terminal.store.getUsedCapacity(RESOURCE_ENERGY);
+  if (terminalEnergy >= MARKET_ENERGY_TERMINAL_CAP) return;
+  if (Game.market.credits <= LAB_BUY_CREDIT_RESERVE) return;
+
+  const orders = Game.market.getAllOrders({ type: ORDER_SELL, resourceType: RESOURCE_ENERGY });
+  // Rank by credits per energy actually received: price / (1 - feeFraction).
+  let best: { order: Order; feeFraction: number } | undefined;
+  let bestScore = Infinity;
+  for (const order of orders) {
+    if (order.remainingAmount < MARKET_ENERGY_MIN_BUY || order.price > MARKET_ENERGY_MAX_PRICE) {
+      continue;
+    }
+    const feeFraction = Game.market.calcTransactionCost(1000, room.name, order.roomName!) / 1000;
+    if (feeFraction >= 1) continue;
+    const score = order.price / (1 - feeFraction);
+    if (score < bestScore) {
+      bestScore = score;
+      best = { order, feeFraction };
+    }
+  }
+  if (!best) {
+    verboseTerminalLog(
+      `[terminal] ${room.name}: market energy skip - no order <= ${MARKET_ENERGY_MAX_PRICE}`,
+    );
+    return;
+  }
+
+  const payableByFee = Math.floor((terminalEnergy - MARKET_ENERGY_FEE_BUFFER) / best.feeFraction);
+  const affordable = Math.floor((Game.market.credits - LAB_BUY_CREDIT_RESERVE) / best.order.price);
+  const amount = Math.min(
+    MARKET_ENERGY_MAX_BUY,
+    best.order.remainingAmount,
+    payableByFee,
+    affordable,
+    terminal.store.getFreeCapacity(RESOURCE_ENERGY),
+  );
+  if (amount < MARKET_ENERGY_MIN_BUY) {
+    verboseTerminalLog(
+      `[terminal] ${room.name}: market energy skip - can only buy ${amount} (terminal ${terminalEnergy})`,
+    );
+    return;
+  }
+
+  const result = Game.market.deal(best.order.id, amount, room.name);
+  if (result === OK) {
+    console.log(
+      `[terminal] ${room.name}: bought ${amount} energy @ ${best.order.price.toFixed(2)} ` +
+        `(fee ~${Math.ceil(amount * best.feeFraction)})`,
+    );
+  } else {
+    console.log(`[terminal] ${room.name}: market energy buy failed, error=${result}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Score-driven inter-room energy support
 // ---------------------------------------------------------------------------
 // A home room with an established terminal and energy surplus can ship energy
@@ -767,6 +848,11 @@ export function runTerminal(): void {
     // receiver gates keep these sends rare.
     if (terminal.cooldown === 0) {
       sendEnergyToColonies(room, terminal);
+    }
+
+    // Market top-up for a starved room (dormant unless Memory.marketEnergy).
+    if (terminal.cooldown === 0) {
+      buyEnergyOnMarket(room, terminal);
     }
 
     // Boost distribution: push surplus boost compound out to whichever active

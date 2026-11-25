@@ -1705,6 +1705,102 @@ describe('runTerminal - critical top-up of a mineral-priority outpost', () => {
   });
 });
 
+describe('runTerminal - market energy top-up', () => {
+  const sell = (id: string, price: number, remaining = 50_000, roomName = 'E1N1') => ({
+    id,
+    price,
+    remainingAmount: remaining,
+    roomName,
+  });
+
+  function setup(opts: { storage?: number; terminal?: number; credits?: number; orders?: any[] }) {
+    resetGameGlobals();
+    resetColonySendCache();
+    (Game as any).time = 10_000;
+    const terminalEnergy = opts.terminal ?? 10_000;
+    const store: any = { energy: terminalEnergy };
+    Object.defineProperty(store, 'getUsedCapacity', {
+      enumerable: false,
+      value: (r?: string) => (r ? (store[r] ?? 0) : terminalEnergy),
+    });
+    Object.defineProperty(store, 'getFreeCapacity', { enumerable: false, value: () => 300_000 });
+    const terminal: any = { store, cooldown: 0, send: vi.fn(() => OK) };
+    const room: any = {
+      name: 'W1N1',
+      controller: { my: true, level: 8 },
+      storage: {
+        my: true,
+        store: { getUsedCapacity: () => opts.storage ?? 2_000 },
+      },
+      terminal,
+    };
+    (Game as any).rooms = { W1N1: room };
+    (Memory as any).rooms = { W1N1: {} };
+    (Game as any).market = {
+      credits: opts.credits ?? 1_000_000,
+      getAllOrders: vi.fn(() => opts.orders ?? [sell('a', 30)]),
+      calcTransactionCost: vi.fn((amount: number) => Math.ceil(amount * 0.65)),
+      deal: vi.fn(() => OK),
+    };
+    return room;
+  }
+
+  it('does nothing while the flag is off', () => {
+    setup({});
+    runTerminal();
+    expect((Game as any).market.deal).not.toHaveBeenCalled();
+  });
+
+  it('buys sized to what the terminal can pay in fees when the flag is on', () => {
+    setup({ terminal: 10_000 });
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    const [id, amount, roomName] = (Game as any).market.deal.mock.calls[0];
+    expect(id).toBe('a');
+    expect(roomName).toBe('W1N1');
+    expect(amount).toBeLessThanOrEqual(Math.floor(9_500 / 0.65));
+    expect(amount).toBeGreaterThanOrEqual(2_000);
+  });
+
+  it('skips orders above the price cap', () => {
+    setup({ orders: [sell('dear', 61)] });
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    expect((Game as any).market.deal).not.toHaveBeenCalled();
+  });
+
+  it('skips when the terminal cannot cover a worthwhile purchase', () => {
+    setup({ terminal: 1_500 });
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    expect((Game as any).market.deal).not.toHaveBeenCalled();
+  });
+
+  it('skips a room whose storage is not low', () => {
+    setup({ storage: 20_000 });
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    expect((Game as any).market.deal).not.toHaveBeenCalled();
+  });
+
+  it('keeps the credit reserve', () => {
+    setup({ credits: 40_000 });
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    expect((Game as any).market.deal).not.toHaveBeenCalled();
+  });
+
+  it('prefers the order with the lowest credits per energy received', () => {
+    setup({ orders: [sell('far', 30, 50_000, 'FAR'), sell('near', 31, 50_000, 'NEAR')] });
+    (Game as any).market.calcTransactionCost = vi.fn((a: number, _f: string, to: string) =>
+      Math.ceil(a * (to === 'FAR' ? 0.65 : 0.2)),
+    );
+    (Memory as any).marketEnergy = true;
+    runTerminal();
+    expect((Game as any).market.deal.mock.calls[0][0]).toBe('near');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Feeder-to-hub mineral consolidation
 // ---------------------------------------------------------------------------
@@ -1788,6 +1884,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { feederTerminal } = makeSetup();
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // O is the only non-energy mineral (6000 > MIN_MINERAL_SHIP=1000)
@@ -1830,6 +1927,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // O (6000) is larger than H (2000) — should ship O
@@ -1881,6 +1979,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // KHO2 (5000) is far larger than O (600), but must be skipped — O ships instead.
@@ -1919,6 +2018,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).not.toHaveBeenCalled();
@@ -1960,6 +2060,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).not.toHaveBeenCalled();
@@ -2002,6 +2103,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).not.toHaveBeenCalled();
@@ -2047,10 +2149,12 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(consoleSpy).not.toHaveBeenCalled();
 
     Memory.terminalDebug = true;
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('insufficient energy'));
 
@@ -2097,6 +2201,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
@@ -2148,6 +2253,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // 6000 feeder stock, hub only has 3000 free → clamped to 3000
@@ -2197,6 +2303,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).not.toHaveBeenCalled();
@@ -2246,6 +2353,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // Hub should sell its surplus H
@@ -2283,6 +2391,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // No hub → fallback to selling surplus locally
@@ -2331,6 +2440,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).not.toHaveBeenCalled();
@@ -2380,6 +2490,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).toHaveBeenCalledWith('O', 2800, 'W3N3', 'mineral consolidation');
@@ -2423,6 +2534,7 @@ describe('runTerminal — sendMineralsToHub (feeder → hub)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(feederTerminal.send).toHaveBeenCalledWith('O', 6000, 'W3N3', 'mineral consolidation');
@@ -2503,6 +2615,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { hubTerminal } = makeSetup({ KHO2: 2000, GH2O: 4000 }); // both clear their cap*0.75
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
@@ -2517,6 +2630,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
       { KHO2: 1000 }, // colony already at BOOST_COLONY_STASH_TARGET for KHO2
     );
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).toHaveBeenCalledWith('GH2O', 500, 'W2N1', 'boost distribution');
@@ -2528,6 +2642,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { hubTerminal } = makeSetup({ KHO2: 500, LHO2: 500, GH2O: 1000 });
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).not.toHaveBeenCalled();
@@ -2544,6 +2659,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { hubTerminal } = makeSetup({ KHO2: 2000 }, { KHO2: 500 });
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
@@ -2575,6 +2691,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
       deal: vi.fn(() => OK),
     };
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).not.toHaveBeenCalled();
@@ -2593,6 +2710,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     // Override: this room has zero labs, so it is definitely not the elected hub.
     (Memory as any).rooms.W1N1 = {};
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
@@ -2608,6 +2726,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     // W2N1's homeRoom is some third room, not the sender (W1N1).
     (Memory as any).missions.colony.W2N1.homeRoom = 'W9N9';
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     expect(hubTerminal.send).toHaveBeenCalledWith('KHO2', 500, 'W2N1', 'boost distribution');
@@ -2633,6 +2752,7 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     (Game as any).rooms.W3N1 = secondSender;
     (Memory as any).rooms.W3N1 = {};
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
 
     // Exactly one of the two senders should have shipped to W2N1 this tick —
@@ -2650,11 +2770,13 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     // Force the energy guard to fail: cost (mocked) + buffer > available energy.
     (Game as any).market.calcTransactionCost = vi.fn(() => 100_000);
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(consoleSpy).not.toHaveBeenCalled();
     expect(hubTerminal.send).not.toHaveBeenCalled();
 
     Memory.terminalDebug = true;
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('insufficient energy'));
 
@@ -2666,10 +2788,12 @@ describe('runTerminal — sendBoostsToColonies (hub → colony)', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { hubTerminal } = makeSetup({ KHO2: 2000 });
 
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(hubTerminal.send).toHaveBeenCalledTimes(1);
 
     (Game as any).time = SEND_TICK + 5; // well within COLONY_SEND_HYSTERESIS_TICKS (300)
+    (Memory as any).marketEnergy = true;
     runTerminal();
     expect(hubTerminal.send).toHaveBeenCalledTimes(1); // still just the one call
 

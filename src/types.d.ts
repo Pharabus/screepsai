@@ -683,6 +683,8 @@ interface Memory {
    * sell floor) and spam the console. Actual sells/failures always log.
    */
   terminalDebug?: boolean;
+  /** Dark flag: let a starved room buy energy on the market (see buyEnergyOnMarket in terminal.ts). */
+  marketEnergy?: boolean;
   /**
    * When true, ensureBoosted() (src/utils/boost.ts) and the hauler boost-lab
    * preempt (src/roles/hauler.ts) log per-tick decisions ([boostDebug] ...) for
