@@ -101,3 +101,21 @@ describe('shouldRun — combined gate', () => {
     expect(shouldRun({ interval: 5, phase: 0, priority: THROTTLE_LOW })).toBe(true);
   });
 });
+
+describe('shouldRun - minBucket override', () => {
+  it('runs NORMAL work above the override but below the NORMAL floor', () => {
+    setCpu(3500);
+    expect(shouldRun({ priority: THROTTLE_NORMAL })).toBe(false);
+    expect(shouldRun({ priority: THROTTLE_NORMAL, minBucket: 3000 })).toBe(true);
+  });
+
+  it('skips below the override', () => {
+    setCpu(2900);
+    expect(shouldRun({ priority: THROTTLE_NORMAL, minBucket: 3000 })).toBe(false);
+  });
+
+  it('never goes below the HIGH floor', () => {
+    setCpu(1500);
+    expect(shouldRun({ priority: THROTTLE_NORMAL, minBucket: 0 })).toBe(false);
+  });
+});

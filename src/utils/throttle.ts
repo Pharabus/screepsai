@@ -30,16 +30,20 @@ export function shouldRun({
   interval = 1,
   priority = THROTTLE_NORMAL,
   phase = 0,
+  minBucket,
 }: {
   interval?: number;
   priority?: number;
   phase?: number;
+  /** Overrides the priority's bucket floor (never below the HIGH floor) for a cheap, income-critical manager. */
+  minBucket?: number;
 } = {}): boolean {
   // Interval gate — cheapest check, done first.
   if (interval > 1 && Game.time % interval !== phase) return false;
 
   // Bucket gate — higher priority numbers are shed first.
   const bucket = Game.cpu.bucket;
+  if (minBucket !== undefined) return bucket >= Math.max(minBucket, BUCKET_HIGH_FLOOR);
   if (priority >= THROTTLE_LOW && bucket < BUCKET_LOW_FLOOR) return false;
   if (priority >= THROTTLE_NORMAL && bucket < BUCKET_NORMAL_FLOOR) return false;
   if (priority >= THROTTLE_HIGH && bucket < BUCKET_HIGH_FLOOR) return false;
