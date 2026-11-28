@@ -30,8 +30,12 @@ import { flushSegments } from './utils/segments';
 import { profile, formatStats, resetStatsNow } from './utils/profiler';
 import { shouldRun, THROTTLE_HIGH, THROTTLE_NORMAL, THROTTLE_LOW } from './utils/throttle';
 
-/** Lowest bucket at which the terminal still runs. */
-const TERMINAL_MIN_BUCKET = 3000;
+/**
+ * Lowest bucket at which the cheap economy managers (terminal ~0.5 CPU, labs ~0.25, factory ~0.03)
+ * still run. The bucket idles ~3.7-4.6k under the 20 CPU cap, which kept them dark under the
+ * NORMAL 5000 floor while idle surplus energy and unreacted labs piled up.
+ */
+const ECONOMY_MIN_BUCKET = 3000;
 import {
   computeLayout,
   findBestSpawnPosition,
@@ -758,12 +762,11 @@ export const loop = ErrorMapper.wrapLoop(() => {
     profile('traffic', resolveTraffic);
     profile('keepers', observeKeeperLairs);
     if (shouldRun({ priority: THROTTLE_HIGH })) profile('towers', runTowers);
-    if (shouldRun({ priority: THROTTLE_NORMAL })) profile('labs', runLabs);
-    if (shouldRun({ priority: THROTTLE_NORMAL })) profile('factory', runFactory);
-    // Terminal is cheap (~0.5 CPU) and income-critical (sends, sells, outpost energy top-up), so it
-    // runs from a lower bucket than labs/factory: the bucket idles ~3.7-4.1k under the 20 CPU cap,
-    // which kept it dark under the NORMAL floor.
-    if (shouldRun({ priority: THROTTLE_NORMAL, minBucket: TERMINAL_MIN_BUCKET }))
+    if (shouldRun({ priority: THROTTLE_NORMAL, minBucket: ECONOMY_MIN_BUCKET }))
+      profile('labs', runLabs);
+    if (shouldRun({ priority: THROTTLE_NORMAL, minBucket: ECONOMY_MIN_BUCKET }))
+      profile('factory', runFactory);
+    if (shouldRun({ priority: THROTTLE_NORMAL, minBucket: ECONOMY_MIN_BUCKET }))
       profile('terminal', runTerminal);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('observer', runObserver);
     if (shouldRun({ priority: THROTTLE_NORMAL })) profile('power', runPowerSpawn);
